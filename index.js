@@ -20,16 +20,16 @@ if (typeof localStorage === "undefined" || localStorage === null) {
   var LocalStorage = require("node-localstorage").LocalStorage;
   localStorage = new LocalStorage("./scratch");
 }
-// const token = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-// const chatId = "-1003727905299";
+const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
+const telegramchat = "-1003727905299";
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 // const symbols = [
 //   "NSE:EICHERMOT-EQ",
 
 // ];
-const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
-const telegramchat = "8559767849";
+// const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
+// const telegramchat = "8559767849";
 // Create a bot that uses 'polling' to fetch new updates
 // const bot = new TelegramBot(telegramtoken, {polling: true});
 const app = express();
