@@ -22,6 +22,9 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
 const telegramchat = "-1003727905299";
+
+let patternSchedulerTimeout = null;
+let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 // const symbols = [
@@ -77,7 +80,7 @@ async function createAccess() {
 // createAccess()
 const runauth = async () => {
   await createAccess();
-  fyers.setAppId(appid);
+  fyers.setAppId(process.env.APP_ID);
 
   fyers.setRedirectUrl("https://www.google.com/");
 
@@ -866,9 +869,9 @@ const startlogic = async () => {
 
           // Send to Telegram
           try {
-            await bot.sendMessage(telegramchat, telegramMessage, {
-              parse_mode: "HTML",
-            });
+            // await bot.sendMessage(telegramchat, telegramMessage, {
+            //   parse_mode: "HTML",
+            // });
             console.log(`✅ Telegram notification sent for ${symbol}`);
           } catch (telegramError) {
             console.error(
@@ -917,51 +920,72 @@ const startlogic = async () => {
     console.log(error);
   }
 };
-startlogic()
+
+const startPatternScheduler = () => {
+  // Clear any existing scheduler first
+  stopPatternScheduler();
+
+  console.log(`⏳ Pattern detection starting immediately...`);
+  console.log(`⏰ Will run every 1 hour after completion\n`);
+
+  const scheduleNext = () => {
+    const now = moment();
+    
+    // Prevent concurrent executions
+    if (isExecuting) {
+      console.log("⚠️ startlogic already executing, skipping this cycle");
+      // Schedule retry in 1 hour
+      patternSchedulerTimeout = setTimeout(scheduleNext, 60 * 60 * 1000); // 1 hour
+      return;
+    }
+
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`▶ Pattern Detection Started: ${now.format("YYYY-MM-DD HH:mm:ss")}`);
+    console.log('='.repeat(60) + '\n');
+
+    // Execute startlogic with guard
+    isExecuting = true;
+    startlogic()
+      .then(() => {
+        const completedAt = moment();
+        const nextRun = completedAt.clone().add(1, 'hour');
+        
+        console.log(`\n✅ Pattern detection completed at: ${completedAt.format("YYYY-MM-DD HH:mm:ss")}`);
+        console.log(`⏰ Next run scheduled at: ${nextRun.format("YYYY-MM-DD HH:mm:ss")}\n`);
+        
+        // Schedule next execution (1 hour from completion)
+        const delay = nextRun.diff(moment());
+        patternSchedulerTimeout = setTimeout(scheduleNext, delay);
+      })
+      .catch((error) => {
+        console.error(`\n❌ Pattern detection error:`, error);
+        console.log(`⏰ Retrying in 1 hour...\n`);
+        
+        // Retry in 1 hour even on error
+        patternSchedulerTimeout = setTimeout(scheduleNext, 60 * 60 * 1000);
+      })
+      .finally(() => {
+        isExecuting = false;
+      });
+  };
+
+  // Start immediately
+  scheduleNext();
+};
+
+const stopPatternScheduler = () => {
+  if (patternSchedulerTimeout) {
+    clearTimeout(patternSchedulerTimeout);
+    patternSchedulerTimeout = null;
+    console.log("🛑 Pattern detection scheduler stopped.");
+  }
+  isExecuting = false;
+};
+
+
+startPatternScheduler()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 
 app.listen(PORT, async () => {
   console.log(`Server listening on http://localhost:${PORT}`);
 });
-// if (pattern.found) {
-//   patternsFound++;
-//   console.log(`✅ PATTERN FOUND for ${symbol}!`);
-//   console.log(`📊 Crossover Type: ${pattern.crossoverType}`);
-
-//   // Format timestamps in summary using moment
-//   const formattedSummary = {
-//     ...pattern.summary,
-//     crossoverTime: moment.unix(pattern.crossover.timestampUnix).format('YYYY-MM-DD HH:mm'),
-//     crossoverAge: moment.unix(pattern.crossover.timestampUnix).fromNow()
-//   };
-
-//   console.log(`📊 Summary:`, JSON.stringify(formattedSummary, null, 2));
-//   console.log(
-//     `✓ Validation:`,
-//     JSON.stringify(pattern.validation, null, 2),
-//   );
-
-//   if (pattern.crossoverType === "BULLISH_CROSSOVER") {
-//     console.log(
-//       `🚀 Bullish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
-//     );
-//     console.log(
-//       `🔴 Bearish BCVC: ${pattern.bearishBCVC.timestamp} (High: ${pattern.bearishBCVC.high})`,
-//     );
-//     console.log(
-//       `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (High: ${pattern.bullishBCVC.high}) - CROSSED BEARISH HIGH ✓`,
-//     );
-//   } else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
-//     console.log(
-//       `🔴 Bearish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
-//     );
-//     console.log(
-//       `⚪ White BCVC: ${pattern.whiteBCVC.timestamp} (Low: ${pattern.whiteBCVC.low})`,
-//     );
-//     console.log(
-//       `🔻 Red Candle: ${pattern.redCandle.timestamp} (Close: ${pattern.redCandle.close}) - CLOSED BELOW WHITE LOW ✓`,
-//     );
-//   }
-// } else {
-//   console.log(`❌ Pattern not found for ${symbol}: ${pattern.reason}`);
-// }
