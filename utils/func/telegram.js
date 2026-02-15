@@ -6,7 +6,7 @@ const TelegramBot = require('node-telegram-bot-api');
 /////////////------------pnlbot
 const telegramtoken = "7764791634:AAGGwGa6Sl7jNauuQvgnTXRTVixikBZCb-g";
 
-const bot = new TelegramBot(telegramtoken, { polling: true });
+const bot = new TelegramBot(telegramtoken, { polling: false });
 
 
 module.exports = bot

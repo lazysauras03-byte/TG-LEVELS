@@ -33,10 +33,10 @@ let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-// const symbols = [
-//   "NSE:EICHERMOT-EQ",
+const symbols = [
+  "NSE:EICHERMOT-EQ",
 
-// ];
+];
 // Create a bot that uses 'polling' to fetch new updates
 // const bot = new TelegramBot(telegramtoken, {polling: true});
 
@@ -362,7 +362,7 @@ let sentPatterns = new Set();
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
 
     // Get current time and calculate lookback period accounting for weekends
@@ -659,19 +659,68 @@ const startPatternScheduler = () => {
   // Clear any existing scheduler first
   stopPatternScheduler();
 
-  console.log(`⏳ Pattern detection starting immediately...`);
-  console.log(`⏰ Will run every 1 hour after completion\n`);
+  const now = moment();
+  const startTime = moment().hour(9).minute(15).second(0).millisecond(0);
+  const endTime = moment().hour(15).minute(45).second(0).millisecond(0);
+
+  // Check if we're outside trading hours
+  if (now.isAfter(endTime)) {
+    console.log("⏰ Trading hours ended (after 3:15 PM). Pattern scheduler will not start.");
+    console.log("⏰ Will resume tomorrow at 9:15 AM");
+    return;
+  }
+
+  if (now.isBefore(startTime)) {
+    console.log("⏰ Before trading hours. Pattern scheduler will start at 9:15 AM");
+    const delay = startTime.diff(now);
+    patternSchedulerTimeout = setTimeout(startPatternScheduler, delay);
+    return;
+  }
+
+  // Determine first run time
+  let firstRun = moment().hour(9).minute(15).second(0).millisecond(0);
+
+  if (now.isAfter(firstRun)) {
+    // If we're past 9:15 AM, start immediately
+    firstRun = now.clone().second(0).millisecond(0);
+  }
+
+  if (firstRun.isAfter(endTime)) {
+    console.log("⏰ Next run would be after 3:15 PM. Pattern scheduler stopped.");
+    return;
+  }
+
+  const delay = firstRun.diff(moment());
+  console.log(`⏳ Pattern detection will start at: ${firstRun.format("HH:mm:ss")}`);
+  console.log(`⏰ Auto-stop scheduled at: ${endTime.format("HH:mm:ss")}`);
+  console.log(`⏰ Will run every 1 hour during trading hours\n`);
 
   let isFirstRun = true;
 
   const scheduleNext = () => {
     const now = moment();
 
+    // Check if trading hours ended
+    if (now.isAfter(endTime)) {
+      console.log("⏰ 3:15 PM reached. Stopping pattern scheduler...");
+      stopPatternScheduler();
+      return;
+    }
+
     // Prevent concurrent executions
     if (isExecuting) {
       console.log("⚠️ startlogic already executing, skipping this cycle");
-      // Schedule retry in 1 hour
-      patternSchedulerTimeout = setTimeout(scheduleNext, 60 * 60 * 1000); // 1 hour
+
+      // Calculate next aligned run time
+      const nextRun = calculateNextAlignedRun(now);
+
+      if (nextRun.isAfter(endTime)) {
+        console.log("⏰ Next run would be after 3:15 PM. Stopping scheduler.");
+        return;
+      }
+
+      const delay = Math.max(0, nextRun.diff(now));
+      patternSchedulerTimeout = setTimeout(scheduleNext, delay);
       return;
     }
 
@@ -680,40 +729,69 @@ const startPatternScheduler = () => {
     console.log(`▶ Run Type: ${isFirstRun ? "INITIAL RUN" : "SCHEDULED RUN"}`);
     console.log('='.repeat(60) + '\n');
 
+    // Calculate NEXT aligned run time (should be 10:15, 11:15, 12:15, etc.)
+    const nextRun = calculateNextAlignedRun(now);
+
     // Execute startlogic with guard
     isExecuting = true;
     startlogic(isFirstRun)
       .then(() => {
         const completedAt = moment();
-        const nextRun = completedAt.clone().add(1, 'hour');
 
         console.log(`\n✅ Pattern detection completed at: ${completedAt.format("YYYY-MM-DD HH:mm:ss")}`);
-        console.log(`⏰ Next run scheduled at: ${nextRun.format("YYYY-MM-DD HH:mm:ss")}\n`);
 
-        // After first run, subsequent runs will send notifications
         if (isFirstRun) {
           isFirstRun = false;
           console.log(`✅ Initial baseline established. Future runs will send Telegram notifications.\n`);
         }
 
-        // Schedule next execution (1 hour from completion)
-        const delay = nextRun.diff(moment());
+        // Check if next run is within trading hours
+        if (nextRun.isAfter(endTime)) {
+          console.log(`⏰ Next run (${nextRun.format("HH:mm:ss")}) would be after 3:15 PM. Stopping scheduler.`);
+          stopPatternScheduler();
+          return;
+        }
+
+        console.log(`⏰ Next run scheduled at: ${nextRun.format("HH:mm:ss")}\n`);
+
+        // Schedule next execution
+        const delay = Math.max(0, nextRun.diff(moment()));
         patternSchedulerTimeout = setTimeout(scheduleNext, delay);
       })
       .catch((error) => {
         console.error(`\n❌ Pattern detection error:`, error);
-        console.log(`⏰ Retrying in 1 hour...\n`);
 
-        // Retry in 1 hour even on error
-        patternSchedulerTimeout = setTimeout(scheduleNext, 60 * 60 * 1000);
+        if (nextRun.isAfter(endTime)) {
+          console.log(`⏰ Next run would be after 3:15 PM. Stopping scheduler.`);
+          stopPatternScheduler();
+          return;
+        }
+
+        console.log(`⏰ Retrying at: ${nextRun.format("HH:mm:ss")}\n`);
+
+        const delay = Math.max(0, nextRun.diff(moment()));
+        patternSchedulerTimeout = setTimeout(scheduleNext, delay);
       })
       .finally(() => {
         isExecuting = false;
       });
   };
 
-  // Start immediately
-  scheduleNext();
+  // Helper function to calculate next aligned run time
+  const calculateNextAlignedRun = (now) => {
+    // Start from 9:15 AM today
+    let nextRun = moment().hour(9).minute(15).second(0).millisecond(0);
+
+    // Keep adding 1 hour until we find a time after 'now'
+    while (nextRun.isSameOrBefore(now)) {
+      nextRun.add(1, 'hour');
+    }
+
+    return nextRun;
+  };
+
+  // Schedule first run
+  patternSchedulerTimeout = setTimeout(scheduleNext, delay);
 };
 
 const stopPatternScheduler = () => {
@@ -725,6 +803,7 @@ const stopPatternScheduler = () => {
   isExecuting = false;
 };
 
+// Start the scheduler
 startPatternScheduler();
 // runauth()
 
