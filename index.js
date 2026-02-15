@@ -33,10 +33,10 @@ let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-const symbols = [
-  "NSE:EICHERMOT-EQ",
+// const symbols = [
+//   "NSE:EICHERMOT-EQ",
 
-];
+// ];
 // Create a bot that uses 'polling' to fetch new updates
 // const bot = new TelegramBot(telegramtoken, {polling: true});
 
@@ -362,7 +362,7 @@ let sentPatterns = new Set();
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
 
     // Get current time and calculate lookback period accounting for weekends
