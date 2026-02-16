@@ -93,15 +93,11 @@ const runauth = async () => {
 
 
 
-
 function loadSymbols(inputExcel, columnName = "symbol") {
-
   const workbook = XLSX.readFile(inputExcel);
-
 
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
-
 
   const data = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
@@ -125,7 +121,6 @@ function loadSymbols(inputExcel, columnName = "symbol") {
 }
 
 const analyzePattern = (emadata, bcvc) => {
-
   if (!emadata.crossover || emadata.crossover.length === 0) {
     return { found: false, reason: "No crossovers found" };
   }
@@ -133,10 +128,9 @@ const analyzePattern = (emadata, bcvc) => {
   const latestCrossover = emadata.crossover[0];
   const crossoverTimestamp = latestCrossover.timestampUnix;
 
-
   const formationsAfterCrossover = bcvc.formations
     .filter((formation) => formation.timestampUnix > crossoverTimestamp)
-    .sort((a, b) => a.timestampUnix - b.timestampUnix); // Sort by time ascending
+    .sort((a, b) => a.timestampUnix - b.timestampUnix);
 
   if (formationsAfterCrossover.length === 0) {
     return {
@@ -145,9 +139,7 @@ const analyzePattern = (emadata, bcvc) => {
     };
   }
 
-
   if (latestCrossover.type === "BULLISH_CROSSOVER") {
-
     const firstBearishIndex = formationsAfterCrossover.findIndex(
       (f) => f.isBearish,
     );
@@ -212,11 +204,7 @@ const analyzePattern = (emadata, bcvc) => {
         bullishHigh: nextBCVC.high,
       },
     };
-  }
-
-
-  else if (latestCrossover.type === "BEARISH_CROSSOVER") {
-
+  } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
     const firstWhiteIndex = formationsAfterCrossover.findIndex(
       (f) => f.isBullish && f.candleColor === "white",
     );
@@ -230,7 +218,6 @@ const analyzePattern = (emadata, bcvc) => {
 
     const firstWhiteBCVC = formationsAfterCrossover[firstWhiteIndex];
 
-
     const redCandlesAfterWhite = formationsAfterCrossover
       .slice(firstWhiteIndex + 1)
       .filter((f) => f.candleColor === "red");
@@ -241,7 +228,6 @@ const analyzePattern = (emadata, bcvc) => {
         reason: "No RED candles found after the WHITE BCVC",
       };
     }
-
 
     const whiteLow = firstWhiteBCVC.low;
     const redCandleBelowLow = redCandlesAfterWhite.find(
@@ -298,7 +284,6 @@ const getTrailingTradingDays = (tradingDaysCount) => {
     const checkDate = moment().subtract(calendarDaysBack, 'days');
     const dayOfWeek = checkDate.day();
 
-
     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
       tradingDaysFound++;
     }
@@ -316,7 +301,6 @@ const getTrailingTradingDays = (tradingDaysCount) => {
 };
 
 const generatePatternId = (symbol, pattern) => {
-
   const crossoverTime = pattern.crossover.timestampUnix;
 
   if (pattern.crossoverType === "BULLISH_CROSSOVER") {
@@ -328,11 +312,11 @@ const generatePatternId = (symbol, pattern) => {
   }
 };
 
-
-// Keep only sentPatterns - remove processedSymbols
-let sentPatterns = new Set();
-let symbolsWithRecentCrossovers = new Set(); // NEW: Track symbols with recent crossovers for the day
-let lastScanDate = null; // NEW: Track when we last did a full scan
+// 🎯 OPTIMIZED FOR INTRADAY: Track only within current session
+// Since you run fresh daily, we only need to prevent duplicate notifications
+// for SAME crossover within the trading day (not across days)
+let sentPatterns = new Set(); // Patterns already notified today
+let symbolCrossoverCache = new Map(); // Symbol -> {crossoverTimestamp, crossoverType} for intraday tracking
 
 const startlogic = async (isFirstRun = false) => {
   try {
@@ -347,34 +331,25 @@ const startlogic = async (isFirstRun = false) => {
 
     const BCVC_LOOKBACK_DAYS = calendarDaysBack + 2;
 
-    // 🔥 NEW: Reset tracking if it's a new day
-    if (lastScanDate !== today) {
-      console.log(`📅 New trading day detected: ${today}`);
-      console.log(`🔄 Resetting daily crossover tracking...`);
-      symbolsWithRecentCrossovers.clear();
-      lastScanDate = today;
-    }
-
-    // 🔥 NEW: Determine if we need a full scan or targeted scan
-    const isFullScan = isFirstRun || symbolsWithRecentCrossovers.size === 0;
-    const symbolsToProcess = isFullScan 
-      ? symbols.slice(0, Math.min(208, symbols.length))
-      : Array.from(symbolsWithRecentCrossovers);
+    // For daily runs, we process ALL symbols that have recent crossovers
+    // No need for "targeted scan" since it's fresh every morning
+    const symbolsToProcess = symbols.slice(0, Math.min(208, symbols.length));
 
     let patternsFound = 0;
     let newPatternsFound = 0;
     let crossoversChecked = 0;
     let recentCrossovers = 0;
     let skippedSymbols = 0;
+    let differentCrossoversDetected = 0; // Count of symbols with multiple crossovers today
 
     const BATCH_SIZE = 20;
     const WAIT_TIME = 15000;
 
     console.log(`\n🕐 Current Time: ${now.format("YYYY-MM-DD HH:mm:ss")}`);
     console.log(`🔄 Run Type: ${isFirstRun ? "INITIAL RUN (no notifications)" : "SCHEDULED RUN (notifications enabled)"}`);
-    console.log(`🎯 Scan Mode: ${isFullScan ? "FULL SCAN (all symbols)" : `TARGETED SCAN (${symbolsToProcess.length} symbols with recent crossovers)`}`);
+    console.log(`🎯 Processing ALL symbols with recent crossovers`);
     console.log(
-      `📅 Checking for crossovers since: ${lookbackDate.format("YYYY-MM-DD HH:mm:ss")}`,
+      `📅 Checking for crossovers since: ${lookbackDate.format("YYYY-MM-DD HH:mm:ss")} (${tradingDaysCount} trading days)`,
     );
     console.log(
       `📊 BCVC fetch period: ${BCVC_LOOKBACK_DAYS} days (${calendarDaysBack} lookback + 2 buffer)`,
@@ -382,8 +357,7 @@ const startlogic = async (isFirstRun = false) => {
     console.log(
       `⚙️  Rate Limiting: Processing ${BATCH_SIZE} symbols, then waiting ${WAIT_TIME / 1000} seconds`,
     );
-    console.log(`📝 Patterns already tracked: ${sentPatterns.size}`);
-    console.log(`🎯 Symbols with recent crossovers: ${symbolsWithRecentCrossovers.size}`);
+    console.log(`📝 Patterns already notified today: ${sentPatterns.size}`);
     console.log("=".repeat(60));
 
     for (let i = 0; i < symbolsToProcess.length; i++) {
@@ -393,37 +367,15 @@ const startlogic = async (isFirstRun = false) => {
       );
 
       try {
-        // 🔥 MODIFIED: Skip check only if NOT in full scan mode AND symbol already has pattern
-        if (!isFullScan && !isFirstRun) {
-          const hasTrackedPattern = Array.from(sentPatterns).some(patternId => 
-            patternId.startsWith(`${symbol}_`)
-          );
-          
-          if (hasTrackedPattern) {
-            skippedSymbols++;
-            console.log(`⏭️  Skipping ${symbol}: Already has tracked pattern(s)`);
-            const matchingPatterns = Array.from(sentPatterns).filter(id => id.startsWith(`${symbol}_`));
-            console.log(`   Tracked patterns: ${matchingPatterns.length}`);
-            continue;
-          }
-        }
-
         const emadata = await emaManager.generateEMAReport(symbol);
 
         if (!emadata.crossover || emadata.crossover.length === 0) {
           console.log(`⏭️  Skipping ${symbol}: No crossovers found`);
-          
-          // 🔥 NEW: Remove from recent crossovers if no crossover found
-          if (symbolsWithRecentCrossovers.has(symbol)) {
-            symbolsWithRecentCrossovers.delete(symbol);
-            console.log(`   Removed from recent crossovers tracking`);
-          }
           continue;
         }
 
         crossoversChecked++;
         const latestCrossover = emadata.crossover[0];
-
         const crossoverTime = moment.unix(latestCrossover.timestampUnix);
 
         if (crossoverTime.isBefore(lookbackDate)) {
@@ -435,19 +387,64 @@ const startlogic = async (isFirstRun = false) => {
           console.log(
             `   Crossover: ${latestCrossover.type} at ${crossoverTime.format("YYYY-MM-DD HH:mm")} (${crossoverTime.format("dddd")})`,
           );
-          
-          // 🔥 NEW: Remove from recent crossovers if crossover is old
-          if (symbolsWithRecentCrossovers.has(symbol)) {
-            symbolsWithRecentCrossovers.delete(symbol);
-            console.log(`   Removed from recent crossovers tracking (crossover too old)`);
-          }
           continue;
         }
 
-        // 🔥 NEW: Add to recent crossovers tracking
-        if (!symbolsWithRecentCrossovers.has(symbol)) {
-          symbolsWithRecentCrossovers.add(symbol);
-          console.log(`✓ Added ${symbol} to recent crossovers tracking`);
+        // 🔥 CRITICAL FIX: Check if this is a DIFFERENT crossover than what we've seen today
+        const cachedCrossover = symbolCrossoverCache.get(symbol);
+        const currentCrossoverKey = `${latestCrossover.type}_${latestCrossover.timestampUnix}`;
+        
+        let isNewOrDifferentCrossover = false;
+        
+        if (!cachedCrossover) {
+          // First time seeing this symbol's crossover today
+          isNewOrDifferentCrossover = true;
+          symbolCrossoverCache.set(symbol, {
+            crossoverTimestamp: latestCrossover.timestampUnix,
+            crossoverType: latestCrossover.type,
+            key: currentCrossoverKey
+          });
+          console.log(`✓ New crossover detected for ${symbol}: ${latestCrossover.type}`);
+        } else if (cachedCrossover.key !== currentCrossoverKey) {
+          // 🎯 DIFFERENT crossover detected (direction changed or new timestamp)
+          // This is the KEY scenario: bullish -> bearish or bearish -> bullish
+          isNewOrDifferentCrossover = true;
+          differentCrossoversDetected++;
+          console.log(`🔄 ⚡ DIFFERENT CROSSOVER DETECTED for ${symbol}!`);
+          console.log(`   Previous: ${cachedCrossover.crossoverType} @ ${moment.unix(cachedCrossover.crossoverTimestamp).format("HH:mm")}`);
+          console.log(`   Current: ${latestCrossover.type} @ ${crossoverTime.format("HH:mm")}`);
+          console.log(`   👉 This is a REVERSAL - will check for new pattern`);
+          
+          // Update cache with new crossover
+          symbolCrossoverCache.set(symbol, {
+            crossoverTimestamp: latestCrossover.timestampUnix,
+            crossoverType: latestCrossover.type,
+            key: currentCrossoverKey
+          });
+        }
+
+        // 🔥 SMART SKIP LOGIC: Only skip if SAME crossover already has pattern sent
+        if (!isNewOrDifferentCrossover && !isFirstRun) {
+          // Generate the specific pattern ID for THIS crossover
+          const crossoverTypePrefix = latestCrossover.type.includes('BULLISH') ? 'BULL' : 'BEAR';
+          const potentialPatternPrefix = `${symbol}_${crossoverTypePrefix}_${latestCrossover.timestampUnix}`;
+          
+          // Check if this EXACT crossover already has a pattern sent
+          const alreadySentThisPattern = Array.from(sentPatterns).some(patternId => 
+            patternId.startsWith(potentialPatternPrefix)
+          );
+          
+          if (alreadySentThisPattern) {
+            skippedSymbols++;
+            console.log(`⏭️  Skipping ${symbol}: Pattern already sent for this crossover`);
+            const matchingPattern = Array.from(sentPatterns).find(id => 
+              id.startsWith(potentialPatternPrefix)
+            );
+            console.log(`   Pattern ID: ${matchingPattern}`);
+            continue;
+          } else {
+            console.log(`✓ Processing ${symbol}: Same crossover but pattern not sent yet (still forming)`);
+          }
         }
 
         recentCrossovers++;
@@ -488,7 +485,7 @@ const startlogic = async (isFirstRun = false) => {
           console.log(`✅ PATTERN FOUND for ${symbol}!`);
           console.log(`📊 Crossover Type: ${pattern.crossoverType}`);
           console.log(`🆔 Pattern ID: ${patternId}`);
-          console.log(`🔔 Status: ${isNewPattern ? "NEW - Will send notification" : "ALREADY TRACKED - Skipping notification"}`);
+          console.log(`🔔 Status: ${isNewPattern ? "NEW - Will send notification" : "ALREADY SENT - Skipping notification"}`);
 
           const formattedSummary = {
             ...pattern.summary,
@@ -616,6 +613,7 @@ const startlogic = async (isFirstRun = false) => {
           }
         } else {
           console.log(`❌ Pattern not found for ${symbol}: ${pattern.reason}`);
+          console.log(`   Will check again in next run if crossover still recent`);
         }
       } catch (error) {
         console.error(`Error processing ${symbol}:`, error.message);
@@ -642,17 +640,16 @@ const startlogic = async (isFirstRun = false) => {
     console.log("📊 SUMMARY STATISTICS");
     console.log("=".repeat(60));
     console.log(`Scan completed at: ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
-    console.log(`Scan mode: ${isFullScan ? "FULL SCAN" : "TARGETED SCAN"}`);
     console.log(`Total symbols in list: ${symbols.length}`);
     console.log(`Symbols processed this run: ${symbolsToProcess.length}`);
-    console.log(`Symbols skipped (already tracked): ${skippedSymbols}`);
+    console.log(`Symbols skipped (already sent): ${skippedSymbols}`);
+    console.log(`🔄 Symbols with DIFFERENT crossovers today: ${differentCrossoversDetected} ⚡`);
     console.log(`Symbols with crossovers: ${crossoversChecked}`);
     console.log(`Recent crossovers (within ${tradingDaysCount} trading days): ${recentCrossovers}`);
-    console.log(`🎯 Symbols being tracked for today: ${symbolsWithRecentCrossovers.size}`);
     console.log(`Total patterns found: ${patternsFound}`);
-    console.log(`New patterns (not previously tracked): ${newPatternsFound}`);
+    console.log(`New patterns (not previously notified): ${newPatternsFound}`);
     console.log(`Telegram notifications sent: ${isFirstRun ? 0 : newPatternsFound}`);
-    console.log(`Total patterns tracked: ${sentPatterns.size}`);
+    console.log(`Total patterns tracked today: ${sentPatterns.size}`);
     console.log(
       `Success rate: ${recentCrossovers > 0 ? ((patternsFound / recentCrossovers) * 100).toFixed(2) : 0}%`,
     );
@@ -663,39 +660,35 @@ const startlogic = async (isFirstRun = false) => {
 };
 
 const startPatternScheduler = () => {
-
   stopPatternScheduler();
 
   const now = moment();
   const startTime = moment().hour(9).minute(15).second(0).millisecond(0);
   const endTime = moment().hour(15).minute(45).second(0).millisecond(0);
 
+  // if (now.isAfter(endTime)) {
+  //   console.log("⏰ Trading hours ended (after 3:15 PM). Pattern scheduler will not start.");
+  //   console.log("⏰ Will resume tomorrow at 9:15 AM");
+  //   return;
+  // }
 
-  if (now.isAfter(endTime)) {
-    console.log("⏰ Trading hours ended (after 3:15 PM). Pattern scheduler will not start.");
-    console.log("⏰ Will resume tomorrow at 9:15 AM");
-    return;
-  }
-
-  if (now.isBefore(startTime)) {
-    console.log("⏰ Before trading hours. Pattern scheduler will start at 9:15 AM");
-    const delay = startTime.diff(now);
-    patternSchedulerTimeout = setTimeout(startPatternScheduler, delay);
-    return;
-  }
-
+  // if (now.isBefore(startTime)) {
+  //   console.log("⏰ Before trading hours. Pattern scheduler will start at 9:15 AM");
+  //   const delay = startTime.diff(now);
+  //   patternSchedulerTimeout = setTimeout(startPatternScheduler, delay);
+  //   return;
+  // }
 
   let firstRun = moment().hour(9).minute(15).second(0).millisecond(0);
 
   if (now.isAfter(firstRun)) {
-
     firstRun = now.clone().second(0).millisecond(0);
   }
 
-  if (firstRun.isAfter(endTime)) {
-    console.log("⏰ Next run would be after 3:15 PM. Pattern scheduler stopped.");
-    return;
-  }
+  // if (firstRun.isAfter(endTime)) {
+  //   console.log("⏰ Next run would be after 3:15 PM. Pattern scheduler stopped.");
+  //   return;
+  // }
 
   const delay = firstRun.diff(moment());
   console.log(`⏳ Pattern detection will start at: ${firstRun.format("HH:mm:ss")}`);
@@ -707,16 +700,14 @@ const startPatternScheduler = () => {
   const scheduleNext = () => {
     const now = moment();
 
-    if (now.isAfter(endTime)) {
-      console.log("⏰ 3:15 PM reached. Stopping pattern scheduler...");
-      stopPatternScheduler();
-      return;
-    }
-
+    // if (now.isAfter(endTime)) {
+    //   console.log("⏰ 3:15 PM reached. Stopping pattern scheduler...");
+    //   stopPatternScheduler();
+    //   return;
+    // }
 
     if (isExecuting) {
       console.log("⚠️ startlogic already executing, skipping this cycle");
-
 
       const nextRun = calculateNextAlignedRun(now);
 
@@ -735,7 +726,6 @@ const startPatternScheduler = () => {
     console.log(`▶ Run Type: ${isFirstRun ? "INITIAL RUN" : "SCHEDULED RUN"}`);
     console.log('='.repeat(60) + '\n');
 
-
     const nextRun = calculateNextAlignedRun(now);
 
     isExecuting = true;
@@ -750,7 +740,6 @@ const startPatternScheduler = () => {
           console.log(`✅ Initial baseline established. Future runs will send Telegram notifications.\n`);
         }
 
-
         if (nextRun.isAfter(endTime)) {
           console.log(`⏰ Next run (${nextRun.format("HH:mm:ss")}) would be after 3:15 PM. Stopping scheduler.`);
           stopPatternScheduler();
@@ -758,7 +747,6 @@ const startPatternScheduler = () => {
         }
 
         console.log(`⏰ Next run scheduled at: ${nextRun.format("HH:mm:ss")}\n`);
-
 
         const delay = Math.max(0, nextRun.diff(moment()));
         patternSchedulerTimeout = setTimeout(scheduleNext, delay);
@@ -782,12 +770,9 @@ const startPatternScheduler = () => {
       });
   };
 
- 
   const calculateNextAlignedRun = (now) => {
-  
     let nextRun = moment().hour(9).minute(15).second(0).millisecond(0);
 
-    
     while (nextRun.isSameOrBefore(now)) {
       nextRun.add(1, 'hour');
     }
