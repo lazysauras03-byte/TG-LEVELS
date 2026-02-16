@@ -7,7 +7,6 @@ class BCVCManager {
     constructor() {
         this.fyers = fyers;
         
-        // BCVC Parameters (configurable)
         this.config = {
             volumePeriod: 20,                    // Period for average volume calculation
             volumeProportion: 1.25,              // Volume must be 1.25x average
@@ -16,10 +15,9 @@ class BCVCManager {
             includeRed: false                    // Whether to include ALL red candles (any bearish/down candle)
         };
         
-        // Store cache per symbol-timeframe: { "symbol-resolution": {...} }
+
         this.bcvcCache = new Map();
-        
-        // Timeframe configurations
+
         this.timeframes = {
             '1': { resolution: '1', duration: 1, unit: 'minutes', rollingDays: 30 },      // 1 min
             '5': { resolution: '5', duration: 5, unit: 'minutes', rollingDays: 30 },      // 5 min
@@ -29,26 +27,19 @@ class BCVCManager {
         };
     }
 
-    /**
-     * Update BCVC configuration
-     */
+  
     updateConfig(newConfig) {
         this.config = { ...this.config, ...newConfig };
         console.log('✅ BCVC configuration updated:', this.config);
-        // Clear cache when config changes
+
         this.clearAllCache();
     }
 
-    /**
-     * Get cache key for symbol-timeframe combination
-     */
     getCacheKey(symbol, resolution) {
         return `${symbol}-${resolution}`;
     }
 
-    /**
-     * Check if a candle is still forming (not completed yet)
-     */
+
     isFormingCandle(candleTimestamp, resolution) {
         const tfConfig = this.timeframes[resolution];
         const candleTime = moment.unix(candleTimestamp);
@@ -64,14 +55,12 @@ class BCVCManager {
         return isForming;
     }
 
-    /**
-     * Calculate EMA for volume (matching Pine Script ta.ema)
-     */
+
     calculateEMA(values, period) {
         if (values.length === 0) return null;
         
         const multiplier = 2 / (period + 1);
-        let ema = values[0]; // Start with first value
+        let ema = values[0]; 
         
         for (let i = 1; i < values.length; i++) {
             ema = (values[i] * multiplier) + (ema * (1 - multiplier));
@@ -80,9 +69,6 @@ class BCVCManager {
         return ema;
     }
 
-    /**
-     * Calculate average volume using EMA (matching Pine Script)
-     */
     calculateAverageVolume(candles, period = this.config.volumePeriod) {
         if (candles.length < period) {
             return null;
@@ -92,9 +78,6 @@ class BCVCManager {
         return this.calculateEMA(volumes, period);
     }
 
-    /**
-     * Calculate average candle range using EMA (matching Pine Script)
-     */
     calculateAverageRange(candles, lookbackPeriod = this.config.bigCandleLookbackPeriod) {
         if (candles.length < lookbackPeriod) {
             return null;
@@ -109,11 +92,6 @@ class BCVCManager {
         return this.calculateEMA(ranges, lookbackPeriod);
     }
 
-    /**
-     * Check if candle qualifies as BCVC (Big Candle with Volume Confirmation)
-     * Matches Pine Script logic: white (bullish), orange (bearish), and optionally red (high volume bearish)
-     * Returns detailed analysis
-     */
     analyzeBCVC(candles) {
         const minRequiredCandles = Math.max(
             this.config.volumePeriod,
@@ -125,7 +103,6 @@ class BCVCManager {
             return null;
         }
 
-        // Get the last candle (current candle to analyze)
         const lastCandle = candles[candles.length - 1];
         const timestamp = lastCandle[0];
         const open = parseFloat(lastCandle[1]);
@@ -134,51 +111,47 @@ class BCVCManager {
         const close = parseFloat(lastCandle[4]);
         const volume = parseFloat(lastCandle[5]);
 
-        // Calculate candle properties
+
         const candleRange = high - low;
         const candleBody = Math.abs(close - open);
         const isUpBar = close > open;
         const isDownBar = open > close;
 
-        // Calculate average volume using EMA (matching Pine Script ta.ema)
         const avgVolume = this.calculateAverageVolume(candles, this.config.volumePeriod);
 
-        // Calculate average range using EMA (matching Pine Script ta.ema)
+
         const avgRange = this.calculateAverageRange(candles, this.config.bigCandleLookbackPeriod);
 
         if (!avgVolume || !avgRange) {
             return null;
         }
 
-        // Check conditions (matching Pine Script logic)
         const volumeThreshold = avgVolume * this.config.volumeProportion;
         const rangeThreshold = avgRange * this.config.bigCandleProportion;
 
         const isHighVolume = volume > volumeThreshold;
         const isBigCandle = candleRange > rangeThreshold;
-        
-        // BCVC logic with red candle support
+
         let isBCVC = false;
         let candleColor = 'none';
         let isBullish = false;
         let isBearish = false;
         let bcvcType = null;
 
-        // White candle (bullish): High volume AND big candle
         if (isUpBar && isHighVolume && isBigCandle) {
             isBCVC = true;
             candleColor = 'white';
             isBullish = true;
             bcvcType = '🚀 BULLISH BCVC (WHITE)';
         }
-        // Orange candle (bearish): High volume AND big candle
+
         else if (isDownBar && isHighVolume && isBigCandle) {
             isBCVC = true;
             candleColor = 'orange';
             isBearish = true;
             bcvcType = '🔴 BEARISH BCVC (ORANGE)';
         }
-        // Red candle (bearish): ANY down candle (if enabled)
+
         else if (this.config.includeRed && isDownBar) {
             isBCVC = true;
             candleColor = 'red';
@@ -186,15 +159,13 @@ class BCVCManager {
             bcvcType = '🔻 BEARISH BCVC (RED - Any Down Candle)';
         }
 
-        // Calculate ratios for detailed analysis
         const volumeRatio = avgVolume > 0 ? volume / avgVolume : 0;
         const rangeRatio = avgRange > 0 ? candleRange / avgRange : 0;
 
         return {
             timestamp: moment.unix(timestamp).format('YYYY-MM-DD HH:mm'),
             timestampUnix: timestamp,
-            
-            // Candle data
+
             open,
             high,
             low,
@@ -202,39 +173,33 @@ class BCVCManager {
             volume,
             candleRange,
             candleBody,
-            
-            // Direction
+
             isUpBar,
             isDownBar,
             isBullish,
             isBearish,
             candleColor,
             direction: isBullish ? 'BULLISH' : isBearish ? 'BEARISH' : 'NEUTRAL',
-            
-            // Volume analysis
+
             avgVolume,
             volumeThreshold,
             volumeRatio: volumeRatio.toFixed(2),
             isHighVolume,
             volumeQualified: isHighVolume ? '✅' : '❌',
-            
-            // Range analysis
+
             avgRange,
             rangeThreshold,
             rangeRatio: rangeRatio.toFixed(2),
             isBigCandle,
             rangeQualified: isBigCandle ? '✅' : '❌',
-            
-            // BCVC result
+
             isBCVC,
             bcvcStatus: isBCVC ? '🔥 BCVC CONFIRMED' : 'Not BCVC',
             bcvcType
         };
     }
 
-    /**
-     * Get BCVC analysis for a symbol and timeframe
-     */
+
     async getBCVC(symbol, resolution = '60', maxRetries = 10, retryDelay = 2000) {
         const cacheKey = this.getCacheKey(symbol, resolution);
         const cache = this.bcvcCache.get(cacheKey);
@@ -245,7 +210,6 @@ class BCVCManager {
             return null;
         }
 
-        // Check if we need to initialize or refresh
         const needsInit = !cache ||
             cache.symbol !== symbol ||
             cache.resolution !== resolution ||
@@ -283,7 +247,7 @@ class BCVCManager {
 
                     let candles = response.candles;
 
-                    // Remove the last candle if it's still forming
+
                     const lastCandle = candles[candles.length - 1];
                     if (this.isFormingCandle(lastCandle[0], resolution)) {
                         console.log(`🔧 Removing forming candle for initialization`);
@@ -293,7 +257,7 @@ class BCVCManager {
                     const bcvcResult = this.analyzeBCVC(candles);
 
                     if (bcvcResult) {
-                        // Cache the result
+          
                         this.bcvcCache.set(cacheKey, {
                             symbol,
                             resolution,
@@ -339,7 +303,7 @@ class BCVCManager {
             return null;
         }
 
-        // INCREMENTAL UPDATE
+
         let retryCount = 0;
 
         while (retryCount < maxRetries) {
@@ -371,7 +335,7 @@ class BCVCManager {
                         await this.sleep(retryDelay * retryCount);
                         continue;
                     }
-                    // Return cached values if available
+          
                     if (cache && cache.lastAnalysis) {
                         console.log(`⚠️ Returning cached BCVC values for ${symbol} [${resolution}]`);
                         return {
@@ -384,7 +348,7 @@ class BCVCManager {
                     return null;
                 }
 
-                // Filter out forming candles
+     
                 let completedCandles = response.candles.filter(candle =>
                     !this.isFormingCandle(candle[0], resolution)
                 );
@@ -408,7 +372,6 @@ class BCVCManager {
                     return null;
                 }
 
-                // Fetch full history for accurate calculation
                 const fullValidFrom = moment().subtract(tfConfig.rollingDays, 'days');
                 const fullResponse = await this.fyers.getHistory({
                     symbol: symbol,
@@ -427,7 +390,7 @@ class BCVCManager {
                     const lastCompletedCandle = fullCandles[fullCandles.length - 1];
                     const candleTimestamp = lastCompletedCandle[0];
 
-                    // Check if this is a new candle
+      
                     if (cache.lastCandleTimestamp === candleTimestamp) {
                         console.log(`⚠ Skipping update for ${symbol} [${resolution}] - same candle already processed`);
                         return {
@@ -441,7 +404,7 @@ class BCVCManager {
                     const bcvcResult = this.analyzeBCVC(fullCandles);
 
                     if (bcvcResult) {
-                        // Update cache
+        
                         this.bcvcCache.set(cacheKey, {
                             symbol,
                             resolution,
@@ -468,7 +431,6 @@ class BCVCManager {
                     }
                 }
 
-                // If we get here, reinitialize
                 console.log(`🔄 Reinitializing BCVC for ${symbol} [${resolution}]...`);
                 this.bcvcCache.delete(cacheKey);
                 await this.sleep(2000);
@@ -483,7 +445,7 @@ class BCVCManager {
             }
         }
 
-        // Final fallback
+   
         if (cache && cache.lastAnalysis) {
             console.log(`⚠️ All retries failed, returning cached BCVC values for ${symbol} [${resolution}]`);
             return {
@@ -498,9 +460,7 @@ class BCVCManager {
         return null;
     }
 
-    /**
-     * Get BCVC for multiple symbols
-     */
+
     async getMultipleBCVC(symbols, resolution = '60', maxRetries = 10, retryDelay = 2000) {
         const results = {};
 
@@ -511,9 +471,7 @@ class BCVCManager {
         return results;
     }
 
-    /**
-     * Get BCVC across multiple timeframes for a symbol
-     */
+
     async getMultiTimeframeBCVC(symbol, resolutions = ['5', '15', '60'], maxRetries = 10, retryDelay = 2000) {
         const results = {};
 
@@ -524,9 +482,7 @@ class BCVCManager {
         return results;
     }
 
-    /**
-     * Scan for BCVC signals across multiple symbols
-     */
+
     async scanBCVC(symbols, resolution = '60', maxRetries = 10, retryDelay = 2000) {
         console.log(`\n🔍 Scanning ${symbols.length} symbols for BCVC signals [${resolution}]...\n`);
         
@@ -567,16 +523,11 @@ class BCVCManager {
         return bcvcSignals;
     }
 
-    /**
-     * Sleep utility
-     */
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    /**
-     * Clear cache for a specific symbol
-     */
+
     clearSymbolData(symbol, resolution = null) {
         if (resolution) {
             const cacheKey = this.getCacheKey(symbol, resolution);
@@ -600,17 +551,13 @@ class BCVCManager {
         }
     }
 
-    /**
-     * Clear all cache
-     */
+
     clearAllCache() {
         this.bcvcCache.clear();
         console.log("✓ BCVC cache cleared completely");
     }
 
-    /**
-     * Get cache status for debugging
-     */
+
     getCacheStatus() {
         const entries = Array.from(this.bcvcCache.entries()).map(([key, value]) => ({
             key,
@@ -625,9 +572,7 @@ class BCVCManager {
         return entries;
     }
 
-    /**
-     * Get debug info for a specific symbol-resolution
-     */
+
     getDebugInfo(symbol, resolution = '60') {
         const cacheKey = this.getCacheKey(symbol, resolution);
         const cache = this.bcvcCache.get(cacheKey);
@@ -646,24 +591,13 @@ class BCVCManager {
         };
     }
 
-    /**
-     * Get historical BCVC formations over a specified period
-     * @param {string} symbol - Trading symbol
-     * @param {string} resolution - Timeframe resolution
-     * @param {number} days - Number of days to look back (default: 20)
-     * @param {string} includeRed - Pass "red" to include all red candles
-     * @param {number} maxRetries - Maximum retry attempts (default: 10)
-     * @param {number} retryDelay - Delay between retries (default: 2000)
-     * @returns {Object} Historical BCVC data including all formations
-     */
     async getHistoricalBCVC(symbol, resolution = '60', days = 20, includeRed = null, maxRetries = 10, retryDelay = 2000) {
-        // Enable red candles if "red" is passed
+
         const shouldIncludeRed = includeRed === "red";
         
-        // Temporarily store original config
+
         const originalIncludeRed = this.config.includeRed;
-        
-        // Set includeRed for this call if specified
+
         if (shouldIncludeRed) {
             this.config.includeRed = true;
         }
@@ -705,21 +639,20 @@ class BCVCManager {
 
                 let candles = response.candles;
 
-                // Remove the last candle if it's still forming
                 const lastCandle = candles[candles.length - 1];
                 if (this.isFormingCandle(lastCandle[0], resolution)) {
                     console.log(`🔧 Removing forming candle for historical analysis`);
                     candles = candles.slice(0, -1);
                 }
 
-                // Analyze each candle for BCVC
+ 
                 const bcvcFormations = [];
                 const minRequiredCandles = Math.max(
                     this.config.volumePeriod,
                     this.config.bigCandleLookbackPeriod
                 ) + 1;
 
-                // Start from index that allows full calculation
+
                 for (let i = minRequiredCandles - 1; i < candles.length; i++) {
                     const candlesUpToIndex = candles.slice(0, i + 1);
                     const analysis = this.analyzeBCVC(candlesUpToIndex);
@@ -748,7 +681,7 @@ class BCVCManager {
                     }
                 }
 
-                // Calculate statistics
+
                 const bullishCount = bcvcFormations.filter(f => f.isBullish).length;
                 const bearishCount = bcvcFormations.filter(f => f.isBearish).length;
                 const redCount = bcvcFormations.filter(f => f.candleColor === 'red').length;
@@ -756,7 +689,6 @@ class BCVCManager {
                 const whiteCount = bcvcFormations.filter(f => f.candleColor === 'white').length;
                 const totalCount = bcvcFormations.length;
 
-                // Calculate average ratios
                 const avgVolumeRatio = totalCount > 0 
                     ? bcvcFormations.reduce((sum, f) => sum + f.volumeRatio, 0) / totalCount 
                     : 0;
@@ -771,8 +703,6 @@ class BCVCManager {
                     periodStart: validFrom.format('YYYY-MM-DD'),
                     periodEnd: validTo.format('YYYY-MM-DD'),
                     totalCandles: candles.length,
-                    
-                    // BCVC Statistics
                     bcvcCount: totalCount,
                     bullishCount,
                     bearishCount,
@@ -780,19 +710,12 @@ class BCVCManager {
                     orangeCount,
                     redCount,
                     bcvcPercentage: ((totalCount / candles.length) * 100).toFixed(2),
-                    
-                    // Average characteristics
                     avgVolumeRatio: avgVolumeRatio.toFixed(2),
                     avgRangeRatio: avgRangeRatio.toFixed(2),
-                    
-                    // All formations
                     formations: bcvcFormations,
-                    
-                    // Most recent BCVC
                     mostRecent: bcvcFormations.length > 0 ? bcvcFormations[bcvcFormations.length - 1] : null
                 };
 
-                // Restore original config
                 this.config.includeRed = originalIncludeRed;
 
                 return result;
@@ -806,23 +729,12 @@ class BCVCManager {
             }
         }
 
-        // Restore original config before returning null
         this.config.includeRed = originalIncludeRed;
 
         console.error(`❌ Failed to get historical BCVC for ${symbol} [${resolution}] after ${maxRetries} attempts`);
         return null;
     }
 
-    /**
-     * Get historical BCVC for multiple symbols
-     * @param {Array} symbols - Array of trading symbols
-     * @param {string} resolution - Timeframe resolution
-     * @param {number} days - Number of days to look back
-     * @param {string} includeRed - Pass "red" to include all red candles
-     * @param {number} maxRetries - Maximum retry attempts
-     * @param {number} retryDelay - Delay between retries
-     * @returns {Object} Historical BCVC data for all symbols
-     */
 
  async getMultipleHistoricalBCVC(symbols, resolution = '60', days = 20, includeRed = null, maxRetries = 10, retryDelay = 2000) {
         console.log(`\n🔍 Analyzing ${symbols.length} symbols for BCVC formations over ${days} days...\n`);
@@ -844,7 +756,6 @@ class BCVCManager {
             const historical = await this.getHistoricalBCVC(symbol, resolution, days, includeRed, maxRetries, retryDelay);
             
             if (historical) {
-                // Store the full historical data including mostRecent
                 results[symbol] = historical;
                 
                 if (historical.bcvcCount > 0) {
@@ -855,15 +766,13 @@ class BCVCManager {
                     summary.totalOrange += historical.orangeCount;
                     summary.totalRed += historical.redCount;
                     summary.totalFormations += historical.bcvcCount;
-                    
-                    // Add mostRecent BCVC for this symbol to summary
+
                     if (historical.mostRecent) {
                         summary.mostRecent.push({
                             symbol,
                             ...historical.mostRecent
                         });
-                        
-                        // Print mostRecent for this symbol immediately
+
                         console.log(`\n📍 Most Recent BCVC for ${symbol}:`);
                         console.log(JSON.stringify({
                             symbol:symbol,
@@ -889,7 +798,6 @@ class BCVCManager {
             }
         }
 
-        // Sort mostRecent by timestamp (most recent first)
         summary.mostRecent.sort((a, b) => b.timestampUnix - a.timestampUnix);
 
         console.log(`\n📊 Multi-Symbol BCVC Summary (${days} days):`);
@@ -905,13 +813,7 @@ class BCVCManager {
         };
     }
 
-    /**
-     * Generate a detailed BCVC report for a symbol
-     * @param {string} symbol - Trading symbol
-     * @param {string} resolution - Timeframe resolution
-     * @param {number} days - Number of days to analyze
-     * @returns {Object} Formatted report
-     */
+
     async generateBCVCReport(symbol, resolution = '60', days = 20) {
         const historical = await this.getHistoricalBCVC(symbol, resolution, days);
         
@@ -965,7 +867,6 @@ class BCVCManager {
             allFormations: historical.formations
         };
 
-        // Print formatted report
         console.log(`\n${'='.repeat(80)}`);
         console.log(`BCVC ANALYSIS REPORT`);
         console.log(`${'='.repeat(80)}`);

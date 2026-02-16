@@ -5,22 +5,19 @@ const telegramchat ="8559767849"
 class EMAManager {
     constructor() {
         this.fyers = fyers;
-        
-        // EMA periods
+
         this.ema9Period = 9;
         this.ema100Period = 100;
-        
-        // Store cache per symbol
+
         this.emaCache = new Map();
         
-        // Timeframe configuration for 1 hour
+
         this.timeframe = {
             resolution: '60',
             duration: 60,
             rollingDays: 100
         };
-        
-        // Multipliers for EMA calculation
+
         this.ema9Multiplier = 2 / (this.ema9Period + 1);
         this.ema100Multiplier = 2 / (this.ema100Period + 1);
     }
@@ -273,7 +270,6 @@ class EMAManager {
             return null;
         }
 
-        // INCREMENTAL UPDATE
         let retryCount = 0;
 
         while (retryCount < maxRetries) {
@@ -672,20 +668,6 @@ class EMAManager {
                     current: emaHistory.length > 0 ? emaHistory[emaHistory.length - 1] : null
                 };
 
-                // console.log(`\n✅ Historical EMA Analysis for ${symbol}:`);
-                // console.log(`   Period: ${result.periodStart} to ${result.periodEnd}`);
-                // console.log(`   Total Candles: ${totalCandles}`);
-                // console.log(`   Bullish Trend: ${bullishCandles} (${result.trendStats.bullishPercentage}%)`);
-                // console.log(`   Bearish Trend: ${bearishCandles} (${result.trendStats.bearishPercentage}%)`);
-                // console.log(`   Crossovers: ${result.crossoverStats.totalCrossovers} (${bullishCrossovers}↑ ${bearishCrossovers}↓)`);
-                // console.log(`   Current Trend: ${result.trendStats.currentTrend} (${trendDuration} candles)`);
-
-                // if (result.current) {
-                //     console.log(`\n   Current State:`);
-                //     console.log(`     9 EMA Low: ${result.emaStats.currentEma9Low}`);
-                //     console.log(`     100 EMA Close: ${result.emaStats.currentEma100Close}`);
-                //     console.log(`     Difference: ${result.current.emaDifference.toFixed(2)} (${result.current.emaDifferencePercent}%)`);
-                // }
 
                 return result;
 
@@ -790,98 +772,9 @@ class EMAManager {
                 generatedAt: moment().format('YYYY-MM-DD HH:mm:ss')
             },
            crossover: historical.crossoverStats.allCrossovers.slice(-5).reverse()
-            // summary: {
-            //     totalCandles: historical.totalCandles,
-            //     bullishCandles: historical.trendStats.bullishCandles,
-            //     bearishCandles: historical.trendStats.bearishCandles,
-            //     bullishPercentage: historical.trendStats.bullishPercentage,
-            //     bearishPercentage: historical.trendStats.bearishPercentage,
-            //     currentTrend: historical.trendStats.currentTrend,
-            //     currentTrendDuration: historical.trendStats.currentTrendDuration
-            // },
-            
-            // crossovers: {
-            //     bullish: historical.crossoverStats.bullishCrossovers,
-            //     bearish: historical.crossoverStats.bearishCrossovers,
-            //     total: historical.crossoverStats.totalCrossovers,
-            //     // allCrossovers: historical.crossoverStats.allCrossovers
-            // },
-            
-            // emaValues: {
-            //     current: {
-            //         ema9Low: historical.emaStats.currentEma9Low,
-            //         ema100Close: historical.emaStats.currentEma100Close,
-            //         difference: historical.current ? historical.current.emaDifference.toFixed(2) : null,
-            //         differencePercent: historical.current ? historical.current.emaDifferencePercent : null
-            //     },
-            //     average: {
-            //         ema9Low: historical.emaStats.avgEma9Low,
-            //         ema100Close: historical.emaStats.avgEma100Close
-            //     }
-            // },
-            
-            // spreadAnalysis: historical.spreadAnalysis,
-            
-            // recentActivity: {
-            //     current: historical.current,
-            //     recentCrossovers: historical.crossoverStats.allCrossovers.slice(-5).reverse()
-            // },
-            
-            // fullHistory: historical.history
+        
         };
 
-        // console.log(`\n${'='.repeat(80)}`);
-        // console.log(`EMA ANALYSIS REPORT`);
-        // console.log(`${'='.repeat(80)}`);
-        // console.log(`\nSymbol: ${report.header.symbol} | Period: ${report.header.period}`);
-        // console.log(`Date Range: ${report.header.dateRange}`);
-        // console.log(`Generated: ${report.header.generatedAt}`);
-        
-        // console.log(`\n${'-'.repeat(80)}`);
-        // console.log(`SUMMARY`);
-        // console.log(`${'-'.repeat(80)}`);
-        // console.log(`Total Candles: ${report.summary.totalCandles}`);
-        // console.log(`Current Trend: ${report.summary.currentTrend} (${report.summary.currentTrendDuration} candles)`);
-        // console.log(`  🚀 Bullish: ${report.summary.bullishCandles} (${report.summary.bullishPercentage}%)`);
-        // console.log(`  🔴 Bearish: ${report.summary.bearishCandles} (${report.summary.bearishPercentage}%)`);
-        
-        // console.log(`\n${'-'.repeat(80)}`);
-        // console.log(`CROSSOVERS`);
-        // console.log(`${'-'.repeat(80)}`);
-        // console.log(`Total: ${report.crossovers.total}`);
-        // console.log(`  🚀 Bullish: ${report.crossovers.bullish}`);
-        // console.log(`  🔴 Bearish: ${report.crossovers.bearish}`);
-        
-        // console.log(`\n${'-'.repeat(80)}`);
-        // console.log(`CURRENT EMA VALUES`);
-        // console.log(`${'-'.repeat(80)}`);
-        // console.log(`9 EMA Low: ${report.emaValues.current.ema9Low}`);
-        // console.log(`100 EMA Close: ${report.emaValues.current.ema100Close}`);
-        // console.log(`Difference: ${report.emaValues.current.difference} (${report.emaValues.current.differencePercent}%)`);
-        
-        // if (report.recentActivity.recentCrossovers.length > 0) {
-        //     console.log(`\n${'-'.repeat(80)}`);
-        //     console.log(`RECENT CROSSOVERS (Last 5)`);
-        //     console.log(`${'-'.repeat(80)}`);
-        //     report.recentActivity.recentCrossovers.forEach((cross, idx) => {
-        //         console.log(`${idx + 1}. ${cross.timestamp} | ${cross.description}`);
-        //         console.log(`   Price: ${cross.price} | 9EMA: ${cross.ema9Low.toFixed(2)} | 100EMA: ${cross.ema100Close.toFixed(2)}`);
-        //     });
-        // }
-        
-        // if (report.spreadAnalysis.largestBullishSpread) {
-        //     console.log(`\n${'-'.repeat(80)}`);
-        //     console.log(`EXTREME SPREADS`);
-        //     console.log(`${'-'.repeat(80)}`);
-        //     console.log(`Largest Bullish: ${report.spreadAnalysis.largestBullishSpread.difference} (${report.spreadAnalysis.largestBullishSpread.differencePercent}%)`);
-        //     console.log(`  @ ${report.spreadAnalysis.largestBullishSpread.timestamp}`);
-        // }
-        // if (report.spreadAnalysis.largestBearishSpread) {
-        //     console.log(`Largest Bearish: ${report.spreadAnalysis.largestBearishSpread.difference} (${report.spreadAnalysis.largestBearishSpread.differencePercent}%)`);
-        //     console.log(`  @ ${report.spreadAnalysis.largestBearishSpread.timestamp}`);
-        // }
-        
-        // console.log(`\n${'='.repeat(80)}\n`);
         
         return report;
     }
