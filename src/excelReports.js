@@ -170,10 +170,6 @@ async function writePatternToExcel(symbol, pattern, isFirstRun, SEND_FIRST_RUN_N
     signalHigh,
     signalLow,
     signalClose,
-    nextOpen:       nextCandleOpen,
-    stopLoss,
-    targetPrice,
-    runType:        isFirstRun ? "FIRST RUN" : "SCHEDULED",
     detectedAt:     moment().format(DT_FMT),
   });
 
