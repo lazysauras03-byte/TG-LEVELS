@@ -28,6 +28,7 @@ let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
+const SEND_FIRST_RUN_NOTIFICATIONS = true;
 // const symbols = [
 //   "NSE:EICHERMOT-EQ",
 // ];
@@ -40,7 +41,6 @@ var tempauth;
 
 const raw = localStorage.getItem("token");
 tempauth = raw ? JSON.parse(raw) : null;
-
 
 let data = {
   grant_type: "refresh_token",
@@ -65,7 +65,6 @@ async function createAccess() {
   } catch (error) {
     console.error("Error:", error.message);
     if (error.response) {
-
       console.error("Status:", error.response.status);
       console.error("Data:", error.response.data);
     }
@@ -90,8 +89,6 @@ const runauth = async () => {
       console.log(err);
     });
 };
-
-
 
 function loadSymbols(inputExcel, columnName = "symbol") {
   const workbook = XLSX.readFile(inputExcel);
@@ -281,7 +278,7 @@ const getTrailingTradingDays = (tradingDaysCount) => {
 
   while (tradingDaysFound < tradingDaysCount) {
     calendarDaysBack++;
-    const checkDate = moment().subtract(calendarDaysBack, 'days');
+    const checkDate = moment().subtract(calendarDaysBack, "days");
     const dayOfWeek = checkDate.day();
 
     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
@@ -289,7 +286,7 @@ const getTrailingTradingDays = (tradingDaysCount) => {
     }
   }
 
-  const lookbackDate = moment().subtract(calendarDaysBack, 'days');
+  const lookbackDate = moment().subtract(calendarDaysBack, "days");
 
   console.log(`📊 Trading Days Calculation:`);
   console.log(`  Requested: ${tradingDaysCount} trading days`);
@@ -327,7 +324,8 @@ const startlogic = async (isFirstRun = false) => {
     const today = now.format("YYYY-MM-DD");
 
     const TRADING_DAYS_LOOKBACK = 5;
-    const { lookbackDate, calendarDaysBack, tradingDaysCount } = getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
+    const { lookbackDate, calendarDaysBack, tradingDaysCount } =
+      getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
 
     const BCVC_LOOKBACK_DAYS = calendarDaysBack + 2;
 
@@ -346,7 +344,9 @@ const startlogic = async (isFirstRun = false) => {
     const WAIT_TIME = 15000;
 
     console.log(`\n🕐 Current Time: ${now.format("YYYY-MM-DD HH:mm:ss")}`);
-    console.log(`🔄 Run Type: ${isFirstRun ? "INITIAL RUN (no notifications)" : "SCHEDULED RUN (notifications enabled)"}`);
+    console.log(
+      `🔄 Run Type: ${isFirstRun ? "INITIAL RUN (no notifications)" : "SCHEDULED RUN (notifications enabled)"}`,
+    );
     console.log(`🎯 Processing ALL symbols with recent crossovers`);
     console.log(
       `📅 Checking for crossovers since: ${lookbackDate.format("YYYY-MM-DD HH:mm:ss")} (${tradingDaysCount} trading days)`,
@@ -393,57 +393,69 @@ const startlogic = async (isFirstRun = false) => {
         // 🔥 CRITICAL FIX: Check if this is a DIFFERENT crossover than what we've seen today
         const cachedCrossover = symbolCrossoverCache.get(symbol);
         const currentCrossoverKey = `${latestCrossover.type}_${latestCrossover.timestampUnix}`;
-        
+
         let isNewOrDifferentCrossover = false;
-        
+
         if (!cachedCrossover) {
           // First time seeing this symbol's crossover today
           isNewOrDifferentCrossover = true;
           symbolCrossoverCache.set(symbol, {
             crossoverTimestamp: latestCrossover.timestampUnix,
             crossoverType: latestCrossover.type,
-            key: currentCrossoverKey
+            key: currentCrossoverKey,
           });
-          console.log(`✓ New crossover detected for ${symbol}: ${latestCrossover.type}`);
+          console.log(
+            `✓ New crossover detected for ${symbol}: ${latestCrossover.type}`,
+          );
         } else if (cachedCrossover.key !== currentCrossoverKey) {
           // 🎯 DIFFERENT crossover detected (direction changed or new timestamp)
           // This is the KEY scenario: bullish -> bearish or bearish -> bullish
           isNewOrDifferentCrossover = true;
           differentCrossoversDetected++;
           console.log(`🔄 ⚡ DIFFERENT CROSSOVER DETECTED for ${symbol}!`);
-          console.log(`   Previous: ${cachedCrossover.crossoverType} @ ${moment.unix(cachedCrossover.crossoverTimestamp).format("HH:mm")}`);
-          console.log(`   Current: ${latestCrossover.type} @ ${crossoverTime.format("HH:mm")}`);
+          console.log(
+            `   Previous: ${cachedCrossover.crossoverType} @ ${moment.unix(cachedCrossover.crossoverTimestamp).format("HH:mm")}`,
+          );
+          console.log(
+            `   Current: ${latestCrossover.type} @ ${crossoverTime.format("HH:mm")}`,
+          );
           console.log(`   👉 This is a REVERSAL - will check for new pattern`);
-          
+
           // Update cache with new crossover
           symbolCrossoverCache.set(symbol, {
             crossoverTimestamp: latestCrossover.timestampUnix,
             crossoverType: latestCrossover.type,
-            key: currentCrossoverKey
+            key: currentCrossoverKey,
           });
         }
 
         // 🔥 SMART SKIP LOGIC: Only skip if SAME crossover already has pattern sent
         if (!isNewOrDifferentCrossover && !isFirstRun) {
           // Generate the specific pattern ID for THIS crossover
-          const crossoverTypePrefix = latestCrossover.type.includes('BULLISH') ? 'BULL' : 'BEAR';
+          const crossoverTypePrefix = latestCrossover.type.includes("BULLISH")
+            ? "BULL"
+            : "BEAR";
           const potentialPatternPrefix = `${symbol}_${crossoverTypePrefix}_${latestCrossover.timestampUnix}`;
-          
+
           // Check if this EXACT crossover already has a pattern sent
-          const alreadySentThisPattern = Array.from(sentPatterns).some(patternId => 
-            patternId.startsWith(potentialPatternPrefix)
+          const alreadySentThisPattern = Array.from(sentPatterns).some(
+            (patternId) => patternId.startsWith(potentialPatternPrefix),
           );
-          
+
           if (alreadySentThisPattern) {
             skippedSymbols++;
-            console.log(`⏭️  Skipping ${symbol}: Pattern already sent for this crossover`);
-            const matchingPattern = Array.from(sentPatterns).find(id => 
-              id.startsWith(potentialPatternPrefix)
+            console.log(
+              `⏭️  Skipping ${symbol}: Pattern already sent for this crossover`,
+            );
+            const matchingPattern = Array.from(sentPatterns).find((id) =>
+              id.startsWith(potentialPatternPrefix),
             );
             console.log(`   Pattern ID: ${matchingPattern}`);
             continue;
           } else {
-            console.log(`✓ Processing ${symbol}: Same crossover but pattern not sent yet (still forming)`);
+            console.log(
+              `✓ Processing ${symbol}: Same crossover but pattern not sent yet (still forming)`,
+            );
           }
         }
 
@@ -454,25 +466,38 @@ const startlogic = async (isFirstRun = false) => {
 
         console.log(`✓ Recent crossover found:`);
         console.log(`  Type: ${latestCrossover.type}`);
-        console.log(`  Time: ${crossoverTime.format("YYYY-MM-DD HH:mm:ss")} (${crossoverTime.format("dddd")})`);
+        console.log(
+          `  Time: ${crossoverTime.format("YYYY-MM-DD HH:mm:ss")} (${crossoverTime.format("dddd")})`,
+        );
         console.log(
           `  Age: ${daysAgo} calendar days, ${hoursAgo % 24} hours, ${minutesAgo % 60} minutes ago`,
         );
         console.log(`  Relative: ${crossoverTime.fromNow()}`);
 
-        console.log(`📊 Fetching BCVC data for ${symbol} (${BCVC_LOOKBACK_DAYS} days)...`);
+        console.log(
+          `📊 Fetching BCVC data for ${symbol} (${BCVC_LOOKBACK_DAYS} days)...`,
+        );
         let bcvc;
 
         if (latestCrossover.type === "BEARISH_CROSSOVER") {
           console.log(
             `  🔻 Bearish crossover detected - including RED candles`,
           );
-          bcvc = await bcvcManager.getHistoricalBCVC(symbol, "60", BCVC_LOOKBACK_DAYS, "red");
+          bcvc = await bcvcManager.getHistoricalBCVC(
+            symbol,
+            "15",
+            BCVC_LOOKBACK_DAYS,
+            "red",
+          );
         } else {
           console.log(
             `  🚀 Bullish crossover detected - normal BCVC (white & orange)`,
           );
-          bcvc = await bcvcManager.getHistoricalBCVC(symbol, "60", BCVC_LOOKBACK_DAYS);
+          bcvc = await bcvcManager.getHistoricalBCVC(
+            symbol,
+            "15",
+            BCVC_LOOKBACK_DAYS,
+          );
         }
 
         const pattern = analyzePattern(emadata, bcvc);
@@ -485,7 +510,9 @@ const startlogic = async (isFirstRun = false) => {
           console.log(`✅ PATTERN FOUND for ${symbol}!`);
           console.log(`📊 Crossover Type: ${pattern.crossoverType}`);
           console.log(`🆔 Pattern ID: ${patternId}`);
-          console.log(`🔔 Status: ${isNewPattern ? "NEW - Will send notification" : "ALREADY SENT - Skipping notification"}`);
+          console.log(
+            `🔔 Status: ${isNewPattern ? "NEW - Will send notification" : "ALREADY SENT - Skipping notification"}`,
+          );
 
           const formattedSummary = {
             ...pattern.summary,
@@ -604,16 +631,40 @@ const startlogic = async (isFirstRun = false) => {
             }
           } else {
             if (isFirstRun) {
-              console.log(`🔕 First run - storing pattern without notification`);
-              sentPatterns.add(patternId);
-              console.log(`📝 Pattern tracked: ${patternId}`);
+              if (SEND_FIRST_RUN_NOTIFICATIONS) {
+                console.log(
+                  `🔔 First run with notifications ENABLED - sending alert`,
+                );
+                // paste the same telegram send block here (the try/catch with bot.sendMessage)
+                try {
+                  await bot.sendMessage(telegramchat, telegramMessage, {
+                    parse_mode: "HTML",
+                  });
+                  console.log(`✅ Telegram notification sent for ${symbol}`);
+                  sentPatterns.add(patternId);
+                  console.log(`📝 Pattern tracked: ${patternId}`);
+                } catch (telegramError) {
+                  console.error(
+                    `❌ Failed to send Telegram message:`,
+                    telegramError.message,
+                  );
+                }
+              } else {
+                console.log(
+                  `🔕 First run - storing pattern without notification`,
+                );
+                sentPatterns.add(patternId);
+                console.log(`📝 Pattern tracked: ${patternId}`);
+              }
             } else {
               console.log(`⏭️  Pattern already sent previously - skipping`);
             }
           }
         } else {
           console.log(`❌ Pattern not found for ${symbol}: ${pattern.reason}`);
-          console.log(`   Will check again in next run if crossover still recent`);
+          console.log(
+            `   Will check again in next run if crossover still recent`,
+          );
         }
       } catch (error) {
         console.error(`Error processing ${symbol}:`, error.message);
@@ -643,12 +694,16 @@ const startlogic = async (isFirstRun = false) => {
     console.log(`Total symbols in list: ${symbols.length}`);
     console.log(`Symbols processed this run: ${symbolsToProcess.length}`);
     console.log(`Symbols skipped (already sent): ${skippedSymbols}`);
-    console.log(`🔄 Symbols with DIFFERENT crossovers today: ${differentCrossoversDetected} ⚡`);
+    console.log(
+      `🔄 Symbols with DIFFERENT crossovers today: ${differentCrossoversDetected} ⚡`,
+    );
     console.log(`Symbols with crossovers: ${crossoversChecked}`);
-    console.log(`Recent crossovers (within ${tradingDaysCount} trading days): ${recentCrossovers}`);
+    console.log(
+      `Recent crossovers (within ${tradingDaysCount} trading days): ${recentCrossovers}`,
+    );
     console.log(`Total patterns found: ${patternsFound}`);
     console.log(`New patterns (not previously notified): ${newPatternsFound}`);
-    console.log(`Telegram notifications sent: ${isFirstRun ? 0 : newPatternsFound}`);
+    console.log(`Telegram notifications sent: ${(isFirstRun && !SEND_FIRST_RUN_NOTIFICATIONS) ? 0 : newPatternsFound}`);
     console.log(`Total patterns tracked today: ${sentPatterns.size}`);
     console.log(
       `Success rate: ${recentCrossovers > 0 ? ((patternsFound / recentCrossovers) * 100).toFixed(2) : 0}%`,
@@ -691,9 +746,11 @@ const startPatternScheduler = () => {
   // }
 
   const delay = firstRun.diff(moment());
-  console.log(`⏳ Pattern detection will start at: ${firstRun.format("HH:mm:ss")}`);
+  console.log(
+    `⏳ Pattern detection will start at: ${firstRun.format("HH:mm:ss")}`,
+  );
   console.log(`⏰ Auto-stop scheduled at: ${endTime.format("HH:mm:ss")}`);
-  console.log(`⏰ Will run every 1 hour during trading hours\n`);
+  console.log(`⏰ Will run every 15 minutes during trading hours\n`);
 
   let isFirstRun = true;
 
@@ -721,10 +778,12 @@ const startPatternScheduler = () => {
       return;
     }
 
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`▶ Pattern Detection Started: ${now.format("YYYY-MM-DD HH:mm:ss")}`);
+    console.log(`\n${"=".repeat(60)}`);
+    console.log(
+      `▶ Pattern Detection Started: ${now.format("YYYY-MM-DD HH:mm:ss")}`,
+    );
     console.log(`▶ Run Type: ${isFirstRun ? "INITIAL RUN" : "SCHEDULED RUN"}`);
-    console.log('='.repeat(60) + '\n');
+    console.log("=".repeat(60) + "\n");
 
     const nextRun = calculateNextAlignedRun(now);
 
@@ -733,20 +792,28 @@ const startPatternScheduler = () => {
       .then(() => {
         const completedAt = moment();
 
-        console.log(`\n✅ Pattern detection completed at: ${completedAt.format("YYYY-MM-DD HH:mm:ss")}`);
+        console.log(
+          `\n✅ Pattern detection completed at: ${completedAt.format("YYYY-MM-DD HH:mm:ss")}`,
+        );
 
         if (isFirstRun) {
           isFirstRun = false;
-          console.log(`✅ Initial baseline established. Future runs will send Telegram notifications.\n`);
+          console.log(
+            `✅ Initial baseline established. Future runs will send Telegram notifications.\n`,
+          );
         }
 
         if (nextRun.isAfter(endTime)) {
-          console.log(`⏰ Next run (${nextRun.format("HH:mm:ss")}) would be after 3:15 PM. Stopping scheduler.`);
+          console.log(
+            `⏰ Next run (${nextRun.format("HH:mm:ss")}) would be after 3:15 PM. Stopping scheduler.`,
+          );
           stopPatternScheduler();
           return;
         }
 
-        console.log(`⏰ Next run scheduled at: ${nextRun.format("HH:mm:ss")}\n`);
+        console.log(
+          `⏰ Next run scheduled at: ${nextRun.format("HH:mm:ss")}\n`,
+        );
 
         const delay = Math.max(0, nextRun.diff(moment()));
         patternSchedulerTimeout = setTimeout(scheduleNext, delay);
@@ -755,7 +822,9 @@ const startPatternScheduler = () => {
         console.error(`\n❌ Pattern detection error:`, error);
 
         if (nextRun.isAfter(endTime)) {
-          console.log(`⏰ Next run would be after 3:15 PM. Stopping scheduler.`);
+          console.log(
+            `⏰ Next run would be after 3:15 PM. Stopping scheduler.`,
+          );
           stopPatternScheduler();
           return;
         }
@@ -774,7 +843,7 @@ const startPatternScheduler = () => {
     let nextRun = moment().hour(9).minute(15).second(0).millisecond(0);
 
     while (nextRun.isSameOrBefore(now)) {
-      nextRun.add(1, 'hour');
+      nextRun.add(15, "minute");
     }
 
     return nextRun;
