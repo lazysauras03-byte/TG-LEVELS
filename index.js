@@ -21,6 +21,7 @@ const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
+// const telegramchat = "8559767849";
 /////////////------------pnlbot
 // const telegramtoken = "7764791634:AAGGwGa6Sl7jNauuQvgnTXRTVixikBZCb-g";
 // const telegramchat = "7781596314";
@@ -28,15 +29,13 @@ let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-const SEND_FIRST_RUN_NOTIFICATIONS = true;
-// const symbols = [
-//   "NSE:EICHERMOT-EQ",
-// ];
+const SEND_FIRST_RUN_NOTIFICATIONS = false;
+// const symbols = ["NSE:ZYDUSLIFE-EQ","NSE:KALYANKJIL-EQ","NSE:COALINDIA-EQ"];
 
 const app = express();
 
 const refresh_token =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcGdaLWN4UTdoaEhfcW5EV0xWZzdUS29SOUo2dGUyV3RnbFFBUjlKY19sNm9ILXFXeEY1QWlYWncyQ0EwYkUtUUJGZVREQm42Wm13Zkh2RVZrNWFsUHYtNEdFYWNiU3p3WWhhbXFyV2hpaDEtTVdUOD0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI0ZDcwNTIwMzlmMmM2NzI3NGViNzBlZTNlZmU4NzU0Y2E3ZDAyMDg1ZTQ1ZDhkY2FlOGRiMzJiOSIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiWFQwMzYyOSIsImFwcFR5cGUiOjEwMCwiZXhwIjoxNzcxMzc0NjAwLCJpYXQiOjE3NzAxMDI2ODQsImlzcyI6ImFwaS5meWVycy5pbiIsIm5iZiI6MTc3MDEwMjY4NCwic3ViIjoicmVmcmVzaF90b2tlbiJ9.cLq8p9w_qJs3nE8MdkPjmvzeeNUITDPjo2cvc504r6Y";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcGxVRGFENklHeXBNY1UwVVFJMWhEMXlMT0FrYnhVTE1YV1ZhZHNsLWNiUmJEVy14NzJfb2VoNlFRUHlxVTVsdTdUbUF2WGRObDh3R00yZzJwRHBfbGQxXzhia2VWNlVEY2tKclVqeHhMaGw5TFJncz0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI0ZDcwNTIwMzlmMmM2NzI3NGViNzBlZTNlZmU4NzU0Y2E3ZDAyMDg1ZTQ1ZDhkY2FlOGRiMzJiOSIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiWFQwMzYyOSIsImFwcFR5cGUiOjEwMCwiZXhwIjoxNzcyNjcwNjAwLCJpYXQiOjE3NzEzODkxNDYsImlzcyI6ImFwaS5meWVycy5pbiIsIm5iZiI6MTc3MTM4OTE0Niwic3ViIjoicmVmcmVzaF90b2tlbiJ9.P-JdUPGC4hdwVOxo08zd7kVxS6XVyhUV5YwC5XToqOU";
 var tempauth;
 
 const raw = localStorage.getItem("token");
@@ -137,43 +136,43 @@ const analyzePattern = (emadata, bcvc) => {
   }
 
   if (latestCrossover.type === "BULLISH_CROSSOVER") {
-    const firstBearishIndex = formationsAfterCrossover.findIndex(
-      (f) => f.isBearish,
+    // Collect ALL consecutive bearish BCVCs after crossover
+    const bearishFormations = formationsAfterCrossover.filter(
+      (f) => f.isBearish || f.candleColor === "orange",
     );
 
-    if (firstBearishIndex === -1) {
+    if (bearishFormations.length === 0) {
       return {
         found: false,
         reason: "No BEARISH BCVC found after the bullish crossover",
       };
     }
 
-    const firstBearishBCVC = formationsAfterCrossover[firstBearishIndex];
+    // Take the LAST bearish BCVC as the reference point
+    const lastBearishBCVC = bearishFormations[bearishFormations.length - 1];
+    const bearishHigh = lastBearishBCVC.high;
 
-    if (firstBearishIndex + 1 >= formationsAfterCrossover.length) {
+    // Look for a WHITE bullish candle AFTER the last bearish BCVC
+    const formationsAfterLastBearish = formationsAfterCrossover.filter(
+      (f) => f.timestampUnix > lastBearishBCVC.timestampUnix,
+    );
+
+    if (formationsAfterLastBearish.length === 0) {
       return {
         found: false,
-        reason: "No BCVC found after the BEARISH BCVC",
+        reason: "No BCVC found after the last BEARISH BCVC",
       };
     }
 
-    const nextBCVC = formationsAfterCrossover[firstBearishIndex + 1];
+    // Find first white/bullish candle whose CLOSE is above bearish BCVC high
+    const confirmingBullish = formationsAfterLastBearish.find(
+      (f) => f.isBullish && f.candleColor === "white" && f.close > bearishHigh,
+    );
 
-    if (!nextBCVC.isBullish) {
+    if (!confirmingBullish) {
       return {
         found: false,
-        reason: "Next BCVC after BEARISH is not BULLISH",
-      };
-    }
-
-    const bearishHigh = firstBearishBCVC.high;
-    const bullishCrossedHigh =
-      nextBCVC.high > bearishHigh || nextBCVC.close > bearishHigh;
-
-    if (!bullishCrossedHigh) {
-      return {
-        found: false,
-        reason: `BULLISH BCVC (high: ${nextBCVC.high}, close: ${nextBCVC.close}) did not cross BEARISH BCVC high (${bearishHigh})`,
+        reason: `No BULLISH BCVC closed above last BEARISH BCVC high (${bearishHigh})`,
       };
     }
 
@@ -181,60 +180,76 @@ const analyzePattern = (emadata, bcvc) => {
       found: true,
       crossoverType: "BULLISH_CROSSOVER",
       crossover: latestCrossover,
-      bearishBCVC: firstBearishBCVC,
-      bullishBCVC: nextBCVC,
+      bearishBCVCs: bearishFormations, // all bearish BCVCs for reference
+      lastBearishBCVC: lastBearishBCVC, // the key reference candle
+      bullishBCVC: confirmingBullish,
       validation: {
-        isImmediate: true,
+        totalBearishBCVCs: bearishFormations.length,
         bearishHigh: bearishHigh,
-        bullishHigh: nextBCVC.high,
-        bullishClose: nextBCVC.close,
-        crossedHigh: bullishCrossedHigh,
+        bullishClose: confirmingBullish.close,
+        bullishHigh: confirmingBullish.high,
+        closedAboveBearishHigh: true,
       },
       summary: {
         crossoverTime: latestCrossover.timestamp,
-        bearishTime: firstBearishBCVC.timestamp,
-        bullishTime: nextBCVC.timestamp,
+        lastBearishTime: lastBearishBCVC.timestamp,
+        bullishTime: confirmingBullish.timestamp,
         crossoverPrice: latestCrossover.price,
-        bearishClose: firstBearishBCVC.close,
         bearishHigh: bearishHigh,
-        bullishClose: nextBCVC.close,
-        bullishHigh: nextBCVC.high,
+        bearishClose: lastBearishBCVC.close,
+        bullishClose: confirmingBullish.close,
+        bullishHigh: confirmingBullish.high,
       },
     };
   } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
-    const firstWhiteIndex = formationsAfterCrossover.findIndex(
+    // Collect ALL bullish (white) BCVCs after crossover
+    const bullishFormations = formationsAfterCrossover.filter(
       (f) => f.isBullish && f.candleColor === "white",
     );
 
-    if (firstWhiteIndex === -1) {
+    if (bullishFormations.length === 0) {
       return {
         found: false,
         reason: "No WHITE (BULLISH) BCVC found after the bearish crossover",
       };
     }
 
-    const firstWhiteBCVC = formationsAfterCrossover[firstWhiteIndex];
+    // Take the LAST bullish BCVC as the reference point
+    const lastWhiteBCVC = bullishFormations[bullishFormations.length - 1];
+    const whiteLow = lastWhiteBCVC.low;
 
-    const redCandlesAfterWhite = formationsAfterCrossover
-      .slice(firstWhiteIndex + 1)
-      .filter((f) => f.candleColor === "red");
+    // Look for red/orange candles AFTER the last bullish BCVC
+    const formationsAfterLastWhite = formationsAfterCrossover.filter(
+      (f) => f.timestampUnix > lastWhiteBCVC.timestampUnix,
+    );
 
-    if (redCandlesAfterWhite.length === 0) {
+    if (formationsAfterLastWhite.length === 0) {
       return {
         found: false,
-        reason: "No RED candles found after the WHITE BCVC",
+        reason: "No candles found after the last WHITE BCVC",
       };
     }
 
-    const whiteLow = firstWhiteBCVC.low;
-    const redCandleBelowLow = redCandlesAfterWhite.find(
+    const bearishCandlesAfterWhite = formationsAfterLastWhite.filter(
+      (f) => f.candleColor === "red" || f.candleColor === "orange",
+    );
+
+    if (bearishCandlesAfterWhite.length === 0) {
+      return {
+        found: false,
+        reason: "No RED/ORANGE candles found after the last WHITE BCVC",
+      };
+    }
+
+    // Find first red/orange candle whose CLOSE is below last white BCVC low
+    const confirmingBearish = bearishCandlesAfterWhite.find(
       (f) => f.close < whiteLow,
     );
 
-    if (!redCandleBelowLow) {
+    if (!confirmingBearish) {
       return {
         found: false,
-        reason: `No RED candle closed below WHITE BCVC low (${whiteLow})`,
+        reason: `No RED/ORANGE candle closed below last WHITE BCVC low (${whiteLow})`,
       };
     }
 
@@ -242,27 +257,29 @@ const analyzePattern = (emadata, bcvc) => {
       found: true,
       crossoverType: "BEARISH_CROSSOVER",
       crossover: latestCrossover,
-      whiteBCVC: firstWhiteBCVC,
-      redCandle: redCandleBelowLow,
+      bullishBCVCs: bullishFormations, // all bullish BCVCs for reference
+      lastWhiteBCVC: lastWhiteBCVC, // the key reference candle
+      redCandle: confirmingBearish,
       validation: {
+        totalBullishBCVCs: bullishFormations.length,
         whiteLow: whiteLow,
-        redClose: redCandleBelowLow.close,
-        redLow: redCandleBelowLow.low,
+        whiteClose: lastWhiteBCVC.close,
+        redClose: confirmingBearish.close,
+        redLow: confirmingBearish.low,
         closedBelowWhiteLow: true,
       },
       summary: {
         crossoverTime: latestCrossover.timestamp,
-        whiteTime: firstWhiteBCVC.timestamp,
-        redTime: redCandleBelowLow.timestamp,
+        lastWhiteTime: lastWhiteBCVC.timestamp,
+        redTime: confirmingBearish.timestamp,
         crossoverPrice: latestCrossover.price,
-        whiteClose: firstWhiteBCVC.close,
         whiteLow: whiteLow,
-        redClose: redCandleBelowLow.close,
-        redLow: redCandleBelowLow.low,
+        whiteClose: lastWhiteBCVC.close,
+        redClose: confirmingBearish.close,
+        redLow: confirmingBearish.low,
       },
     };
   }
-
   return {
     found: false,
     reason: `Unknown crossover type: ${latestCrossover.type}`,
@@ -323,7 +340,7 @@ const startlogic = async (isFirstRun = false) => {
     const now = moment();
     const today = now.format("YYYY-MM-DD");
 
-    const TRADING_DAYS_LOOKBACK = 5;
+    const TRADING_DAYS_LOOKBACK = 1;
     const { lookbackDate, calendarDaysBack, tradingDaysCount } =
       getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
 
@@ -529,24 +546,23 @@ const startlogic = async (isFirstRun = false) => {
             `✓ Validation:`,
             JSON.stringify(pattern.validation, null, 2),
           );
+          var telegramMessage = "";
 
-          if (!isFirstRun && isNewPattern) {
-            newPatternsFound++;
-
-            let telegramMessage = "";
-
-            if (pattern.crossoverType === "BULLISH_CROSSOVER") {
-              console.log(
-                `🚀 Bullish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
-              );
-              console.log(
-                `🔴 Bearish BCVC: ${pattern.bearishBCVC.timestamp} (High: ${pattern.bearishBCVC.high})`,
-              );
-              console.log(
-                `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (High: ${pattern.bullishBCVC.high}) - CROSSED BEARISH HIGH ✓`,
-              );
-
-              telegramMessage = `
+          if (pattern.crossoverType === "BULLISH_CROSSOVER") {
+            // ✅ Updated console logs for BULLISH
+            console.log(
+              `🚀 Bullish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
+            );
+            console.log(
+              `🔴 Bearish BCVCs found: ${pattern.validation.totalBearishBCVCs}`,
+            );
+            console.log(
+              `🔴 Last Bearish BCVC: ${pattern.lastBearishBCVC.timestamp} (High: ${pattern.lastBearishBCVC.high})`,
+            );
+            console.log(
+              `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (Close: ${pattern.bullishBCVC.close}) - CLOSED ABOVE BEARISH HIGH ✓`,
+            );
+        telegramMessage = `
 🚀 <b>BULLISH PATTERN FOUND</b> 🚀
 
 📈 <b>Symbol:</b> ${symbol}
@@ -556,36 +572,42 @@ const startlogic = async (isFirstRun = false) => {
   • Price: ₹${pattern.crossover.price}
   • Age: ${formattedSummary.crossoverAge}
 
-🔴 <b>Bearish BCVC:</b>
-  • Time: ${pattern.bearishBCVC.timestamp}
-  • High: ₹${pattern.bearishBCVC.high}
-  • Close: ₹${pattern.bearishBCVC.close}
+🔴 <b>Bearish BCVCs (${pattern.validation.totalBearishBCVCs} found):</b>
+  • Last Bearish Time: ${pattern.lastBearishBCVC.timestamp}
+  • Last Bearish High: ₹${pattern.lastBearishBCVC.high}
+  • Last Bearish Close: ₹${pattern.lastBearishBCVC.close}
 
 🚀 <b>Bullish BCVC (Entry Signal):</b>
   • Time: ${pattern.bullishBCVC.timestamp}
   • High: ₹${pattern.bullishBCVC.high}
   • Close: ₹${pattern.bullishBCVC.close}
-  • ✅ CROSSED BEARISH HIGH
+  • ✅ CLOSED ABOVE BEARISH HIGH
 
 📊 <b>Validation:</b>
-  • Bearish High: ₹${pattern.validation.bearishHigh}
+  • Total Bearish BCVCs: ${pattern.validation.totalBearishBCVCs}
+  • Last Bearish High: ₹${pattern.validation.bearishHigh}
   • Bullish High: ₹${pattern.validation.bullishHigh}
   • Bullish Close: ₹${pattern.validation.bullishClose}
 
 ⏰ <b>Detected:</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
-              `.trim();
-            } else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
-              console.log(
-                `🔴 Bearish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
-              );
-              console.log(
-                `⚪ White BCVC: ${pattern.whiteBCVC.timestamp} (Low: ${pattern.whiteBCVC.low})`,
-              );
-              console.log(
-                `🔻 Red Candle: ${pattern.redCandle.timestamp} (Close: ${pattern.redCandle.close}) - CLOSED BELOW WHITE LOW ✓`,
-              );
+`.trim();
+          } else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
+            // ✅ Updated console logs
+            console.log(
+              `🔴 Bearish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
+            );
+            console.log(
+              `⚪ White BCVCs found: ${pattern.validation.totalBullishBCVCs}`,
+            );
+            console.log(
+              `⚪ Last White BCVC: ${pattern.lastWhiteBCVC.timestamp} (Low: ${pattern.lastWhiteBCVC.low})`,
+            );
+            console.log(
+              `🔻 Bearish Candle: ${pattern.redCandle.timestamp} (Close: ${pattern.redCandle.close}) - CLOSED BELOW WHITE LOW ✓`,
+            );
 
-              telegramMessage = `
+            // ✅ Updated Telegram message
+            telegramMessage = `
 🔴 <b>BEARISH PATTERN FOUND</b> 🔴
 
 📉 <b>Symbol:</b> ${symbol}
@@ -595,32 +617,35 @@ const startlogic = async (isFirstRun = false) => {
   • Price: ₹${pattern.crossover.price}
   • Age: ${formattedSummary.crossoverAge}
 
-⚪ <b>White BCVC:</b>
-  • Time: ${pattern.whiteBCVC.timestamp}
-  • Low: ₹${pattern.whiteBCVC.low}
-  • Close: ₹${pattern.whiteBCVC.close}
+⚪ <b>Bullish BCVCs (${pattern.validation.totalBullishBCVCs} found):</b>
+  • Last White Time: ${pattern.lastWhiteBCVC.timestamp}
+  • Last White Low: ₹${pattern.lastWhiteBCVC.low}
+  • Last White Close: ₹${pattern.lastWhiteBCVC.close}
 
-🔻 <b>Red Candle (Entry Signal):</b>
+🔻 <b>Bearish Candle (Entry Signal):</b>
   • Time: ${pattern.redCandle.timestamp}
   • Low: ₹${pattern.redCandle.low}
   • Close: ₹${pattern.redCandle.close}
   • ✅ CLOSED BELOW WHITE LOW
 
 📊 <b>Validation:</b>
-  • White Low: ₹${pattern.validation.whiteLow}
-  • Red Close: ₹${pattern.validation.redClose}
-  • Red Low: ₹${pattern.validation.redLow}
+  • Total Bullish BCVCs: ${pattern.validation.totalBullishBCVCs}
+  • Last White Low: ₹${pattern.validation.whiteLow}
+  • Bearish Close: ₹${pattern.validation.redClose}
+  • Bearish Low: ₹${pattern.validation.redLow}
 
 ⏰ <b>Detected:</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
-              `.trim();
-            }
+`.trim();
+          }
 
+          // ✅ NOW guard sending on isFirstRun / isNewPattern — message is always ready
+          if (!isFirstRun && isNewPattern) {
+            newPatternsFound++;
             try {
-              await bot.sendMessage(telegramchat, telegramMessage, {
-                parse_mode: "HTML",
-              });
+              // await bot.sendMessage(telegramchat, telegramMessage, {
+              //   parse_mode: "HTML",
+              // });
               console.log(`✅ Telegram notification sent for ${symbol}`);
-
               sentPatterns.add(patternId);
               console.log(`📝 Pattern tracked: ${patternId}`);
             } catch (telegramError) {
@@ -635,7 +660,6 @@ const startlogic = async (isFirstRun = false) => {
                 console.log(
                   `🔔 First run with notifications ENABLED - sending alert`,
                 );
-                // paste the same telegram send block here (the try/catch with bot.sendMessage)
                 try {
                   await bot.sendMessage(telegramchat, telegramMessage, {
                     parse_mode: "HTML",
@@ -703,7 +727,9 @@ const startlogic = async (isFirstRun = false) => {
     );
     console.log(`Total patterns found: ${patternsFound}`);
     console.log(`New patterns (not previously notified): ${newPatternsFound}`);
-    console.log(`Telegram notifications sent: ${(isFirstRun && !SEND_FIRST_RUN_NOTIFICATIONS) ? 0 : newPatternsFound}`);
+    console.log(
+      `Telegram notifications sent: ${isFirstRun && !SEND_FIRST_RUN_NOTIFICATIONS ? 0 : newPatternsFound}`,
+    );
     console.log(`Total patterns tracked today: ${sentPatterns.size}`);
     console.log(
       `Success rate: ${recentCrossovers > 0 ? ((patternsFound / recentCrossovers) * 100).toFixed(2) : 0}%`,
