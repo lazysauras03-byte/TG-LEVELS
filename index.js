@@ -4,6 +4,8 @@ const XLSX = require("xlsx");
 require("dotenv").config();
 const fs = require("fs");
 const moment = require("moment");
+const { writePatternToExcel } = require("./src/excelReports");
+
 // const TelegramBot = require('node-telegram-bot-api');
 const EMAManager = require("./utils/func/emaManager");
 const BCVCManager = require("./utils/func/bcvcManager");
@@ -17,11 +19,11 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-const telegramchat = "-1003727905299";
+// const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
-// const telegramchat = "8559767849";
+const telegramchat = "8559767849";
 /////////////------------pnlbot
 // const telegramtoken = "7764791634:AAGGwGa6Sl7jNauuQvgnTXRTVixikBZCb-g";
 // const telegramchat = "7781596314";
@@ -29,7 +31,7 @@ let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-const SEND_FIRST_RUN_NOTIFICATIONS = false;
+const SEND_FIRST_RUN_NOTIFICATIONS = true;
 // const symbols = ["NSE:ZYDUSLIFE-EQ","NSE:KALYANKJIL-EQ","NSE:COALINDIA-EQ"];
 
 const app = express();
@@ -340,7 +342,7 @@ const startlogic = async (isFirstRun = false) => {
     const now = moment();
     const today = now.format("YYYY-MM-DD");
 
-    const TRADING_DAYS_LOOKBACK = 1;
+    const TRADING_DAYS_LOOKBACK = 2;
     const { lookbackDate, calendarDaysBack, tradingDaysCount } =
       getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
 
@@ -546,10 +548,11 @@ const startlogic = async (isFirstRun = false) => {
             `✓ Validation:`,
             JSON.stringify(pattern.validation, null, 2),
           );
-          var telegramMessage = "";
+
+          // ── Build Telegram message ────────────────────────────────────────────────
+          let telegramMessage = "";
 
           if (pattern.crossoverType === "BULLISH_CROSSOVER") {
-            // ✅ Updated console logs for BULLISH
             console.log(
               `🚀 Bullish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
             );
@@ -562,7 +565,8 @@ const startlogic = async (isFirstRun = false) => {
             console.log(
               `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (Close: ${pattern.bullishBCVC.close}) - CLOSED ABOVE BEARISH HIGH ✓`,
             );
-        telegramMessage = `
+
+            telegramMessage = `
 🚀 <b>BULLISH PATTERN FOUND</b> 🚀
 
 📈 <b>Symbol:</b> ${symbol}
@@ -592,7 +596,6 @@ const startlogic = async (isFirstRun = false) => {
 ⏰ <b>Detected:</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           } else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
-            // ✅ Updated console logs
             console.log(
               `🔴 Bearish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
             );
@@ -606,7 +609,6 @@ const startlogic = async (isFirstRun = false) => {
               `🔻 Bearish Candle: ${pattern.redCandle.timestamp} (Close: ${pattern.redCandle.close}) - CLOSED BELOW WHITE LOW ✓`,
             );
 
-            // ✅ Updated Telegram message
             telegramMessage = `
 🔴 <b>BEARISH PATTERN FOUND</b> 🔴
 
@@ -638,51 +640,78 @@ const startlogic = async (isFirstRun = false) => {
 `.trim();
           }
 
-          // ✅ NOW guard sending on isFirstRun / isNewPattern — message is always ready
+          // ── Helper: send Telegram + save to Excel atomically ─────────────────────
+          const sendAndRecord = async () => {
+            // 1) Telegram
+            // await bot.sendMessage(telegramchat, telegramMessage, {
+            //   parse_mode: "HTML",
+            // });
+            console.log(`✅ Telegram notification sent for ${symbol}`);
+
+            // 2) Excel  (bcvc already in scope from the outer for-loop)
+            await writePatternToExcel(
+              symbol,
+              pattern,
+              isFirstRun,
+              SEND_FIRST_RUN_NOTIFICATIONS,
+              bcvc,
+            );
+
+            // 3) Mark as sent in memory
+            sentPatterns.add(patternId);
+            console.log(`📝 Pattern tracked: ${patternId}`);
+          };
+
+          // ── Guard logic (mirrors your original exactly) ───────────────────────────
           if (!isFirstRun && isNewPattern) {
+            // Normal scheduled run — always send + save
             newPatternsFound++;
             try {
-              // await bot.sendMessage(telegramchat, telegramMessage, {
-              //   parse_mode: "HTML",
-              // });
-              console.log(`✅ Telegram notification sent for ${symbol}`);
-              sentPatterns.add(patternId);
-              console.log(`📝 Pattern tracked: ${patternId}`);
-            } catch (telegramError) {
+              await sendAndRecord();
+            } catch (err) {
               console.error(
-                `❌ Failed to send Telegram message:`,
-                telegramError.message,
+                `❌ Failed to send/save for ${symbol}:`,
+                err.message,
               );
             }
-          } else {
-            if (isFirstRun) {
-              if (SEND_FIRST_RUN_NOTIFICATIONS) {
-                console.log(
-                  `🔔 First run with notifications ENABLED - sending alert`,
+          } else if (isFirstRun) {
+            if (SEND_FIRST_RUN_NOTIFICATIONS) {
+              // First run WITH notifications enabled — send + save
+              console.log(
+                `🔔 First run with notifications ENABLED - sending alert`,
+              );
+              try {
+                await sendAndRecord();
+              } catch (err) {
+                console.error(
+                  `❌ Failed to send/save for ${symbol}:`,
+                  err.message,
                 );
-                try {
-                  await bot.sendMessage(telegramchat, telegramMessage, {
-                    parse_mode: "HTML",
-                  });
-                  console.log(`✅ Telegram notification sent for ${symbol}`);
-                  sentPatterns.add(patternId);
-                  console.log(`📝 Pattern tracked: ${patternId}`);
-                } catch (telegramError) {
-                  console.error(
-                    `❌ Failed to send Telegram message:`,
-                    telegramError.message,
-                  );
-                }
-              } else {
-                console.log(
-                  `🔕 First run - storing pattern without notification`,
-                );
-                sentPatterns.add(patternId);
-                console.log(`📝 Pattern tracked: ${patternId}`);
               }
             } else {
-              console.log(`⏭️  Pattern already sent previously - skipping`);
+              // First run WITHOUT notifications — save to Excel only, no Telegram
+              console.log(
+                `🔕 First run - storing pattern without Telegram notification`,
+              );
+              try {
+                await writePatternToExcel(
+                  symbol,
+                  pattern,
+                  isFirstRun,
+                  SEND_FIRST_RUN_NOTIFICATIONS,
+                  bcvc,
+                );
+                sentPatterns.add(patternId);
+                console.log(`📝 Pattern tracked (Excel only): ${patternId}`);
+              } catch (err) {
+                console.error(
+                  `❌ Failed to save to Excel for ${symbol}:`,
+                  err.message,
+                );
+              }
             }
+          } else {
+            console.log(`⏭️  Pattern already sent previously - skipping`);
           }
         } else {
           console.log(`❌ Pattern not found for ${symbol}: ${pattern.reason}`);
