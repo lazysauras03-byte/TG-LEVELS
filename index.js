@@ -22,8 +22,8 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 // const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
-// const telegramchat = "8559767849";
 const telegramchat = "8559767849";
+// const telegramchat = "8559767849";
 /////////////------------pnlbot
 // const telegramtoken = "7764791634:AAGGwGa6Sl7jNauuQvgnTXRTVixikBZCb-g";
 // const telegramchat = "7781596314";
@@ -32,7 +32,7 @@ let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const SEND_FIRST_RUN_NOTIFICATIONS = true;
-// const symbols = ["NSE:ZYDUSLIFE-EQ","NSE:KALYANKJIL-EQ","NSE:COALINDIA-EQ"];
+const symbols = ["NSE:ZYDUSLIFE-EQ"];
 
 const app = express();
 
@@ -155,7 +155,9 @@ const analyzePattern = (emadata, bcvc) => {
     }
 
     // Take the LAST bearish BCVC as the reference point
-    const lastBearishBCVC = bearishFormations[bearishFormations.length - 1];
+    const lastBearishBCVC = bearishFormations.reduce((prev, curr) =>
+      curr.high > prev.high ? curr : prev,
+    );
     const bearishHigh = lastBearishBCVC.high;
 
     // Look for a WHITE bullish candle AFTER the last bearish BCVC
@@ -226,7 +228,9 @@ const analyzePattern = (emadata, bcvc) => {
     }
 
     // Take the LAST bullish BCVC as the reference point
-    const lastWhiteBCVC = bullishFormations[bullishFormations.length - 1];
+    const lastWhiteBCVC = bullishFormations.reduce((prev, curr) =>
+      curr.low < prev.low ? curr : prev,
+    );
     const whiteLow = lastWhiteBCVC.low;
 
     // Look for red/orange candles AFTER the last bullish BCVC
@@ -356,7 +360,7 @@ let symbolCrossoverCache = new Map(); // Symbol -> {crossoverTimestamp, crossove
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
 
     const now = moment();
@@ -661,9 +665,9 @@ const startlogic = async (isFirstRun = false) => {
           }
           const sendAndRecord = async () => {
             // 1) Telegram
-            // await bot.sendMessage(telegramchat, telegramMessage, {
-            //   parse_mode: "HTML",
-            // });
+            await bot.sendMessage(telegramchat, telegramMessage, {
+              parse_mode: "HTML",
+            });
             console.log(`✅ Telegram notification sent for ${symbol}`);
 
             // 2) Excel  (bcvc already in scope from the outer for-loop)
@@ -683,9 +687,9 @@ const startlogic = async (isFirstRun = false) => {
           if (!isFirstRun && isNewPattern) {
             newPatternsFound++;
             try {
-              // await bot.sendMessage(telegramchat, telegramMessage, {
-              //   parse_mode: "HTML",
-              // });
+              await bot.sendMessage(telegramchat, telegramMessage, {
+                parse_mode: "HTML",
+              });
               console.log(`✅ Telegram notification sent for ${symbol}`);
               sentPatterns.add(patternId);
               console.log(`📝 Pattern tracked: ${patternId}`);
@@ -942,7 +946,8 @@ const stopPatternScheduler = () => {
 // Start the scheduler
 // startPatternScheduler();
 // runauth()
-runBacktest()
+// startlogic(true)
+// runBacktest()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 
 app.listen(PORT, async () => {

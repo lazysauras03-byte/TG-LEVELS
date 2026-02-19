@@ -175,7 +175,7 @@ async function writePatternToExcel(symbol, pattern, isFirstRun, SEND_FIRST_RUN_N
 
   // Price columns: crossoverPrice(5), signalHigh(7), signalLow(8),
   //                signalClose(9), nextOpen(10), stopLoss(11), targetPrice(12)
-  [5, 7, 8, 9, 10, 11, 12].forEach((col) => {
+  [5, 7, 8, 9].forEach((col) => {
     const cell = row.getCell(col);
     if (cell.value != null) cell.numFmt = PRICE_FMT;
   });
