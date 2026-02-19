@@ -142,25 +142,25 @@ const analyzePattern = (emadata, bcvc) => {
   }
 
   if (latestCrossover.type === "BULLISH_CROSSOVER") {
-    // Collect ALL consecutive bearish BCVCs after crossover
+    // Accept orange AND maroon as bearish reference candles
     const bearishFormations = formationsAfterCrossover.filter(
-      (f) => f.isBearish || f.candleColor === "orange",
+      (f) => f.candleColor === "orange" || f.candleColor === "maroon",
     );
 
     if (bearishFormations.length === 0) {
       return {
         found: false,
-        reason: "No BEARISH BCVC found after the bullish crossover",
+        reason:
+          "No BEARISH BCVC (orange/maroon) found after the bullish crossover",
       };
     }
 
-    // Take the LAST bearish BCVC as the reference point
+    // Use the bearish candle with the highest high as reference
     const lastBearishBCVC = bearishFormations.reduce((prev, curr) =>
       curr.high > prev.high ? curr : prev,
     );
     const bearishHigh = lastBearishBCVC.high;
 
-    // Look for a WHITE bullish candle AFTER the last bearish BCVC
     const formationsAfterLastBearish = formationsAfterCrossover.filter(
       (f) => f.timestampUnix > lastBearishBCVC.timestampUnix,
     );
@@ -168,11 +168,10 @@ const analyzePattern = (emadata, bcvc) => {
     if (formationsAfterLastBearish.length === 0) {
       return {
         found: false,
-        reason: "No BCVC found after the last BEARISH BCVC",
+        reason: `No BCVC found after the last BEARISH BCVC (${lastBearishBCVC.candleColor})`,
       };
     }
 
-    // Find first white/bullish candle whose CLOSE is above bearish BCVC high
     const confirmingBullish = formationsAfterLastBearish.find(
       (f) => f.isBullish && f.candleColor === "white" && f.close > bearishHigh,
     );
@@ -180,7 +179,7 @@ const analyzePattern = (emadata, bcvc) => {
     if (!confirmingBullish) {
       return {
         found: false,
-        reason: `No BULLISH BCVC closed above last BEARISH BCVC high (${bearishHigh})`,
+        reason: `No BULLISH BCVC closed above last BEARISH BCVC high (${bearishHigh}) [ref: ${lastBearishBCVC.candleColor}]`,
       };
     }
     if (!isToday(confirmingBullish.timestampUnix)) {
@@ -189,15 +188,17 @@ const analyzePattern = (emadata, bcvc) => {
         reason: `Bullish signal candle is not from today (found: ${moment.unix(confirmingBullish.timestampUnix).format("YYYY-MM-DD")})`,
       };
     }
+
     return {
       found: true,
       crossoverType: "BULLISH_CROSSOVER",
       crossover: latestCrossover,
-      bearishBCVCs: bearishFormations, // all bearish BCVCs for reference
-      lastBearishBCVC: lastBearishBCVC, // the key reference candle
+      bearishBCVCs: bearishFormations,
+      lastBearishBCVC: lastBearishBCVC,
       bullishBCVC: confirmingBullish,
       validation: {
         totalBearishBCVCs: bearishFormations.length,
+        bearishCandleColor: lastBearishBCVC.candleColor,
         bearishHigh: bearishHigh,
         bullishClose: confirmingBullish.close,
         bullishHigh: confirmingBullish.high,
@@ -215,7 +216,6 @@ const analyzePattern = (emadata, bcvc) => {
       },
     };
   } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
-    // Collect ALL bullish (white) BCVCs after crossover
     const bullishFormations = formationsAfterCrossover.filter(
       (f) => f.isBullish && f.candleColor === "white",
     );
@@ -227,13 +227,11 @@ const analyzePattern = (emadata, bcvc) => {
       };
     }
 
-    // Take the LAST bullish BCVC as the reference point
     const lastWhiteBCVC = bullishFormations.reduce((prev, curr) =>
       curr.low < prev.low ? curr : prev,
     );
     const whiteLow = lastWhiteBCVC.low;
 
-    // Look for red/orange candles AFTER the last bullish BCVC
     const formationsAfterLastWhite = formationsAfterCrossover.filter(
       (f) => f.timestampUnix > lastWhiteBCVC.timestampUnix,
     );
@@ -256,7 +254,6 @@ const analyzePattern = (emadata, bcvc) => {
       };
     }
 
-    // Find first red/orange candle whose CLOSE is below last white BCVC low
     const confirmingBearish = bearishCandlesAfterWhite.find(
       (f) => f.close < whiteLow,
     );
@@ -273,12 +270,13 @@ const analyzePattern = (emadata, bcvc) => {
         reason: `Bearish signal candle is not from today (found: ${moment.unix(confirmingBearish.timestampUnix).format("YYYY-MM-DD")})`,
       };
     }
+
     return {
       found: true,
       crossoverType: "BEARISH_CROSSOVER",
       crossover: latestCrossover,
-      bullishBCVCs: bullishFormations, // all bullish BCVCs for reference
-      lastWhiteBCVC: lastWhiteBCVC, // the key reference candle
+      bullishBCVCs: bullishFormations,
+      lastWhiteBCVC: lastWhiteBCVC,
       redCandle: confirmingBearish,
       validation: {
         totalBullishBCVCs: bullishFormations.length,
@@ -300,6 +298,7 @@ const analyzePattern = (emadata, bcvc) => {
       },
     };
   }
+
   return {
     found: false,
     reason: `Unknown crossover type: ${latestCrossover.type}`,
@@ -534,13 +533,14 @@ const startlogic = async (isFirstRun = false) => {
           );
         } else {
           console.log(
-            `  🚀 Bullish crossover detected - normal BCVC (white & orange)`,
+            `  🚀 Bullish crossover detected - BCVC with white, orange & maroon`,
           );
           bcvc = await bcvcManager.getHistoricalBCVC(
             symbol,
             "15",
             BCVC_LOOKBACK_DAYS,
           );
+          // No special flag needed — maroon is now always detected in analyzeBCVC
         }
 
         const pattern = analyzePattern(emadata, bcvc);
@@ -575,12 +575,11 @@ const startlogic = async (isFirstRun = false) => {
           var telegramMessage = "";
 
           if (pattern.crossoverType === "BULLISH_CROSSOVER") {
-            // ✅ Updated console logs for BULLISH
             console.log(
               `🚀 Bullish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
             );
             console.log(
-              `🔴 Bearish BCVCs found: ${pattern.validation.totalBearishBCVCs}`,
+              `🔴 Bearish BCVCs found: ${pattern.validation.totalBearishBCVCs} (${pattern.validation.bearishCandleColor.toUpperCase()})`,
             );
             console.log(
               `🔴 Last Bearish BCVC: ${pattern.lastBearishBCVC.timestamp} (High: ${pattern.lastBearishBCVC.high})`,
@@ -600,6 +599,7 @@ const startlogic = async (isFirstRun = false) => {
 
 🔴 <b>Bearish BCVCs (${pattern.validation.totalBearishBCVCs} found):</b>
   • Last Bearish Time: ${pattern.lastBearishBCVC.timestamp}
+  • Last Bearish Type: ${pattern.validation.bearishCandleColor.toUpperCase()} candle
   • Last Bearish High: ₹${pattern.lastBearishBCVC.high}
   • Last Bearish Close: ₹${pattern.lastBearishBCVC.close}
 
@@ -611,6 +611,7 @@ const startlogic = async (isFirstRun = false) => {
 
 📊 <b>Validation:</b>
   • Total Bearish BCVCs: ${pattern.validation.totalBearishBCVCs}
+  • Ref Candle: ${pattern.validation.bearishCandleColor.toUpperCase()}
   • Last Bearish High: ₹${pattern.validation.bearishHigh}
   • Bullish High: ₹${pattern.validation.bullishHigh}
   • Bullish Close: ₹${pattern.validation.bullishClose}
