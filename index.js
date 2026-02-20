@@ -19,10 +19,10 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-// const telegramchat = "-1003727905299";
+const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
-const telegramchat = "8559767849";
+// const telegramchat = "8559767849";
 // const telegramchat = "8559767849";
 /////////////------------pnlbot
 // const telegramtoken = "7764791634:AAGGwGa6Sl7jNauuQvgnTXRTVixikBZCb-g";
@@ -31,8 +31,8 @@ let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-const SEND_FIRST_RUN_NOTIFICATIONS = true;
-const symbols = ["NSE:ZYDUSLIFE-EQ"];
+const SEND_FIRST_RUN_NOTIFICATIONS = false;
+// const symbols = ["NSE:ZYDUSLIFE-EQ"];
 
 const app = express();
 
@@ -307,6 +307,15 @@ const analyzePattern = (emadata, bcvc) => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const getTradingViewLink = (symbol) => {
+  // Strip NSE: prefix and -EQ suffix → e.g. "NSE:BAJAJFINSV-EQ" → "BAJAJFINSV"
+  const clean = symbol
+    .replace(/^NSE:/i, "")
+    .replace(/-EQ$/i, "");
+  // 15-min chart on NSE
+  return `https://www.tradingview.com/chart/?symbol=NSE%3A${clean}&interval=15`;
+};
+
 const getTrailingTradingDays = (tradingDaysCount) => {
   const now = moment();
   let calendarDaysBack = 0;
@@ -359,7 +368,7 @@ let symbolCrossoverCache = new Map(); // Symbol -> {crossoverTimestamp, crossove
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
 
     const now = moment();
@@ -381,9 +390,9 @@ const startlogic = async (isFirstRun = false) => {
     let recentCrossovers = 0;
     let skippedSymbols = 0;
     let differentCrossoversDetected = 0; // Count of symbols with multiple crossovers today
-
-    const BATCH_SIZE = 20;
-    const WAIT_TIME = 15000;
+    ``
+    const BATCH_SIZE = 25;
+    const WAIT_TIME = 5000;
 
     console.log(`\n🕐 Current Time: ${now.format("YYYY-MM-DD HH:mm:ss")}`);
     console.log(
@@ -587,9 +596,10 @@ const startlogic = async (isFirstRun = false) => {
             console.log(
               `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (Close: ${pattern.bullishBCVC.close}) - CLOSED ABOVE BEARISH HIGH ✓`,
             );
+            const tvLink = getTradingViewLink(symbol);
             telegramMessage = `
 🚀 <b>BULLISH PATTERN FOUND</b> 🚀
-
+📊 <b>Chart:</b> <a href="${tvLink}">Open in TradingView (15min)</a>
 📈 <b>Symbol:</b> ${symbol}
 
 🔄 <b>Bullish Crossover:</b>
@@ -632,11 +642,11 @@ const startlogic = async (isFirstRun = false) => {
             console.log(
               `🔻 Bearish Candle: ${pattern.redCandle.timestamp} (Close: ${pattern.redCandle.close}) - CLOSED BELOW WHITE LOW ✓`,
             );
-
             // ✅ Updated Telegram message
+            const tvLink = getTradingViewLink(symbol);
             telegramMessage = `
 🔴 <b>BEARISH PATTERN FOUND</b> 🔴
-
+📊 <b>Chart:</b> <a href="${tvLink}">Open in TradingView (15min)</a>
 📉 <b>Symbol:</b> ${symbol}
 
 🔄 <b>Bearish Crossover:</b>
@@ -691,6 +701,13 @@ const startlogic = async (isFirstRun = false) => {
               await bot.sendMessage(telegramchat, telegramMessage, {
                 parse_mode: "HTML",
               });
+              await writePatternToExcel(
+                symbol,
+                pattern,
+                isFirstRun,
+                SEND_FIRST_RUN_NOTIFICATIONS,
+                bcvc,
+              );
               console.log(`✅ Telegram notification sent for ${symbol}`);
               sentPatterns.add(patternId);
               console.log(`📝 Pattern tracked: ${patternId}`);
@@ -755,9 +772,7 @@ const startlogic = async (isFirstRun = false) => {
         const waitUntil = moment().add(WAIT_TIME / 1000, "seconds");
         console.log("\n" + "⏸️ ".repeat(30));
         console.log(`⏸️  RATE LIMIT: Processed ${i + 1} symbols`);
-        console.log(
-          `⏸️  Waiting ${WAIT_TIME / 1000} seconds to avoid API limits...`,
-        );
+        console.log(`⏸️  Waiting ${WAIT_TIME / 1000} seconds to avoid API limits...`);
         console.log(`⏸️  Will resume at: ${waitUntil.format("HH:mm:ss")}`);
         console.log("⏸️ ".repeat(30) + "\n");
 
@@ -948,7 +963,7 @@ const stopPatternScheduler = () => {
 // startPatternScheduler();
 // runauth()
 // startlogic(true)
-// runBacktest()
+runBacktest()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 
 app.listen(PORT, async () => {
