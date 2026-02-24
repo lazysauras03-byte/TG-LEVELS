@@ -1,3 +1,5 @@
+// MAIN FILE 
+
 const express = require("express");
 const axios = require("axios");
 const XLSX = require("xlsx");
@@ -19,7 +21,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-const telegramchat = "-1003727905299";
+// const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
@@ -27,12 +29,16 @@ const telegramchat = "-1003727905299";
 /////////////------------pnlbot
 // const telegramtoken = "7764791634:AAGGwGa6Sl7jNauuQvgnTXRTVixikBZCb-g";
 // const telegramchat = "7781596314";
+/////////////------------Lazy bot
+// const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
+const telegramchat = "8559767849"
+
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-const SEND_FIRST_RUN_NOTIFICATIONS = false;
-// const symbols = ["NSE:ZYDUSLIFE-EQ"];
+const SEND_FIRST_RUN_NOTIFICATIONS = true;
+const symbols = ["NSE:TORNTPHARM-EQ"];
 
 const app = express();
 
@@ -118,6 +124,48 @@ function loadSymbols(inputExcel, columnName = "symbol") {
   return cleanSymbols;
 }
 
+const getTradingMinutesBetween = (startUnix, endUnix) => {
+  const TRADING_START = { hour: 9, minute: 15 };  // adjust to your market open
+  const TRADING_END = { hour: 15, minute: 30 };    // adjust to your market close
+  const TRADING_MINUTES_PER_DAY =
+    (TRADING_END.hour * 60 + TRADING_END.minute) -
+    (TRADING_START.hour * 60 + TRADING_START.minute);
+
+  let start = moment.unix(startUnix);
+  let end = moment.unix(endUnix);
+
+  let totalMinutes = 0;
+  let current = start.clone();
+
+  while (current.isBefore(end)) {
+    const next = moment.min(
+      current.clone().endOf("day"),
+      end
+    );
+
+    // Check if current day is a trading day (skip weekends)
+    const dayOfWeek = current.day();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      const tradingStart = current.clone().startOf("day")
+        .hour(TRADING_START.hour).minute(TRADING_START.minute).second(0);
+      const tradingEnd = current.clone().startOf("day")
+        .hour(TRADING_END.hour).minute(TRADING_END.minute).second(0);
+
+      const effectiveStart = moment.max(current, tradingStart);
+      const effectiveEnd = moment.min(next, tradingEnd);
+
+      if (effectiveEnd.isAfter(effectiveStart)) {
+        totalMinutes += effectiveEnd.diff(effectiveStart, "minutes");
+      }
+    }
+
+    current = current.clone().startOf("day").add(1, "day")
+      .hour(TRADING_START.hour).minute(TRADING_START.minute).second(0);
+  }
+
+  return totalMinutes;
+};
+
 const analyzePattern = (emadata, bcvc) => {
   if (!emadata.crossover || emadata.crossover.length === 0) {
     return { found: false, reason: "No crossovers found" };
@@ -182,6 +230,10 @@ const analyzePattern = (emadata, bcvc) => {
         reason: `No BULLISH BCVC closed above last BEARISH BCVC high (${bearishHigh}) [ref: ${lastBearishBCVC.candleColor}]`,
       };
     }
+
+    const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, confirmingBullish.timestampUnix);
+    const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
+
     if (!isToday(confirmingBullish.timestampUnix)) {
       return {
         found: false,
@@ -196,6 +248,7 @@ const analyzePattern = (emadata, bcvc) => {
       bearishBCVCs: bearishFormations,
       lastBearishBCVC: lastBearishBCVC,
       bullishBCVC: confirmingBullish,
+      candlesBetween,
       validation: {
         totalBearishBCVCs: bearishFormations.length,
         bearishCandleColor: lastBearishBCVC.candleColor,
@@ -203,6 +256,7 @@ const analyzePattern = (emadata, bcvc) => {
         bullishClose: confirmingBullish.close,
         bullishHigh: confirmingBullish.high,
         closedAboveBearishHigh: true,
+        candlesBetween,
       },
       summary: {
         crossoverTime: latestCrossover.timestamp,
@@ -213,6 +267,7 @@ const analyzePattern = (emadata, bcvc) => {
         bearishClose: lastBearishBCVC.close,
         bullishClose: confirmingBullish.close,
         bullishHigh: confirmingBullish.high,
+        candlesBetween,
       },
     };
   } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
@@ -244,13 +299,13 @@ const analyzePattern = (emadata, bcvc) => {
     }
 
     const bearishCandlesAfterWhite = formationsAfterLastWhite.filter(
-      (f) => f.candleColor === "red" || f.candleColor === "orange",
+      (f) => f.candleColor === "red" || f.candleColor === "orange" || f.candleColor === "maroon",
     );
 
     if (bearishCandlesAfterWhite.length === 0) {
       return {
         found: false,
-        reason: "No RED/ORANGE candles found after the last WHITE BCVC",
+        reason: "No RED/ORANGE/maroon candles found after the last WHITE BCVC",
       };
     }
 
@@ -264,6 +319,15 @@ const analyzePattern = (emadata, bcvc) => {
         reason: `No RED/ORANGE candle closed below last WHITE BCVC low (${whiteLow})`,
       };
     }
+    if (!isToday(confirmingBearish.timestampUnix)) {
+      return {
+        found: false,
+        reason: `Bearish signal candle is not from today (found: ${moment.unix(confirmingBearish.timestampUnix).format("YYYY-MM-DD")})`,
+      };
+    }
+
+    const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, confirmingBearish.timestampUnix);
+    const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
     if (!isToday(confirmingBearish.timestampUnix)) {
       return {
         found: false,
@@ -368,7 +432,7 @@ let symbolCrossoverCache = new Map(); // Symbol -> {crossoverTimestamp, crossove
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
 
     const now = moment();
@@ -597,10 +661,21 @@ const startlogic = async (isFirstRun = false) => {
               `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (Close: ${pattern.bullishBCVC.close}) - CLOSED ABOVE BEARISH HIGH ✓`,
             );
             const tvLink = getTradingViewLink(symbol);
+            const bullEntryPrice = pattern.bullishBCVC.close; // next candle open ≈ signal close
+            const bullSL = pattern.bullishBCVC.low;
+            const bullRisk = +(bullEntryPrice - bullSL).toFixed(2);
+            const bullTarget = +(bullEntryPrice + bullRisk).toFixed(2);
             telegramMessage = `
 🚀 <b>BULLISH PATTERN FOUND</b> 🚀
-📊 <b>Chart:</b> <a href="${tvLink}">Open in TradingView (15min)</a>
+
 📈 <b>Symbol:</b> ${symbol}
+📊 <b>Chart:</b> <a href="${tvLink}">Open in TradingView (15min)</a>
+Candle Span : ${pattern.candlesBetween} /10
+
+📥 Entry: ₹${bullEntryPrice} (next candle open)
+🛑 Stop Loss: ₹${bullSL} (signal candle low)
+🎯 Target: ₹${bullTarget} (1:1 RR)
+📉 Risk: ₹${bullRisk} pts
 
 🔄 <b>Bullish Crossover:</b>
   • Time: ${pattern.crossover.timestamp}
@@ -644,10 +719,21 @@ const startlogic = async (isFirstRun = false) => {
             );
             // ✅ Updated Telegram message
             const tvLink = getTradingViewLink(symbol);
+            const bearEntryPrice = pattern.redCandle.close; // next candle open ≈ signal close
+            const bearSL = pattern.redCandle.high;
+            const bearRisk = +(bearSL - bearEntryPrice).toFixed(2);
+            const bearTarget = +(bearEntryPrice - bearRisk).toFixed(2);
             telegramMessage = `
 🔴 <b>BEARISH PATTERN FOUND</b> 🔴
+
+📈 <b>Symbol:</b> ${symbol}
 📊 <b>Chart:</b> <a href="${tvLink}">Open in TradingView (15min)</a>
-📉 <b>Symbol:</b> ${symbol}
+Candle Span : ${pattern.candlesBetween} /10
+
+📥 Entry: ₹${bearEntryPrice} (next candle open)
+🛑 Stop Loss: ₹${bearSL} (signal candle high)
+🎯 Target: ₹${bearTarget} (1:1 RR)
+📈 Risk: ₹${bearRisk} pts
 
 🔄 <b>Bearish Crossover:</b>
   • Time: ${pattern.crossover.timestamp}
@@ -832,10 +918,10 @@ const startPatternScheduler = () => {
   //   return;
   // }
 
-  let firstRun = moment().hour(9).minute(15).second(0).millisecond(0);
+  let firstRun = moment().hour(9).minute(15).second(10).millisecond(0);
 
   if (now.isAfter(firstRun)) {
-    firstRun = now.clone().second(0).millisecond(0);
+    firstRun = now.clone().second(10).millisecond(0);
   }
 
   // if (firstRun.isAfter(endTime)) {
@@ -938,12 +1024,11 @@ const startPatternScheduler = () => {
   };
 
   const calculateNextAlignedRun = (now) => {
-    let nextRun = moment().hour(9).minute(15).second(0).millisecond(0);
+    let nextRun = moment().hour(9).minute(15).second(10).millisecond(0);
 
     while (nextRun.isSameOrBefore(now)) {
       nextRun.add(15, "minute");
     }
-
     return nextRun;
   };
 
