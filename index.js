@@ -21,7 +21,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-// const telegramchat = "-1003727905299";
+const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
@@ -31,14 +31,14 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
-const telegramchat = "8559767849"
+// const telegramchat = "8559767849"
 
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-const SEND_FIRST_RUN_NOTIFICATIONS = true;
-const symbols = ["NSE:TORNTPHARM-EQ"];
+const SEND_FIRST_RUN_NOTIFICATIONS = false;
+// const symbols = ["NSE:TORNTPHARM-EQ"];
 
 const app = express();
 
@@ -319,12 +319,6 @@ const analyzePattern = (emadata, bcvc) => {
         reason: `No RED/ORANGE candle closed below last WHITE BCVC low (${whiteLow})`,
       };
     }
-    if (!isToday(confirmingBearish.timestampUnix)) {
-      return {
-        found: false,
-        reason: `Bearish signal candle is not from today (found: ${moment.unix(confirmingBearish.timestampUnix).format("YYYY-MM-DD")})`,
-      };
-    }
 
     const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, confirmingBearish.timestampUnix);
     const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
@@ -342,6 +336,7 @@ const analyzePattern = (emadata, bcvc) => {
       bullishBCVCs: bullishFormations,
       lastWhiteBCVC: lastWhiteBCVC,
       redCandle: confirmingBearish,
+      candlesBetween,
       validation: {
         totalBullishBCVCs: bullishFormations.length,
         whiteLow: whiteLow,
@@ -349,6 +344,7 @@ const analyzePattern = (emadata, bcvc) => {
         redClose: confirmingBearish.close,
         redLow: confirmingBearish.low,
         closedBelowWhiteLow: true,
+        candlesBetween,
       },
       summary: {
         crossoverTime: latestCrossover.timestamp,
@@ -359,6 +355,7 @@ const analyzePattern = (emadata, bcvc) => {
         whiteClose: lastWhiteBCVC.close,
         redClose: confirmingBearish.close,
         redLow: confirmingBearish.low,
+        candlesBetween,
       },
     };
   }
@@ -432,7 +429,7 @@ let symbolCrossoverCache = new Map(); // Symbol -> {crossoverTimestamp, crossove
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
 
     const now = moment();
@@ -1045,10 +1042,10 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-// startPatternScheduler();
+startPatternScheduler();
 // runauth()
 // startlogic(true)
-runBacktest()
+// runBacktest()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 
 app.listen(PORT, async () => {
