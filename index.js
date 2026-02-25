@@ -1,4 +1,4 @@
-// MAIN FILE 
+// MAIN FILE
 
 const express = require("express");
 const axios = require("axios");
@@ -10,6 +10,7 @@ const { writePatternToExcel } = require("./src/excelReports");
 // const TelegramBot = require('node-telegram-bot-api');
 const EMAManager = require("./utils/func/emaManager");
 const BCVCManager = require("./utils/func/bcvcManager");
+const SRAnalyzer = require("./utils/func/srAnalyzer");
 const bot = require("./utils/func/telegram");
 const fyers = require("./utils/func/fyersapi");
 const { runBacktest } = require("./src/backtestSignals");
@@ -31,12 +32,13 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
-const telegramchat = "8559767849"
+const telegramchat = "8559767849";
 
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
+const srAnalyzer = new SRAnalyzer();
 const SEND_FIRST_RUN_NOTIFICATIONS = true;
 // const symbols = ["NSE:TORNTPHARM-EQ"];
 
@@ -96,6 +98,19 @@ const runauth = async () => {
       console.log(err);
     });
 };
+const getSRBeforeSignal = (rawCandles, signalCandleTs, signalCandleClose) => {
+  if (!rawCandles || rawCandles.length === 0) return null;
+
+  // Keep only candles that CLOSED before the signal candle
+  const candlesBeforeSignal = rawCandles.filter((c) => c[0] < signalCandleTs);
+
+  if (candlesBeforeSignal.length < 20) {
+    console.log("⚠️ Not enough pre-signal candles for SR analysis");
+    return null;
+  }
+
+  return srAnalyzer.analyze(candlesBeforeSignal, signalCandleClose);
+};
 function loadSymbols(inputExcel, columnName = "symbol") {
   const workbook = XLSX.readFile(inputExcel);
 
@@ -124,10 +139,11 @@ function loadSymbols(inputExcel, columnName = "symbol") {
 }
 
 const getTradingMinutesBetween = (startUnix, endUnix) => {
-  const TRADING_START = { hour: 9, minute: 15 };  // adjust to your market open
-  const TRADING_END = { hour: 15, minute: 30 };    // adjust to your market close
+  const TRADING_START = { hour: 9, minute: 15 }; // adjust to your market open
+  const TRADING_END = { hour: 15, minute: 30 }; // adjust to your market close
   const TRADING_MINUTES_PER_DAY =
-    (TRADING_END.hour * 60 + TRADING_END.minute) -
+    TRADING_END.hour * 60 +
+    TRADING_END.minute -
     (TRADING_START.hour * 60 + TRADING_START.minute);
 
   let start = moment.unix(startUnix);
@@ -137,18 +153,23 @@ const getTradingMinutesBetween = (startUnix, endUnix) => {
   let current = start.clone();
 
   while (current.isBefore(end)) {
-    const next = moment.min(
-      current.clone().endOf("day"),
-      end
-    );
+    const next = moment.min(current.clone().endOf("day"), end);
 
     // Check if current day is a trading day (skip weekends)
     const dayOfWeek = current.day();
     if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      const tradingStart = current.clone().startOf("day")
-        .hour(TRADING_START.hour).minute(TRADING_START.minute).second(0);
-      const tradingEnd = current.clone().startOf("day")
-        .hour(TRADING_END.hour).minute(TRADING_END.minute).second(0);
+      const tradingStart = current
+        .clone()
+        .startOf("day")
+        .hour(TRADING_START.hour)
+        .minute(TRADING_START.minute)
+        .second(0);
+      const tradingEnd = current
+        .clone()
+        .startOf("day")
+        .hour(TRADING_END.hour)
+        .minute(TRADING_END.minute)
+        .second(0);
 
       const effectiveStart = moment.max(current, tradingStart);
       const effectiveEnd = moment.min(next, tradingEnd);
@@ -158,8 +179,13 @@ const getTradingMinutesBetween = (startUnix, endUnix) => {
       }
     }
 
-    current = current.clone().startOf("day").add(1, "day")
-      .hour(TRADING_START.hour).minute(TRADING_START.minute).second(0);
+    current = current
+      .clone()
+      .startOf("day")
+      .add(1, "day")
+      .hour(TRADING_START.hour)
+      .minute(TRADING_START.minute)
+      .second(0);
   }
 
   return totalMinutes;
@@ -230,8 +256,12 @@ const analyzePattern = (emadata, bcvc) => {
       };
     }
 
-    const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, confirmingBullish.timestampUnix);
-    const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
+    const elapsedMinutes = getTradingMinutesBetween(
+      crossoverTimestamp,
+      confirmingBullish.timestampUnix,
+    );
+    const candlesBetween =
+      elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
 
     if (!isToday(confirmingBullish.timestampUnix)) {
       return {
@@ -298,7 +328,10 @@ const analyzePattern = (emadata, bcvc) => {
     }
 
     const bearishCandlesAfterWhite = formationsAfterLastWhite.filter(
-      (f) => f.candleColor === "red" || f.candleColor === "orange" || f.candleColor === "maroon",
+      (f) =>
+        f.candleColor === "red" ||
+        f.candleColor === "orange" ||
+        f.candleColor === "maroon",
     );
 
     if (bearishCandlesAfterWhite.length === 0) {
@@ -319,8 +352,12 @@ const analyzePattern = (emadata, bcvc) => {
       };
     }
 
-    const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, confirmingBearish.timestampUnix);
-    const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
+    const elapsedMinutes = getTradingMinutesBetween(
+      crossoverTimestamp,
+      confirmingBearish.timestampUnix,
+    );
+    const candlesBetween =
+      elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
     if (!isToday(confirmingBearish.timestampUnix)) {
       return {
         found: false,
@@ -369,9 +406,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getTradingViewLink = (symbol) => {
   // Strip NSE: prefix and -EQ suffix → e.g. "NSE:BAJAJFINSV-EQ" → "BAJAJFINSV"
-  const clean = symbol
-    .replace(/^NSE:/i, "")
-    .replace(/-EQ$/i, "");
+  const clean = symbol.replace(/^NSE:/i, "").replace(/-EQ$/i, "");
   // 15-min chart on NSE
   return `https://www.tradingview.com/chart/?symbol=NSE%3A${clean}&interval=15`;
 };
@@ -450,7 +485,7 @@ const startlogic = async (isFirstRun = false) => {
     let recentCrossovers = 0;
     let skippedSymbols = 0;
     let differentCrossoversDetected = 0; // Count of symbols with multiple crossovers today
-    ``
+    ``;
     const BATCH_SIZE = 25;
     const WAIT_TIME = 5000;
 
@@ -614,6 +649,24 @@ const startlogic = async (isFirstRun = false) => {
 
         const pattern = analyzePattern(emadata, bcvc);
         if (pattern.found) {
+          const signalCandle =
+            pattern.crossoverType === "BULLISH_CROSSOVER"
+              ? pattern.bullishBCVC
+              : pattern.redCandle;
+
+          // const srAnalysis = getSRBeforeSignal(
+          //   emadata.rawCandles,
+          //   signalCandle.timestampUnix,
+          //   signalCandle.close,
+          // );
+          const srAnalysis = getSRBeforeSignal(
+            emadata.rawCandles,
+            pattern.crossover.timestampUnix, // ← cut off AT crossover, not signal candle
+            pattern.crossover.price,
+          );
+
+          // Attach to bcvc so buildSRTelegramBlock (already called below) gets real data
+          bcvc.srAnalysis = srAnalysis;
           patternsFound++;
 
           const patternId = generatePatternId(symbol, pattern);
@@ -642,27 +695,21 @@ const startlogic = async (isFirstRun = false) => {
             JSON.stringify(pattern.validation, null, 2),
           );
           var telegramMessage = "";
-
           if (pattern.crossoverType === "BULLISH_CROSSOVER") {
-            console.log(
-              `🚀 Bullish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
-            );
-            console.log(
-              `🔴 Bearish BCVCs found: ${pattern.validation.totalBearishBCVCs} (${pattern.validation.bearishCandleColor.toUpperCase()})`,
-            );
-            console.log(
-              `🔴 Last Bearish BCVC: ${pattern.lastBearishBCVC.timestamp} (High: ${pattern.lastBearishBCVC.high})`,
-            );
-            console.log(
-              `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (Close: ${pattern.bullishBCVC.close}) - CLOSED ABOVE BEARISH HIGH ✓`,
-            );
             const tvLink = getTradingViewLink(symbol);
-            const bullEntryPrice = pattern.bullishBCVC.close; // next candle open ≈ signal close
+            const bullEntryPrice = pattern.bullishBCVC.close;
             const bullSL = pattern.bullishBCVC.low;
             const bullRisk = +(bullEntryPrice - bullSL).toFixed(2);
             const bullTarget = +(bullEntryPrice + bullRisk).toFixed(2);
+
+            // BCVCManager.buildSRTelegramBlock() is a static method — call it directly
+            const srBlock = BCVCManager.buildSRTelegramBlock(
+              bcvc.srAnalysis,
+              "BULLISH",
+            );
+
             telegramMessage = `
-🟢 <b>BULLISH PATTERN FOUND</b> ${symbol} 
+🟢 <b>BULLISH PATTERN FOUND</b> ${symbol}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📊 <b>Chart :</b> <a href="${tvLink}"> ${symbol} (15min)</a>
 📈 Candle Span ${pattern.candlesBetween} /10
@@ -677,29 +724,25 @@ const startlogic = async (isFirstRun = false) => {
 🔴 <b>Bearish BCVCs (${pattern.validation.totalBearishBCVCs} found) :</b> ${pattern.lastBearishBCVC.timestamp} ${pattern.validation.bearishCandleColor.toUpperCase()} candle
   
 🚀 <b>Bullish BCVC (Entry Signal) :</b> ${pattern.bullishBCVC.timestamp} White Candle
+${srBlock}
 
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
-          } else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
-            // ✅ Updated console logs
-            console.log(
-              `🔴 Bearish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
-            );
-            console.log(
-              `⚪ White BCVCs found: ${pattern.validation.totalBullishBCVCs}`,
-            );
-            console.log(
-              `⚪ Last White BCVC: ${pattern.lastWhiteBCVC.timestamp} (Low: ${pattern.lastWhiteBCVC.low})`,
-            );
-            console.log(
-              `🔻 Bearish Candle: ${pattern.redCandle.timestamp} (Close: ${pattern.redCandle.close}) - CLOSED BELOW WHITE LOW ✓`,
-            );
-            // ✅ Updated Telegram message
+          }
+
+          // ── BEARISH message  (replace your existing bearish telegramMessage string) ──
+          else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
             const tvLink = getTradingViewLink(symbol);
-            const bearEntryPrice = pattern.redCandle.close; // next candle open ≈ signal close
+            const bearEntryPrice = pattern.redCandle.close;
             const bearSL = pattern.redCandle.high;
             const bearRisk = +(bearSL - bearEntryPrice).toFixed(2);
             const bearTarget = +(bearEntryPrice - bearRisk).toFixed(2);
+
+            const srBlock = BCVCManager.buildSRTelegramBlock(
+              bcvc.srAnalysis,
+              "BEARISH",
+            );
+
             telegramMessage = `
 🔴 <b>BEARISH PATTERN FOUND</b> ${symbol}
 ━━━━━━━━━━━━━━━━━━━━━━━━
@@ -716,10 +759,88 @@ const startlogic = async (isFirstRun = false) => {
 ⚪ <b>Bullish BCVCs (${pattern.validation.totalBullishBCVCs} found) :</b> ${pattern.lastWhiteBCVC.timestamp}
 
 🔻 <b>Bearish Candle (Entry Signal) :</b> ${pattern.redCandle.timestamp}
+${srBlock}
 
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
+          //           if (pattern.crossoverType === "BULLISH_CROSSOVER") {
+          //             console.log(
+          //               `🚀 Bullish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
+          //             );
+          //             console.log(
+          //               `🔴 Bearish BCVCs found: ${pattern.validation.totalBearishBCVCs} (${pattern.validation.bearishCandleColor.toUpperCase()})`,
+          //             );
+          //             console.log(
+          //               `🔴 Last Bearish BCVC: ${pattern.lastBearishBCVC.timestamp} (High: ${pattern.lastBearishBCVC.high})`,
+          //             );
+          //             console.log(
+          //               `🚀 Bullish BCVC: ${pattern.bullishBCVC.timestamp} (Close: ${pattern.bullishBCVC.close}) - CLOSED ABOVE BEARISH HIGH ✓`,
+          //             );
+          //             const tvLink = getTradingViewLink(symbol);
+          //             const bullEntryPrice = pattern.bullishBCVC.close; // next candle open ≈ signal close
+          //             const bullSL = pattern.bullishBCVC.low;
+          //             const bullRisk = +(bullEntryPrice - bullSL).toFixed(2);
+          //             const bullTarget = +(bullEntryPrice + bullRisk).toFixed(2);
+          //             telegramMessage = `
+          // 🟢 <b>BULLISH PATTERN FOUND</b> ${symbol}
+          // ━━━━━━━━━━━━━━━━━━━━━━━━
+          // 📊 <b>Chart :</b> <a href="${tvLink}"> ${symbol} (15min)</a>
+          // 📈 Candle Span ${pattern.candlesBetween} /10
+
+          // 📥 Entry : ₹${bullEntryPrice} (next candle open)
+          // 🛑 Stop Loss : ₹${bullSL} (signal candle low)
+          // 🎯 Target : ₹${bullTarget} (1:1 RR)
+          // 📉 Risk : ₹${bullRisk} pts
+
+          // 🔄 <b>Bullish Crossover :</b> ${pattern.crossover.timestamp}  ${formattedSummary.crossoverAge}
+
+          // 🔴 <b>Bearish BCVCs (${pattern.validation.totalBearishBCVCs} found) :</b> ${pattern.lastBearishBCVC.timestamp} ${pattern.validation.bearishCandleColor.toUpperCase()} candle
+
+          // 🚀 <b>Bullish BCVC (Entry Signal) :</b> ${pattern.bullishBCVC.timestamp} White Candle
+
+          // ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
+          // `.trim();
+          //           } else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
+          //             // ✅ Updated console logs
+          //             console.log(
+          //               `🔴 Bearish Crossover: ${pattern.crossover.timestamp} @ ${pattern.crossover.price}`,
+          //             );
+          //             console.log(
+          //               `⚪ White BCVCs found: ${pattern.validation.totalBullishBCVCs}`,
+          //             );
+          //             console.log(
+          //               `⚪ Last White BCVC: ${pattern.lastWhiteBCVC.timestamp} (Low: ${pattern.lastWhiteBCVC.low})`,
+          //             );
+          //             console.log(
+          //               `🔻 Bearish Candle: ${pattern.redCandle.timestamp} (Close: ${pattern.redCandle.close}) - CLOSED BELOW WHITE LOW ✓`,
+          //             );
+          //             // ✅ Updated Telegram message
+          //             const tvLink = getTradingViewLink(symbol);
+          //             const bearEntryPrice = pattern.redCandle.close; // next candle open ≈ signal close
+          //             const bearSL = pattern.redCandle.high;
+          //             const bearRisk = +(bearSL - bearEntryPrice).toFixed(2);
+          //             const bearTarget = +(bearEntryPrice - bearRisk).toFixed(2);
+          //             telegramMessage = `
+          // 🔴 <b>BEARISH PATTERN FOUND</b> ${symbol}
+          // ━━━━━━━━━━━━━━━━━━━━━━━━
+          // 📊 <b>Chart :</b> <a href="${tvLink}">${symbol} (15min)</a>
+          // 📉 Candle Span :${pattern.candlesBetween} /10
+
+          // 📥 Entry : ₹${bearEntryPrice} (next candle open)
+          // 🛑 Stop Loss : ₹${bearSL} (signal candle high)
+          // 🎯 Target : ₹${bearTarget} (1:1 RR)
+          // 📈 Risk : ₹${bearRisk} pts
+
+          // 🔄 <b>Bearish Crossover:</b> ${pattern.crossover.timestamp}  ${formattedSummary.crossoverAge}
+
+          // ⚪ <b>Bullish BCVCs (${pattern.validation.totalBullishBCVCs} found) :</b> ${pattern.lastWhiteBCVC.timestamp}
+
+          // 🔻 <b>Bearish Candle (Entry Signal) :</b> ${pattern.redCandle.timestamp}
+
+          // ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
+          // `.trim();
+          //           }
           const sendAndRecord = async () => {
             // 1) Telegram
             await bot.sendMessage(telegramchat, telegramMessage, {
@@ -818,7 +939,9 @@ const startlogic = async (isFirstRun = false) => {
         const waitUntil = moment().add(WAIT_TIME / 1000, "seconds");
         console.log("\n" + "⏸️ ".repeat(30));
         console.log(`⏸️  RATE LIMIT: Processed ${i + 1} symbols`);
-        console.log(`⏸️  Waiting ${WAIT_TIME / 1000} seconds to avoid API limits...`);
+        console.log(
+          `⏸️  Waiting ${WAIT_TIME / 1000} seconds to avoid API limits...`,
+        );
         console.log(`⏸️  Will resume at: ${waitUntil.format("HH:mm:ss")}`);
         console.log("⏸️ ".repeat(30) + "\n");
 
@@ -1005,8 +1128,8 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-// startPatternScheduler();
-runauth()
+startPatternScheduler();
+// runauth();
 // startlogic(true)
 // runBacktest()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;

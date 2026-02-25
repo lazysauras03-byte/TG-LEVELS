@@ -801,7 +801,7 @@ class EMAManager {
           current:
             emaHistory.length > 0 ? emaHistory[emaHistory.length - 1] : null,
         };
-
+        result._rawCandles = candles; 
         return result;
       } catch (error) {
         console.error(
@@ -910,26 +910,45 @@ class EMAManager {
     };
   }
 
-  async generateEMAReport(symbol, days = 1) {
-    const historical = await this.getHistoricalEMA(symbol, days);
+  // async generateEMAReport(symbol, days = 1) {
+  //   const historical = await this.getHistoricalEMA(symbol, days);
 
-    if (!historical) {
-      return null;
-    }
+  //   if (!historical) {
+  //     return null;
+  //   }
 
-    const report = {
-      header: {
-        symbol: historical.symbol,
-        period: historical.period,
-        dateRange: `${historical.periodStart} to ${historical.periodEnd}`,
-        generatedAt: moment().format("YYYY-MM-DD HH:mm:ss"),
-      },
-      crossover: historical.crossoverStats.allCrossovers.slice(-5).reverse(),
-    };
+  //   const report = {
+  //     header: {
+  //       symbol: historical.symbol,
+  //       period: historical.period,
+  //       dateRange: `${historical.periodStart} to ${historical.periodEnd}`,
+  //       generatedAt: moment().format("YYYY-MM-DD HH:mm:ss"),
+  //     },
+  //     crossover: historical.crossoverStats.allCrossovers.slice(-5).reverse(),
+  //   };
 
-    return report;
+  //   return report;
+  // }
+async generateEMAReport(symbol, days = 1) {
+  const historical = await this.getHistoricalEMA(symbol, days);
+
+  if (!historical) {
+    return null;
   }
 
+  const report = {
+    header: {
+      symbol: historical.symbol,
+      period: historical.period,
+      dateRange: `${historical.periodStart} to ${historical.periodEnd}`,
+      generatedAt: moment().format("YYYY-MM-DD HH:mm:ss"),
+    },
+    crossover: historical.crossoverStats.allCrossovers.slice(-5).reverse(),
+    rawCandles: historical._rawCandles || [],   // ← ADD THIS
+  };
+
+  return report;
+}
   async generateMultipleEMAReports(
     symbols,
     days = 20,
