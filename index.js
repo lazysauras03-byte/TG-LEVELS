@@ -21,7 +21,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-const telegramchat = "-1003727905299";
+// const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
@@ -31,13 +31,13 @@ const telegramchat = "-1003727905299";
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
-// const telegramchat = "8559767849"
+const telegramchat = "8559767849"
 
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
-const SEND_FIRST_RUN_NOTIFICATIONS = false;
+const SEND_FIRST_RUN_NOTIFICATIONS = true;
 // const symbols = ["NSE:TORNTPHARM-EQ"];
 
 const app = express();
@@ -96,7 +96,6 @@ const runauth = async () => {
       console.log(err);
     });
 };
-
 function loadSymbols(inputExcel, columnName = "symbol") {
   const workbook = XLSX.readFile(inputExcel);
 
@@ -663,42 +662,23 @@ const startlogic = async (isFirstRun = false) => {
             const bullRisk = +(bullEntryPrice - bullSL).toFixed(2);
             const bullTarget = +(bullEntryPrice + bullRisk).toFixed(2);
             telegramMessage = `
-🚀 <b>BULLISH PATTERN FOUND</b> 🚀
+🟢 <b>BULLISH PATTERN FOUND</b> ${symbol} 
+━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>Chart :</b> <a href="${tvLink}"> ${symbol} (15min)</a>
+📈 Candle Span ${pattern.candlesBetween} /10
 
-📈 <b>Symbol:</b> ${symbol}
-📊 <b>Chart:</b> <a href="${tvLink}">Open in TradingView (15min)</a>
-Candle Span : ${pattern.candlesBetween} /10
+📥 Entry : ₹${bullEntryPrice} (next candle open)
+🛑 Stop Loss : ₹${bullSL} (signal candle low)
+🎯 Target : ₹${bullTarget} (1:1 RR)
+📉 Risk : ₹${bullRisk} pts
 
-📥 Entry: ₹${bullEntryPrice} (next candle open)
-🛑 Stop Loss: ₹${bullSL} (signal candle low)
-🎯 Target: ₹${bullTarget} (1:1 RR)
-📉 Risk: ₹${bullRisk} pts
+🔄 <b>Bullish Crossover :</b> ${pattern.crossover.timestamp}  ${formattedSummary.crossoverAge}
 
-🔄 <b>Bullish Crossover:</b>
-  • Time: ${pattern.crossover.timestamp}
-  • Price: ₹${pattern.crossover.price}
-  • Age: ${formattedSummary.crossoverAge}
+🔴 <b>Bearish BCVCs (${pattern.validation.totalBearishBCVCs} found) :</b> ${pattern.lastBearishBCVC.timestamp} ${pattern.validation.bearishCandleColor.toUpperCase()} candle
+  
+🚀 <b>Bullish BCVC (Entry Signal) :</b> ${pattern.bullishBCVC.timestamp} White Candle
 
-🔴 <b>Bearish BCVCs (${pattern.validation.totalBearishBCVCs} found):</b>
-  • Last Bearish Time: ${pattern.lastBearishBCVC.timestamp}
-  • Last Bearish Type: ${pattern.validation.bearishCandleColor.toUpperCase()} candle
-  • Last Bearish High: ₹${pattern.lastBearishBCVC.high}
-  • Last Bearish Close: ₹${pattern.lastBearishBCVC.close}
-
-🚀 <b>Bullish BCVC (Entry Signal):</b>
-  • Time: ${pattern.bullishBCVC.timestamp}
-  • High: ₹${pattern.bullishBCVC.high}
-  • Close: ₹${pattern.bullishBCVC.close}
-  • ✅ CLOSED ABOVE BEARISH HIGH
-
-📊 <b>Validation:</b>
-  • Total Bearish BCVCs: ${pattern.validation.totalBearishBCVCs}
-  • Ref Candle: ${pattern.validation.bearishCandleColor.toUpperCase()}
-  • Last Bearish High: ₹${pattern.validation.bearishHigh}
-  • Bullish High: ₹${pattern.validation.bullishHigh}
-  • Bullish Close: ₹${pattern.validation.bullishClose}
-
-⏰ <b>Detected:</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
+⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           } else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
             // ✅ Updated console logs
@@ -721,40 +701,23 @@ Candle Span : ${pattern.candlesBetween} /10
             const bearRisk = +(bearSL - bearEntryPrice).toFixed(2);
             const bearTarget = +(bearEntryPrice - bearRisk).toFixed(2);
             telegramMessage = `
-🔴 <b>BEARISH PATTERN FOUND</b> 🔴
+🔴 <b>BEARISH PATTERN FOUND</b> ${symbol}
+━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>Chart :</b> <a href="${tvLink}">${symbol} (15min)</a>
+📉 Candle Span :${pattern.candlesBetween} /10
 
-📈 <b>Symbol:</b> ${symbol}
-📊 <b>Chart:</b> <a href="${tvLink}">Open in TradingView (15min)</a>
-Candle Span : ${pattern.candlesBetween} /10
+📥 Entry : ₹${bearEntryPrice} (next candle open)
+🛑 Stop Loss : ₹${bearSL} (signal candle high)
+🎯 Target : ₹${bearTarget} (1:1 RR)
+📈 Risk : ₹${bearRisk} pts
 
-📥 Entry: ₹${bearEntryPrice} (next candle open)
-🛑 Stop Loss: ₹${bearSL} (signal candle high)
-🎯 Target: ₹${bearTarget} (1:1 RR)
-📈 Risk: ₹${bearRisk} pts
+🔄 <b>Bearish Crossover:</b> ${pattern.crossover.timestamp}  ${formattedSummary.crossoverAge}
 
-🔄 <b>Bearish Crossover:</b>
-  • Time: ${pattern.crossover.timestamp}
-  • Price: ₹${pattern.crossover.price}
-  • Age: ${formattedSummary.crossoverAge}
+⚪ <b>Bullish BCVCs (${pattern.validation.totalBullishBCVCs} found) :</b> ${pattern.lastWhiteBCVC.timestamp}
 
-⚪ <b>Bullish BCVCs (${pattern.validation.totalBullishBCVCs} found):</b>
-  • Last White Time: ${pattern.lastWhiteBCVC.timestamp}
-  • Last White Low: ₹${pattern.lastWhiteBCVC.low}
-  • Last White Close: ₹${pattern.lastWhiteBCVC.close}
+🔻 <b>Bearish Candle (Entry Signal) :</b> ${pattern.redCandle.timestamp}
 
-🔻 <b>Bearish Candle (Entry Signal):</b>
-  • Time: ${pattern.redCandle.timestamp}
-  • Low: ₹${pattern.redCandle.low}
-  • Close: ₹${pattern.redCandle.close}
-  • ✅ CLOSED BELOW WHITE LOW
-
-📊 <b>Validation:</b>
-  • Total Bullish BCVCs: ${pattern.validation.totalBullishBCVCs}
-  • Last White Low: ₹${pattern.validation.whiteLow}
-  • Bearish Close: ₹${pattern.validation.redClose}
-  • Bearish Low: ₹${pattern.validation.redLow}
-
-⏰ <b>Detected:</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
+⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
           const sendAndRecord = async () => {
@@ -1042,8 +1005,8 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-startPatternScheduler();
-// runauth()
+// startPatternScheduler();
+runauth()
 // startlogic(true)
 // runBacktest()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
