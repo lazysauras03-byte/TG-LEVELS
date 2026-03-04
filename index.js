@@ -11,6 +11,7 @@ const { writePatternToExcel } = require("./src/excelReports");
 const EMAManager = require("./utils/func/emaManager");
 const BCVCManager = require("./utils/func/bcvcManager");
 const SRAnalyzer = require("./utils/func/srAnalyzer");
+const { analyzeDowTheory, buildDowTheoryTelegramBlock } = require("./utils/func/dowTheory");
 const bot = require("./utils/func/telegram");
 const fyers = require("./utils/func/fyersapi");
 const { runBacktest } = require("./src/backtestSignals");
@@ -819,6 +820,8 @@ const startlogic = async (isFirstRun = false) => {
 
           // Attach to bcvc so buildSRTelegramBlock (already called below) gets real data
           bcvc.srAnalysis = srAnalysis;
+          const dowAnalysis = analyzeDowTheory(emadata.rawCandles, pattern.crossoverType);
+          const dowBlock = buildDowTheoryTelegramBlock(dowAnalysis);
           patternsFound++;
 
           const patternId = generatePatternId(symbol, pattern);
@@ -888,6 +891,7 @@ const startlogic = async (isFirstRun = false) => {
 🔴 <b>Bearish BCVCs :</b> ${pattern.validation.totalBearishBCVCs} found | Last: ${pattern.lastBearishBCVC.timestamp} [${pattern.validation.bearishCandleColor.toUpperCase()}]
 🚀 <b>Entry Signal :</b> ${pattern.bullishBCVC.timestamp} — White candle
 ${srBlock}
+${dowBlock}
 
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
@@ -935,6 +939,7 @@ ${srBlock}
 ⚪ <b>Bullish BCVCs :</b> ${pattern.validation.totalBullishBCVCs} found | Last: ${pattern.lastWhiteBCVC.timestamp}
 🔻 <b>Entry Signal :</b> ${pattern.redCandle.timestamp} — Bearish candle
 ${srBlock}
+${dowBlock}
 
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
