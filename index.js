@@ -12,6 +12,8 @@ const EMAManager = require("./utils/func/emaManager");
 const BCVCManager = require("./utils/func/bcvcManager");
 const SRAnalyzer = require("./utils/func/srAnalyzer");
 const { analyzeDowTheory, buildDowTheoryTelegramBlock } = require("./utils/func/dowTheory");
+const { analyzeWyckoff, buildWyckoffTelegramBlock } = require("./utils/func/wyckoff");
+const { scoreEntry, buildEntryMapTelegramBlock } = require("./utils/func/entryMap");
 const bot = require("./utils/func/telegram");
 const fyers = require("./utils/func/fyersapi");
 const { runBacktest } = require("./src/backtestSignals");
@@ -822,6 +824,39 @@ const startlogic = async (isFirstRun = false) => {
           bcvc.srAnalysis = srAnalysis;
           const dowAnalysis = analyzeDowTheory(emadata.rawCandles, pattern.crossoverType);
           const dowBlock = buildDowTheoryTelegramBlock(dowAnalysis);
+
+          // Wyckoff analysis
+          let wyckoffAnalysis = null;
+          let wyckoffBlock = "";
+          try {
+            wyckoffAnalysis = analyzeWyckoff(emadata.rawCandles);
+            wyckoffBlock = buildWyckoffTelegramBlock(wyckoffAnalysis);
+          } catch (e) {
+            console.error("⚠️ Wyckoff analysis failed:", e.message);
+          }
+
+          // Entry quality scoring
+          let entryScore = null;
+          let entryMapBlock = "";
+          try {
+            const sc = pattern.crossoverType === "BULLISH_CROSSOVER" ? pattern.bullishBCVC : pattern.redCandle;
+            const ep = sc.close;
+            const sl = pattern.crossoverType === "BULLISH_CROSSOVER" ? sc.low : sc.high;
+            entryScore = scoreEntry({
+              pattern,
+              srAnalysis,
+              dowAnalysis,
+              wyckoffAnalysis,
+              niftyBias,
+              signalCandle: sc,
+              entryPrice: ep,
+              stopLoss: sl,
+              direction: pattern.crossoverType,
+            });
+            entryMapBlock = buildEntryMapTelegramBlock(entryScore);
+          } catch (e) {
+            console.error("⚠️ Entry scoring failed:", e.message);
+          }
           patternsFound++;
 
           const patternId = generatePatternId(symbol, pattern);
@@ -877,7 +912,6 @@ const startlogic = async (isFirstRun = false) => {
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📊 <b>Chart      :</b> <a href="${tvLink}">${symbol} (15min)</a>
 📈 Candle Span : ${pattern.candlesBetween}/10
-🧭 Nifty Bias  : ${alignLabel}
 
 📥 <b>Entry      :</b> ₹${bullEntryPrice} (next candle open)
 🛑 <b>Stop Loss  :</b> ₹${bullSL}  |  Risk : ₹${risk} pts
@@ -886,13 +920,15 @@ const startlogic = async (isFirstRun = false) => {
    T1 → ₹${t1}   Book 40% → move SL to breakeven
    T2 → ₹${t2}   Book 40% → trail remainder
    T3 → Trail 20% with SL below each higher low
+${entryMapBlock ? `\n${entryMapBlock}` : ""}
+🧭 Nifty Bias  : ${alignLabel}
 
 🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
 🔴 <b>Bearish BCVCs :</b> ${pattern.validation.totalBearishBCVCs} found | Last: ${pattern.lastBearishBCVC.timestamp} [${pattern.validation.bearishCandleColor.toUpperCase()}]
 🚀 <b>Entry Signal :</b> ${pattern.bullishBCVC.timestamp} — White candle
 ${srBlock}
 ${dowBlock}
-
+${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
@@ -925,7 +961,6 @@ ${dowBlock}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📊 <b>Chart      :</b> <a href="${tvLink}">${symbol} (15min)</a>
 📉 Candle Span : ${pattern.candlesBetween}/10
-🧭 Nifty Bias  : ${alignLabel}
 
 📥 <b>Entry      :</b> ₹${bearEntryPrice} (next candle open)
 🛑 <b>Stop Loss  :</b> ₹${bearSL}  |  Risk : ₹${risk} pts
@@ -934,13 +969,15 @@ ${dowBlock}
    T1 → ₹${t1}   Book 40% → move SL to breakeven
    T2 → ₹${t2}   Book 40% → trail remainder
    T3 → Trail 20% with SL above each lower high
+${entryMapBlock ? `\n${entryMapBlock}` : ""}
+🧭 Nifty Bias  : ${alignLabel}
 
 🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
 ⚪ <b>Bullish BCVCs :</b> ${pattern.validation.totalBullishBCVCs} found | Last: ${pattern.lastWhiteBCVC.timestamp}
 🔻 <b>Entry Signal :</b> ${pattern.redCandle.timestamp} — Bearish candle
 ${srBlock}
 ${dowBlock}
-
+${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }

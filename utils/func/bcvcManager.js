@@ -687,32 +687,31 @@ class BCVCManager {
     static buildSRTelegramBlock(srAnalysis, direction = "BULLISH") {
   if (!srAnalysis || srAnalysis.error) return "";
 
-  const lines = ["", "📐 <b>S/R Levels (at signal):</b>"];
+  const fmtLevel = (l) => {
+    const scoreStr = l.score !== undefined ? ` · ${l.score}/100` : "";
+    const touchStr = l.touches !== undefined
+      ? ` · ${l.touches} touch${l.touches !== 1 ? "es" : ""}`
+      : "";
+    const flipStr = l.flippedFrom ? ` [flipped]` : "";
+    return `₹${l.price} (${l.distancePct}% away) [${l.strength}${scoreStr}${touchStr}${flipStr}]`;
+  };
+
+  const lines = ["", "📊 <b>S/R Levels:</b>"];
 
   if (direction === "BULLISH") {
-    // Show nearest support (defense) and nearest resistance (target)
-    if (srAnalysis.support && srAnalysis.support.length > 0) {
-      const s = srAnalysis.support[0];
-      lines.push(`🟢 Support  : ₹${s.price} (${s.distancePct}% below) [${s.strength}]`);
-    }
-    if (srAnalysis.resistance && srAnalysis.resistance.length > 0) {
-      const r = srAnalysis.resistance[0];
-      lines.push(`🔴 Resist   : ₹${r.price} (${r.distancePct}% above) [${r.strength}]`);
-    }
+    const supports = (srAnalysis.support || []).slice(0, 2);
+    const resistances = (srAnalysis.resistance || []).slice(0, 2);
+    supports.forEach((s, i)    => lines.push(`🟢 S${i + 1}: ${fmtLevel(s)}`));
+    resistances.forEach((r, i) => lines.push(`🔴 R${i + 1}: ${fmtLevel(r)}`));
     if (srAnalysis.accumulation && srAnalysis.accumulation.length > 0) {
       const a = srAnalysis.accumulation[0];
       lines.push(`📦 Accum    : ₹${a.low}–₹${a.high} (${a.candleCount} candles)`);
     }
   } else {
-    // BEARISH — show nearest resistance (defense) and nearest support (target)
-    if (srAnalysis.resistance && srAnalysis.resistance.length > 0) {
-      const r = srAnalysis.resistance[0];
-      lines.push(`🔴 Resist   : ₹${r.price} (${r.distancePct}% above) [${r.strength}]`);
-    }
-    if (srAnalysis.support && srAnalysis.support.length > 0) {
-      const s = srAnalysis.support[0];
-      lines.push(`🟢 Support  : ₹${s.price} (${s.distancePct}% below) [${s.strength}]`);
-    }
+    const resistances = (srAnalysis.resistance || []).slice(0, 2);
+    const supports = (srAnalysis.support || []).slice(0, 2);
+    resistances.forEach((r, i) => lines.push(`🔴 R${i + 1}: ${fmtLevel(r)}`));
+    supports.forEach((s, i)    => lines.push(`🟢 S${i + 1}: ${fmtLevel(s)}`));
     if (srAnalysis.distribution && srAnalysis.distribution.length > 0) {
       const d = srAnalysis.distribution[0];
       lines.push(`📤 Dist     : ₹${d.low}–₹${d.high} (${d.candleCount} candles)`);
