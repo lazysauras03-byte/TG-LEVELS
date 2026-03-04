@@ -55,7 +55,7 @@ const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
 const SEND_FIRST_RUN_NOTIFICATIONS = true;
-const symbols = ["NSE:DIVISLAB-EQ","NSE:SUPREMEIND-EQ","NSE:PIDILITIND-EQ","NSE:DABUR-EQ","NSE:BHEL-EQ","NSE:ASTRAL-EQ"];
+// const symbols = ["NSE:DIVISLAB-EQ","NSE:SUPREMEIND-EQ","NSE:PIDILITIND-EQ","NSE:DABUR-EQ","NSE:BHEL-EQ","NSE:ASTRAL-EQ"];
 
 const app = express();
 
@@ -626,7 +626,7 @@ let symbolCrossoverCache = new Map(); // Symbol -> {crossoverTimestamp, crossove
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
     const niftyBias = await getNiftyBias();
     console.log(
@@ -636,7 +636,7 @@ const startlogic = async (isFirstRun = false) => {
     const now = moment();
     const today = now.format("YYYY-MM-DD");
 
-    const TRADING_DAYS_LOOKBACK = 2;
+    const TRADING_DAYS_LOOKBACK = 1;
     const { lookbackDate, calendarDaysBack, tradingDaysCount } =
       getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
 
@@ -829,7 +829,8 @@ const startlogic = async (isFirstRun = false) => {
           const srAnalysis = getSRBeforeSignal(
             emadata.rawCandles,
             pattern.crossover.timestampUnix, // ← cut off AT crossover, not signal candle
-            pattern.crossover.price,
+            // pattern.crossover.price,
+            signalCandle.close,  
           );
 
           // Attach to bcvc so buildSRTelegramBlock (already called below) gets real data

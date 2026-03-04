@@ -699,8 +699,8 @@ class BCVCManager {
   const lines = ["", "📊 <b>S/R Levels:</b>"];
 
   if (direction === "BULLISH") {
-    const supports = (srAnalysis.support || []).slice(0, 2);
-    const resistances = (srAnalysis.resistance || []).slice(0, 2);
+    const supports = (srAnalysis.support || []).slice(0, 3);
+    const resistances = (srAnalysis.resistance || []).slice(0, 3);
     supports.forEach((s, i)    => lines.push(`🟢 S${i + 1}: ${fmtLevel(s)}`));
     resistances.forEach((r, i) => lines.push(`🔴 R${i + 1}: ${fmtLevel(r)}`));
     if (srAnalysis.accumulation && srAnalysis.accumulation.length > 0) {
@@ -708,8 +708,8 @@ class BCVCManager {
       lines.push(`📦 Accum    : ₹${a.low}–₹${a.high} (${a.candleCount} candles)`);
     }
   } else {
-    const resistances = (srAnalysis.resistance || []).slice(0, 2);
-    const supports = (srAnalysis.support || []).slice(0, 2);
+    const resistances = (srAnalysis.resistance || []).slice(0, 3);
+    const supports = (srAnalysis.support || []).slice(0, 3);
     resistances.forEach((r, i) => lines.push(`🔴 R${i + 1}: ${fmtLevel(r)}`));
     supports.forEach((s, i)    => lines.push(`🟢 S${i + 1}: ${fmtLevel(s)}`));
     if (srAnalysis.distribution && srAnalysis.distribution.length > 0) {
