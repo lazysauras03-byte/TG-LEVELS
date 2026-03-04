@@ -19,9 +19,9 @@
  * @param {string} opts.direction        - "BULLISH_CROSSOVER" | "BEARISH_CROSSOVER"
  * @returns {object} scoring result
  */
-function scoreEntry({ pattern, srAnalysis, dowAnalysis, wyckoffAnalysis, niftyBias, signalCandle, entryPrice, stopLoss, direction }) {
+function scoreEntry({ pattern, srAnalysis, dowAnalysis, wyckoffAnalysis,waveAnalysis, niftyBias, signalCandle, entryPrice, stopLoss, direction }) {
   const isBullish = direction === "BULLISH_CROSSOVER";
-  const breakdown = { sr: 0, dow: 0, wyckoff: 0, bcvc: 0, span: 0, nifty: 0, volume: 0, rr: 0 };
+  const breakdown = { sr: 0, dow: 0, wyckoff: 0, bcvc: 0, span: 0, nifty: 0, volume: 0, rr: 0 ,wave: 0};
 
   // ── S/R Alignment (20 pts) ────────────────────────────────────────────────
   if (srAnalysis && !srAnalysis.error) {
@@ -74,6 +74,13 @@ function scoreEntry({ pattern, srAnalysis, dowAnalysis, wyckoffAnalysis, niftyBi
         breakdown.wyckoff = 0;
       }
     }
+  }
+
+    if (waveAnalysis && waveAnalysis.structure !== 'UNKNOWN') {
+    if (isBullish && waveAnalysis.structure === 'HH_HL') breakdown.wave = 5;
+    else if (!isBullish && waveAnalysis.structure === 'LH_LL') breakdown.wave = 5;
+    else if (waveAnalysis.structure === 'MIXED' || waveAnalysis.structure === 'HH_LL') breakdown.wave = 2;
+    else breakdown.wave = 0;
   }
 
   // ── BCVC Quality (15 pts) ─────────────────────────────────────────────────
@@ -152,13 +159,13 @@ function buildEntryMapTelegramBlock(entryScore) {
   if (!entryScore) return "";
 
   const { totalScore, grade, stars, roadType, breakdown, recommendation } = entryScore;
-  const { sr, dow, wyckoff, bcvc, span, nifty, volume, rr } = breakdown;
+  const { sr, dow, wyckoff, bcvc, span, nifty, volume, rr,wave } = breakdown;
 
   return `🗺️ <b>Entry Quality:</b>
 ${stars} ${grade} Grade — "${roadType}"
 📊 Score   : ${totalScore}/100
 📋 SR: ${sr} | Dow: ${dow} | Wyckoff: ${wyckoff} | BCVC: ${bcvc}
-   Span: ${span} | Nifty: ${nifty} | Vol: ${volume} | RR: ${rr}
+   Span: ${span} | Nifty: ${nifty} | Vol: ${volume} |Wave: ${wave} | RR: ${rr}
 💡 ${recommendation}`;
 }
 

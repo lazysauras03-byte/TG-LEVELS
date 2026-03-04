@@ -11,9 +11,21 @@ const { writePatternToExcel } = require("./src/excelReports");
 const EMAManager = require("./utils/func/emaManager");
 const BCVCManager = require("./utils/func/bcvcManager");
 const SRAnalyzer = require("./utils/func/srAnalyzer");
-const { analyzeDowTheory, buildDowTheoryTelegramBlock } = require("./utils/func/dowTheory");
-const { analyzeWyckoff, buildWyckoffTelegramBlock } = require("./utils/func/wyckoff");
-const { scoreEntry, buildEntryMapTelegramBlock } = require("./utils/func/entryMap");
+const {
+  analyzeDowTheory,
+  buildDowTheoryTelegramBlock,
+} = require("./utils/func/dowTheory");
+const { analyzeWaves, buildWaveAnalysisTelegramBlock } = require("./utils/func/waveAnalysis");
+
+const {
+  analyzeWyckoff,
+  buildWyckoffTelegramBlock,
+} = require("./utils/func/wyckoff");
+const {
+  scoreEntry,
+  buildEntryMapTelegramBlock,
+} = require("./utils/func/entryMap");
+
 const bot = require("./utils/func/telegram");
 const fyers = require("./utils/func/fyersapi");
 const { runBacktest } = require("./src/backtestSignals");
@@ -43,7 +55,7 @@ const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
 const SEND_FIRST_RUN_NOTIFICATIONS = true;
-// const symbols = ["NSE:TORNTPHARM-EQ"];
+const symbols = ["NSE:DIVISLAB-EQ","NSE:SUPREMEIND-EQ","NSE:PIDILITIND-EQ","NSE:DABUR-EQ","NSE:BHEL-EQ","NSE:ASTRAL-EQ"];
 
 const app = express();
 
@@ -414,12 +426,12 @@ const analyzePattern = (emadata, bcvc) => {
     const candlesBetween =
       elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
 
-    // if (!isToday(confirmingBullish.timestampUnix)) {
-    //   return {
-    //     found: false,
-    //     reason: `Bullish signal candle is not from today (found: ${moment.unix(confirmingBullish.timestampUnix).format("YYYY-MM-DD")})`,
-    //   };
-    // }
+    if (!isToday(confirmingBullish.timestampUnix)) {
+      return {
+        found: false,
+        reason: `Bullish signal candle is not from today (found: ${moment.unix(confirmingBullish.timestampUnix).format("YYYY-MM-DD")})`,
+      };
+    }
 
     return {
       found: true,
@@ -509,12 +521,12 @@ const analyzePattern = (emadata, bcvc) => {
     );
     const candlesBetween =
       elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
-    // if (!isToday(confirmingBearish.timestampUnix)) {
-    //   return {
-    //     found: false,
-    //     reason: `Bearish signal candle is not from today (found: ${moment.unix(confirmingBearish.timestampUnix).format("YYYY-MM-DD")})`,
-    //   };
-    // }
+    if (!isToday(confirmingBearish.timestampUnix)) {
+      return {
+        found: false,
+        reason: `Bearish signal candle is not from today (found: ${moment.unix(confirmingBearish.timestampUnix).format("YYYY-MM-DD")})`,
+      };
+    }
 
     return {
       found: true,
@@ -614,7 +626,7 @@ let symbolCrossoverCache = new Map(); // Symbol -> {crossoverTimestamp, crossove
 
 const startlogic = async (isFirstRun = false) => {
   try {
-    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     console.log(symbols);
     const niftyBias = await getNiftyBias();
     console.log(
@@ -624,7 +636,7 @@ const startlogic = async (isFirstRun = false) => {
     const now = moment();
     const today = now.format("YYYY-MM-DD");
 
-    const TRADING_DAYS_LOOKBACK = 1;
+    const TRADING_DAYS_LOOKBACK = 2;
     const { lookbackDate, calendarDaysBack, tradingDaysCount } =
       getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
 
@@ -822,7 +834,10 @@ const startlogic = async (isFirstRun = false) => {
 
           // Attach to bcvc so buildSRTelegramBlock (already called below) gets real data
           bcvc.srAnalysis = srAnalysis;
-          const dowAnalysis = analyzeDowTheory(emadata.rawCandles, pattern.crossoverType);
+          const dowAnalysis = analyzeDowTheory(
+            emadata.rawCandles,
+            pattern.crossoverType,
+          );
           const dowBlock = buildDowTheoryTelegramBlock(dowAnalysis);
 
           // Wyckoff analysis
@@ -835,18 +850,35 @@ const startlogic = async (isFirstRun = false) => {
             console.error("⚠️ Wyckoff analysis failed:", e.message);
           }
 
+          let waveAnalysis = null;
+          let waveBlock = "";
+          try {
+            waveAnalysis = analyzeWaves(emadata.rawCandles);
+            waveBlock = buildWaveAnalysisTelegramBlock(waveAnalysis);
+            console.log(
+              `🌊 Wave structure for ${symbol}: ${waveAnalysis.structureLabel} | ${waveAnalysis.waveCount} completed waves`,
+            );
+          } catch (e) {
+            console.error("⚠️ Wave analysis failed:", e.message);
+          }
+
           // Entry quality scoring
           let entryScore = null;
           let entryMapBlock = "";
           try {
-            const sc = pattern.crossoverType === "BULLISH_CROSSOVER" ? pattern.bullishBCVC : pattern.redCandle;
+            const sc =
+              pattern.crossoverType === "BULLISH_CROSSOVER"
+                ? pattern.bullishBCVC
+                : pattern.redCandle;
             const ep = sc.close;
-            const sl = pattern.crossoverType === "BULLISH_CROSSOVER" ? sc.low : sc.high;
+            const sl =
+              pattern.crossoverType === "BULLISH_CROSSOVER" ? sc.low : sc.high;
             entryScore = scoreEntry({
               pattern,
               srAnalysis,
               dowAnalysis,
               wyckoffAnalysis,
+               waveAnalysis,  
               niftyBias,
               signalCandle: sc,
               entryPrice: ep,
@@ -929,6 +961,7 @@ ${entryMapBlock ? `\n${entryMapBlock}` : ""}
 ${srBlock}
 ${dowBlock}
 ${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
+${waveBlock    ? `\n${waveBlock}`    : ""}
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
@@ -978,6 +1011,7 @@ ${entryMapBlock ? `\n${entryMapBlock}` : ""}
 ${srBlock}
 ${dowBlock}
 ${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
+${waveBlock    ? `\n${waveBlock}`    : ""}
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
@@ -1196,7 +1230,7 @@ const startPatternScheduler = () => {
 
     isExecuting = true;
     startlogic(isFirstRun)
-      .then(async() => {
+      .then(async () => {
         const completedAt = moment();
 
         console.log(
@@ -1205,7 +1239,7 @@ const startPatternScheduler = () => {
 
         if (isFirstRun) {
           isFirstRun = false;
-           await sendDailyBiasMessage();
+          await sendDailyBiasMessage();
           console.log(
             `✅ Initial baseline established. Future runs will send Telegram notifications.\n`,
           );
@@ -1267,9 +1301,9 @@ const stopPatternScheduler = () => {
   }
   isExecuting = false;
 };
-  const bias = getNiftyBias();
+const bias = getNiftyBias();
 // Start the scheduler
-// startPatternScheduler();
+startPatternScheduler();
 // runauth();
 // startlogic(true)
 // runBacktest();
