@@ -37,7 +37,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-// const telegramchat = "-1003727905299";
+const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
@@ -47,30 +47,33 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
-const telegramchat = "8559767849";
+// const telegramchat = "8559767849";
 
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
-const SEND_FIRST_RUN_NOTIFICATIONS = true;
+const SEND_FIRST_RUN_NOTIFICATIONS = false;
 // const symbols = ["NSE:DIVISLAB-EQ","NSE:SUPREMEIND-EQ","NSE:PIDILITIND-EQ","NSE:DABUR-EQ","NSE:BHEL-EQ","NSE:ASTRAL-EQ"];
 
 const app = express();
 
-const refresh_token =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcGxVRGFENklHeXBNY1UwVVFJMWhEMXlMT0FrYnhVTE1YV1ZhZHNsLWNiUmJEVy14NzJfb2VoNlFRUHlxVTVsdTdUbUF2WGRObDh3R00yZzJwRHBfbGQxXzhia2VWNlVEY2tKclVqeHhMaGw5TFJncz0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI0ZDcwNTIwMzlmMmM2NzI3NGViNzBlZTNlZmU4NzU0Y2E3ZDAyMDg1ZTQ1ZDhkY2FlOGRiMzJiOSIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiWFQwMzYyOSIsImFwcFR5cGUiOjEwMCwiZXhwIjoxNzcyNjcwNjAwLCJpYXQiOjE3NzEzODkxNDYsImlzcyI6ImFwaS5meWVycy5pbiIsIm5iZiI6MTc3MTM4OTE0Niwic3ViIjoicmVmcmVzaF90b2tlbiJ9.P-JdUPGC4hdwVOxo08zd7kVxS6XVyhUV5YwC5XToqOU";
-var tempauth;
+// const refresh_token =
+//   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcGxVRGFENklHeXBNY1UwVVFJMWhEMXlMT0FrYnhVTE1YV1ZhZHNsLWNiUmJEVy14NzJfb2VoNlFRUHlxVTVsdTdUbUF2WGRObDh3R00yZzJwRHBfbGQxXzhia2VWNlVEY2tKclVqeHhMaGw5TFJncz0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI0ZDcwNTIwMzlmMmM2NzI3NGViNzBlZTNlZmU4NzU0Y2E3ZDAyMDg1ZTQ1ZDhkY2FlOGRiMzJiOSIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiWFQwMzYyOSIsImFwcFR5cGUiOjEwMCwiZXhwIjoxNzcyNjcwNjAwLCJpYXQiOjE3NzEzODkxNDYsImlzcyI6ImFwaS5meWVycy5pbiIsIm5iZiI6MTc3MTM4OTE0Niwic3ViIjoicmVmcmVzaF90b2tlbiJ9.P-JdUPGC4hdwVOxo08zd7kVxS6XVyhUV5YwC5XToqOU";
+const refresh_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcGxxakh5ekVBajNCeUhRY3Z0ZEpkeWx4WWNZY0tzdmNIQk12ZGJTdDZBWjlQRE9wcV9CeEFuek5OUmN0aHRtYWJqek1xeG1zeEpCdjZlRFptSFJ5Q0dEcVJ6c2Q5VVRpS2h3ems0SlFKc05tX2sxZz0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI5YzM5OTNlMTM2ZTkxYjJhNWNjNTI1NmMxNDlkMjI4ZDQ2YzU3NDJjZTg1ZjYyODAwMTIzYzIxZCIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiRkFJNDY2NDAiLCJhcHBUeXBlIjoxMDAsImV4cCI6MTc3Mjc1NzAwMCwiaWF0IjoxNzcxNDgxMjg3LCJpc3MiOiJhcGkuZnllcnMuaW4iLCJuYmYiOjE3NzE0ODEyODcsInN1YiI6InJlZnJlc2hfdG9rZW4ifQ.o-_-luxPPPsWeWlzHnGz6SvGsfsE-eE_0NnDM_Iyoig"
+  var tempauth;
 
 const raw = localStorage.getItem("token");
 tempauth = raw ? JSON.parse(raw) : null;
 
 let data = {
   grant_type: "refresh_token",
-  appIdHash: "e86d29ff056bcc78df9cd894f163914c9b2d7581cc0aaf417fe03cbbfbd97db4",
+  // appIdHash: "e86d29ff056bcc78df9cd894f163914c9b2d7581cc0aaf417fe03cbbfbd97db4",
+  // pin: "1234",
+  appIdHash: process.env.HASH_ID,
   refresh_token: refresh_token,
-  pin: "1234",
+  pin: process.env.PIN,
 };
 async function createAccess() {
   try {
@@ -1302,7 +1305,7 @@ const stopPatternScheduler = () => {
   }
   isExecuting = false;
 };
-const bias = getNiftyBias();
+
 // Start the scheduler
 startPatternScheduler();
 // runauth();
