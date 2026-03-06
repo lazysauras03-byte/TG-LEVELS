@@ -1,5 +1,4 @@
 // MAIN FILE
-
 const express = require("express");
 const axios = require("axios");
 const XLSX = require("xlsx");
@@ -38,7 +37,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-const telegramchat = "-1003727905299";
+// const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
@@ -48,15 +47,15 @@ const telegramchat = "-1003727905299";
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
-// const telegramchat = "8559767849";
+const telegramchat = "8559767849";
 
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
-const SEND_FIRST_RUN_NOTIFICATIONS = false;
-// const symbols = ["NSE:DIVISLAB-EQ","NSE:SUPREMEIND-EQ","NSE:PIDILITIND-EQ","NSE:DABUR-EQ","NSE:BHEL-EQ","NSE:ASTRAL-EQ"];
+const SEND_FIRST_RUN_NOTIFICATIONS = true;
+const symbols = ["NSE:SOLARINDS-EQ"];
 
 const app = express();
 
@@ -492,6 +491,7 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
   }
 
   const RETEST_WINDOW = 10;
+  const SAME_CANDLE_WINDOW = 2; // ← same candle logic only valid within 2 candles of signal
   let retestCandle = null;
   let retestEma9 = null;
   let confirmCandle = null;
@@ -522,18 +522,26 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
       };
       retestEma9 = +ema.toFixed(2);
 
-      // ── Check if SAME candle also reclaims signal high ────────
-      if (high >= confirmingBullish.high) {
+      // ── Same candle: only valid if within 2 candles of signal ─
+      const withinSameCandleWindow = i <= signalIdx + SAME_CANDLE_WINDOW;
+
+      if (close >= confirmingBullish.high && withinSameCandleWindow) {
+        // ✅ Same candle AND within 2 candles of signal — accept
         confirmCandle = { ...retestCandle };
         sameCandle = true;
         console.log(
-          `✅ Single candle retest+reclaim at ${moment.unix(ts).format("HH:mm")} | ` +
-          `Low ₹${low.toFixed(2)} ≤ EMA9-H ₹${ema.toFixed(2)} AND High ₹${high.toFixed(2)} ≥ Signal High ₹${confirmingBullish.high}`
+          `✅ Same candle retest+reclaim at ${moment.unix(ts).format("HH:mm")} (candle ${i - signalIdx} after signal) | ` +
+          `Low ₹${low.toFixed(2)} ≤ EMA9-H ₹${ema.toFixed(2)} AND Close ₹${close.toFixed(2)} ≥ Signal High ₹${confirmingBullish.high}`
+        );
+      } else if (close >= confirmingBullish.high && !withinSameCandleWindow) {
+        // ❌ Same candle but beyond 2 candles — reject same candle, fall through to Phase 2
+        console.log(
+          `⚠️  Same candle condition met at ${moment.unix(ts).format("HH:mm")} but beyond ${SAME_CANDLE_WINDOW}-candle window (candle ${i - signalIdx}) — skipping same candle, requires separate confirm`
         );
       } else {
         console.log(
           `✅ Phase 1 — EMA touch at ${moment.unix(ts).format("HH:mm")} | ` +
-          `Low ₹${low.toFixed(2)} ≤ EMA9-H ₹${ema.toFixed(2)} — waiting for high reclaim...`
+          `Low ₹${low.toFixed(2)} ≤ EMA9-H ₹${ema.toFixed(2)} | Retest High ₹${high.toFixed(2)} — waiting for close reclaim...`
         );
       }
       break; // stop at first EMA touch regardless
@@ -548,10 +556,14 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
   }
 
   // ── PHASE 2: Only runs if same candle didn't already reclaim ──
+  // Confirm candle must CLOSE above BOTH: signal candle high AND retest candle high
   if (!sameCandle) {
     const retestIdx = rawCandles.findIndex(
       (c) => c[0] === retestCandle.timestampUnix,
     );
+
+    // Must close above whichever is higher: signal high or retest candle high
+    const levelToCross = Math.max(confirmingBullish.high, retestCandle.high);
 
     for (
       let i = retestIdx + 1;
@@ -560,19 +572,21 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
     ) {
       const c = rawCandles[i];
       const high = parseFloat(c[2]);
+      const close = parseFloat(c[4]);
       const ts = c[0];
 
-      if (high >= confirmingBullish.high) {
+      if (close >= levelToCross) {
         confirmCandle = {
           timestamp: moment.unix(ts).format("YYYY-MM-DD HH:mm"),
           timestampUnix: ts,
           high: +high.toFixed(2),
-          close: +parseFloat(c[4]).toFixed(2),
+          close: +close.toFixed(2),
           low: +parseFloat(c[3]).toFixed(2),
         };
         console.log(
-          `✅ Phase 2 — Signal high reclaimed at ${moment.unix(ts).format("HH:mm")} | ` +
-          `High ₹${high.toFixed(2)} ≥ Signal High ₹${confirmingBullish.high}`
+          `✅ Phase 2 — Close above both highs at ${moment.unix(ts).format("HH:mm")} | ` +
+          `Close ₹${close.toFixed(2)} ≥ Level ₹${levelToCross.toFixed(2)} ` +
+          `(Signal High ₹${confirmingBullish.high} | Retest High ₹${retestCandle.high})`
         );
         break;
       }
@@ -582,7 +596,8 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
   if (!confirmCandle) {
     return {
       found: false,
-      reason: `EMA touched at ${retestCandle.timestamp} but signal high ₹${confirmingBullish.high} not reclaimed within window`,
+      reason: `EMA touched at ${retestCandle.timestamp} (High ₹${retestCandle.high}) — ` +
+        `no candle closed above level ₹${Math.max(confirmingBullish.high, retestCandle.high).toFixed(2)} within window`,
     };
   }
 
@@ -608,8 +623,10 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
       candlesBetween,
       retestConfirmed: true,
       retestEma9,
+      retestCandleHigh: retestCandle.high,
       sameCandle,
       confirmCandleTime: confirmCandle.timestamp,
+      confirmCandleClose: confirmCandle.close,
     },
     summary: {
       crossoverTime: latestCrossover.timestamp,
@@ -623,9 +640,11 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
       candlesBetween,
       retestTime: retestCandle.timestamp,
       retestLow: retestCandle.low,
+      retestHigh: retestCandle.high,
       retestEma9,
       confirmTime: confirmCandle.timestamp,
       confirmHigh: confirmCandle.high,
+      confirmClose: confirmCandle.close,
       sameCandle,
     },
   };
@@ -696,7 +715,7 @@ const startlogic = async (isFirstRun = false) => {
     const now = moment();
     const today = now.format("YYYY-MM-DD");
 
-    const TRADING_DAYS_LOOKBACK = 1;
+    const TRADING_DAYS_LOOKBACK = 10;
     const { lookbackDate, calendarDaysBack, tradingDaysCount } =
       getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
 
@@ -1003,8 +1022,8 @@ ${entryMapBlock ? `\n${entryMapBlock}` : ""}
 🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
 🔴 <b>Bearish BCVCs :</b> ${pattern.validation.totalBearishBCVCs} found | Last: ${pattern.lastBearishBCVC.timestamp} [${pattern.validation.bearishCandleColor.toUpperCase()}]
 🚀 <b>Signal Candle:</b> ${pattern.bullishBCVC.timestamp} — White candle → ₹${pattern.bullishBCVC.high}
-📍 <b>EMA Touch    :</b> ${pattern.retestCandle.timestamp} | Low ₹${pattern.retestCandle.low} ≤ EMA9-H ₹${pattern.retestEma9}
-✅ <b>High Reclaim :</b> ${pattern.sameCandle ? `Same candle ✅` : `${pattern.confirmCandle.timestamp} | High ₹${pattern.confirmCandle.high} ≥ Signal High ₹${pattern.bullishBCVC.high}`}${srBlock}
+📍 <b>EMA Touch    :</b> ${pattern.retestCandle.timestamp} | Low ₹${pattern.retestCandle.low} ≤ EMA9-H ₹${pattern.retestEma9} | High ₹${pattern.retestCandle.high}
+✅ <b>Confirmed    :</b> ${pattern.confirmCandle.timestamp} | Close ₹${pattern.confirmCandle.close} ≥ Signal ₹${pattern.bullishBCVC.high} & Retest ₹${pattern.retestCandle.high}
 ${dowBlock}
 ${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
 ${waveBlock ? `\n${waveBlock}` : ""}
@@ -1299,11 +1318,11 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-// startPatternScheduler();
+startPatternScheduler();
 // runauth();
 // startlogic(true)
 // authenticate()
-runBacktest();
+// runBacktest();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 
 app.listen(PORT, async () => {
