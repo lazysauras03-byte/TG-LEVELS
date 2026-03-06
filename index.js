@@ -1308,8 +1308,8 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-startPatternScheduler();
-// runauth();
+// startPatternScheduler();
+runauth();
 // startlogic(true)
 // authenticate()
 // runBacktest();
