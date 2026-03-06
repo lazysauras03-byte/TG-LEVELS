@@ -479,10 +479,8 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
   }
 
   // ── Step 3: 9 EMA RETEST CHECK ────────────────────────────────
-  // Build per-candle 9 EMA of highs from rawCandles
   const ema9HighArray = buildEma9HighArray(rawCandles);
 
-  // Find the index of the signal candle in rawCandles by timestamp
   const signalTs = confirmingBullish.timestampUnix;
   const signalIdx = rawCandles.findIndex((c) => c[0] === signalTs);
 
@@ -493,11 +491,13 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
     };
   }
 
-  // Look at up to 5 candles AFTER the signal candle
-  const RETEST_WINDOW = 5;
+  const RETEST_WINDOW = 10;
   let retestCandle = null;
   let retestEma9 = null;
+  let confirmCandle = null;
+  let sameCandle = false;
 
+  // ── PHASE 1: Find first candle that touches 9 EMA of Highs ───
   for (
     let i = signalIdx + 1;
     i < rawCandles.length && i <= signalIdx + RETEST_WINDOW;
@@ -508,31 +508,81 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
     if (ema === null) continue;
 
     const low = parseFloat(c[3]);
+    const high = parseFloat(c[2]);
     const close = parseFloat(c[4]);
     const ts = c[0];
 
-    // Touched 9 EMA of highs (low ≤ ema9) AND recovered above signal candle's high
-    if (low <= ema && close >= confirmingBullish.high) {
+    if (low <= ema) {
       retestCandle = {
         timestamp: moment.unix(ts).format("YYYY-MM-DD HH:mm"),
         timestampUnix: ts,
         low: +low.toFixed(2),
+        high: +high.toFixed(2),
         close: +close.toFixed(2),
-        high: parseFloat(c[2]).toFixed(2),
       };
       retestEma9 = +ema.toFixed(2);
-      console.log(
-        `✅ 9 EMA retest confirmed for signal at ${moment.unix(signalTs).format("HH:mm")} — ` +
-        `Retest candle: ${moment.unix(ts).format("HH:mm")} | Low ₹${low.toFixed(2)} ≤ EMA9-High ₹${ema.toFixed(2)} → Close ₹${close.toFixed(2)} ≥ Signal High ₹${confirmingBullish.high}`,
-      );
-      break;
+
+      // ── Check if SAME candle also reclaims signal high ────────
+      if (high >= confirmingBullish.high) {
+        confirmCandle = { ...retestCandle };
+        sameCandle = true;
+        console.log(
+          `✅ Single candle retest+reclaim at ${moment.unix(ts).format("HH:mm")} | ` +
+          `Low ₹${low.toFixed(2)} ≤ EMA9-H ₹${ema.toFixed(2)} AND High ₹${high.toFixed(2)} ≥ Signal High ₹${confirmingBullish.high}`
+        );
+      } else {
+        console.log(
+          `✅ Phase 1 — EMA touch at ${moment.unix(ts).format("HH:mm")} | ` +
+          `Low ₹${low.toFixed(2)} ≤ EMA9-H ₹${ema.toFixed(2)} — waiting for high reclaim...`
+        );
+      }
+      break; // stop at first EMA touch regardless
     }
   }
 
   if (!retestCandle) {
     return {
       found: false,
-      reason: `No 9 EMA retest found within ${RETEST_WINDOW} candles after signal at ${moment.unix(signalTs).format("HH:mm")}`,
+      reason: `No 9 EMA touch found within ${RETEST_WINDOW} candles after signal at ${moment.unix(signalTs).format("HH:mm")}`,
+    };
+  }
+
+  // ── PHASE 2: Only runs if same candle didn't already reclaim ──
+  if (!sameCandle) {
+    const retestIdx = rawCandles.findIndex(
+      (c) => c[0] === retestCandle.timestampUnix,
+    );
+
+    for (
+      let i = retestIdx + 1;
+      i < rawCandles.length && i <= signalIdx + RETEST_WINDOW;
+      i++
+    ) {
+      const c = rawCandles[i];
+      const high = parseFloat(c[2]);
+      const ts = c[0];
+
+      if (high >= confirmingBullish.high) {
+        confirmCandle = {
+          timestamp: moment.unix(ts).format("YYYY-MM-DD HH:mm"),
+          timestampUnix: ts,
+          high: +high.toFixed(2),
+          close: +parseFloat(c[4]).toFixed(2),
+          low: +parseFloat(c[3]).toFixed(2),
+        };
+        console.log(
+          `✅ Phase 2 — Signal high reclaimed at ${moment.unix(ts).format("HH:mm")} | ` +
+          `High ₹${high.toFixed(2)} ≥ Signal High ₹${confirmingBullish.high}`
+        );
+        break;
+      }
+    }
+  }
+
+  if (!confirmCandle) {
+    return {
+      found: false,
+      reason: `EMA touched at ${retestCandle.timestamp} but signal high ₹${confirmingBullish.high} not reclaimed within window`,
     };
   }
 
@@ -545,6 +595,8 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
     bullishBCVC: confirmingBullish,
     retestCandle,
     retestEma9,
+    confirmCandle,
+    sameCandle,
     candlesBetween,
     validation: {
       totalBearishBCVCs: bearishFormations.length,
@@ -556,6 +608,8 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
       candlesBetween,
       retestConfirmed: true,
       retestEma9,
+      sameCandle,
+      confirmCandleTime: confirmCandle.timestamp,
     },
     summary: {
       crossoverTime: latestCrossover.timestamp,
@@ -569,8 +623,10 @@ const analyzePattern = (emadata, bcvc, rawCandles = []) => {
       candlesBetween,
       retestTime: retestCandle.timestamp,
       retestLow: retestCandle.low,
-      retestClose: retestCandle.close,
       retestEma9,
+      confirmTime: confirmCandle.timestamp,
+      confirmHigh: confirmCandle.high,
+      sameCandle,
     },
   };
 };
@@ -947,8 +1003,8 @@ ${entryMapBlock ? `\n${entryMapBlock}` : ""}
 🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
 🔴 <b>Bearish BCVCs :</b> ${pattern.validation.totalBearishBCVCs} found | Last: ${pattern.lastBearishBCVC.timestamp} [${pattern.validation.bearishCandleColor.toUpperCase()}]
 🚀 <b>Signal Candle:</b> ${pattern.bullishBCVC.timestamp} — White candle → ₹${pattern.bullishBCVC.high}
-📍 <b>9 EMA Retest :</b> ${pattern.retestCandle.timestamp} | Low ₹${pattern.retestCandle.low} ≤ EMA9-H ₹${pattern.retestEma9} → Close ₹${pattern.retestCandle.close} ✅
-${srBlock}
+📍 <b>EMA Touch    :</b> ${pattern.retestCandle.timestamp} | Low ₹${pattern.retestCandle.low} ≤ EMA9-H ₹${pattern.retestEma9}
+✅ <b>High Reclaim :</b> ${pattern.sameCandle ? `Same candle ✅` : `${pattern.confirmCandle.timestamp} | High ₹${pattern.confirmCandle.high} ≥ Signal High ₹${pattern.bullishBCVC.high}`}${srBlock}
 ${dowBlock}
 ${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
 ${waveBlock ? `\n${waveBlock}` : ""}
