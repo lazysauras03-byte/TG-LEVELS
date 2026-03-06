@@ -8,7 +8,7 @@ const fs = require("fs");
 const moment = require("moment");
 const { writePatternToExcel } = require("./src/excelReports");
 // const TelegramBot = require('node-telegram-bot-api');
-const {authenticate, getStoredTokens}= require("./src/generate")
+const { authenticate, getStoredTokens } = require("./src/generate")
 const EMAManager = require("./utils/func/emaManager");
 const BCVCManager = require("./utils/func/bcvcManager");
 const SRAnalyzer = require("./utils/func/srAnalyzer");
@@ -834,7 +834,7 @@ const startlogic = async (isFirstRun = false) => {
             emadata.rawCandles,
             pattern.crossover.timestampUnix, // ← cut off AT crossover, not signal candle
             // pattern.crossover.price,
-            signalCandle.close,  
+            signalCandle.close,
           );
 
           // Attach to bcvc so buildSRTelegramBlock (already called below) gets real data
@@ -883,7 +883,7 @@ const startlogic = async (isFirstRun = false) => {
               srAnalysis,
               dowAnalysis,
               wyckoffAnalysis,
-               waveAnalysis,  
+              waveAnalysis,
               niftyBias,
               signalCandle: sc,
               entryPrice: ep,
@@ -966,7 +966,7 @@ ${entryMapBlock ? `\n${entryMapBlock}` : ""}
 ${srBlock}
 ${dowBlock}
 ${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
-${waveBlock    ? `\n${waveBlock}`    : ""}
+${waveBlock ? `\n${waveBlock}` : ""}
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
@@ -1016,7 +1016,7 @@ ${entryMapBlock ? `\n${entryMapBlock}` : ""}
 ${srBlock}
 ${dowBlock}
 ${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
-${waveBlock    ? `\n${waveBlock}`    : ""}
+${waveBlock ? `\n${waveBlock}` : ""}
 ⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
@@ -1308,8 +1308,8 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-// startPatternScheduler();
-runauth();
+startPatternScheduler();
+// runauth();
 // startlogic(true)
 // authenticate()
 // runBacktest();
