@@ -358,17 +358,59 @@ const getTradingMinutesBetween = (startUnix, endUnix) => {
   return totalMinutes;
 };
 
-const analyzePattern = (emadata, bcvc) => {
+// ─────────────────────────────────────────────────────────────────
+// 9 EMA of Highs — per-candle array builder
+// Returns an array indexed 1:1 with rawCandles.
+// First (period-1) entries are null (not enough data).
+// rawCandle format: [timestamp, open, high, low, close, volume]
+// ─────────────────────────────────────────────────────────────────
+const buildEma9HighArray = (rawCandles) => {
+  const period = 9;
+  const multiplier = 2 / (period + 1);
+  const ema9 = new Array(rawCandles.length).fill(null);
+
+  if (rawCandles.length < period) return ema9;
+
+  // Seed with SMA of first `period` highs
+  let seed = 0;
+  for (let i = 0; i < period; i++) seed += parseFloat(rawCandles[i][2]);
+  ema9[period - 1] = seed / period;
+
+  for (let i = period; i < rawCandles.length; i++) {
+    const high = parseFloat(rawCandles[i][2]);
+    ema9[i] = (high - ema9[i - 1]) * multiplier + ema9[i - 1];
+  }
+  return ema9;
+};
+
+// ─────────────────────────────────────────────────────────────────
+// analyzePattern — BULLISH ONLY + 9 EMA RETEST check
+// After the white signal candle, looks at up to 5 subsequent raw
+// candles for one that:
+//   • low  ≤ ema9High at that index (touched / dipped into 9 EMA)
+//   • close ≥ signalCandle.high     (recovered above signal high)
+// ─────────────────────────────────────────────────────────────────
+const analyzePattern = (emadata, bcvc, rawCandles = []) => {
   if (!emadata.crossover || emadata.crossover.length === 0) {
     return { found: false, reason: "No crossovers found" };
   }
+
   const isToday = (timestampUnix) => {
     const candleDate = moment.unix(timestampUnix).format("YYYY-MM-DD");
     const today = moment().format("YYYY-MM-DD");
     return candleDate === today;
   };
+
   const latestCrossover = emadata.crossover[0];
   const crossoverTimestamp = latestCrossover.timestampUnix;
+
+  // ── BULLISH ONLY ──────────────────────────────────────────────
+  if (latestCrossover.type !== "BULLISH_CROSSOVER") {
+    return {
+      found: false,
+      reason: `Skipping non-bullish crossover: ${latestCrossover.type}`,
+    };
+  }
 
   const formationsAfterCrossover = bcvc.formations
     .filter((formation) => formation.timestampUnix > crossoverTimestamp)
@@ -381,191 +423,155 @@ const analyzePattern = (emadata, bcvc) => {
     };
   }
 
-  if (latestCrossover.type === "BULLISH_CROSSOVER") {
-    // Accept orange AND maroon as bearish reference candles
-    const bearishFormations = formationsAfterCrossover.filter(
-      (f) => f.candleColor === "orange" || f.candleColor === "maroon",
-    );
+  // Step 1: Find orange/maroon BCVC after crossover
+  const bearishFormations = formationsAfterCrossover.filter(
+    (f) => f.candleColor === "orange" || f.candleColor === "maroon",
+  );
 
-    if (bearishFormations.length === 0) {
-      return {
-        found: false,
-        reason:
-          "No BEARISH BCVC (orange/maroon) found after the bullish crossover",
-      };
-    }
-
-    // Use the bearish candle with the highest high as reference
-    const lastBearishBCVC = bearishFormations.reduce((prev, curr) =>
-      curr.high > prev.high ? curr : prev,
-    );
-    const bearishHigh = lastBearishBCVC.high;
-
-    const formationsAfterLastBearish = formationsAfterCrossover.filter(
-      (f) => f.timestampUnix > lastBearishBCVC.timestampUnix,
-    );
-
-    if (formationsAfterLastBearish.length === 0) {
-      return {
-        found: false,
-        reason: `No BCVC found after the last BEARISH BCVC (${lastBearishBCVC.candleColor})`,
-      };
-    }
-
-    const confirmingBullish = formationsAfterLastBearish.find(
-      (f) => f.isBullish && f.candleColor === "white" && f.close > bearishHigh,
-    );
-
-    if (!confirmingBullish) {
-      return {
-        found: false,
-        reason: `No BULLISH BCVC closed above last BEARISH BCVC high (${bearishHigh}) [ref: ${lastBearishBCVC.candleColor}]`,
-      };
-    }
-
-    const elapsedMinutes = getTradingMinutesBetween(
-      crossoverTimestamp,
-      confirmingBullish.timestampUnix,
-    );
-    const candlesBetween =
-      elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
-
-    if (!isToday(confirmingBullish.timestampUnix)) {
-      return {
-        found: false,
-        reason: `Bullish signal candle is not from today (found: ${moment.unix(confirmingBullish.timestampUnix).format("YYYY-MM-DD")})`,
-      };
-    }
-
+  if (bearishFormations.length === 0) {
     return {
-      found: true,
-      crossoverType: "BULLISH_CROSSOVER",
-      crossover: latestCrossover,
-      bearishBCVCs: bearishFormations,
-      lastBearishBCVC: lastBearishBCVC,
-      bullishBCVC: confirmingBullish,
-      candlesBetween,
-      validation: {
-        totalBearishBCVCs: bearishFormations.length,
-        bearishCandleColor: lastBearishBCVC.candleColor,
-        bearishHigh: bearishHigh,
-        bullishClose: confirmingBullish.close,
-        bullishHigh: confirmingBullish.high,
-        closedAboveBearishHigh: true,
-        candlesBetween,
-      },
-      summary: {
-        crossoverTime: latestCrossover.timestamp,
-        lastBearishTime: lastBearishBCVC.timestamp,
-        bullishTime: confirmingBullish.timestamp,
-        crossoverPrice: latestCrossover.price,
-        bearishHigh: bearishHigh,
-        bearishClose: lastBearishBCVC.close,
-        bullishClose: confirmingBullish.close,
-        bullishHigh: confirmingBullish.high,
-        candlesBetween,
-      },
+      found: false,
+      reason: "No BEARISH BCVC (orange/maroon) found after the bullish crossover",
     };
-  } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
-    const bullishFormations = formationsAfterCrossover.filter(
-      (f) => f.isBullish && f.candleColor === "white",
-    );
+  }
 
-    if (bullishFormations.length === 0) {
-      return {
-        found: false,
-        reason: "No WHITE (BULLISH) BCVC found after the bearish crossover",
-      };
-    }
+  // Use the bearish candle with the highest high as reference
+  const lastBearishBCVC = bearishFormations.reduce((prev, curr) =>
+    curr.high > prev.high ? curr : prev,
+  );
+  const bearishHigh = lastBearishBCVC.high;
 
-    const lastWhiteBCVC = bullishFormations.reduce((prev, curr) =>
-      curr.low < prev.low ? curr : prev,
-    );
-    const whiteLow = lastWhiteBCVC.low;
+  const formationsAfterLastBearish = formationsAfterCrossover.filter(
+    (f) => f.timestampUnix > lastBearishBCVC.timestampUnix,
+  );
 
-    const formationsAfterLastWhite = formationsAfterCrossover.filter(
-      (f) => f.timestampUnix > lastWhiteBCVC.timestampUnix,
-    );
-
-    if (formationsAfterLastWhite.length === 0) {
-      return {
-        found: false,
-        reason: "No candles found after the last WHITE BCVC",
-      };
-    }
-
-    const bearishCandlesAfterWhite = formationsAfterLastWhite.filter(
-      (f) =>
-        f.candleColor === "red" ||
-        f.candleColor === "orange" ||
-        f.candleColor === "maroon",
-    );
-
-    if (bearishCandlesAfterWhite.length === 0) {
-      return {
-        found: false,
-        reason: "No RED/ORANGE/maroon candles found after the last WHITE BCVC",
-      };
-    }
-
-    const confirmingBearish = bearishCandlesAfterWhite.find(
-      (f) => f.close < whiteLow,
-    );
-
-    if (!confirmingBearish) {
-      return {
-        found: false,
-        reason: `No RED/ORANGE candle closed below last WHITE BCVC low (${whiteLow})`,
-      };
-    }
-
-    const elapsedMinutes = getTradingMinutesBetween(
-      crossoverTimestamp,
-      confirmingBearish.timestampUnix,
-    );
-    const candlesBetween =
-      elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
-    if (!isToday(confirmingBearish.timestampUnix)) {
-      return {
-        found: false,
-        reason: `Bearish signal candle is not from today (found: ${moment.unix(confirmingBearish.timestampUnix).format("YYYY-MM-DD")})`,
-      };
-    }
-
+  if (formationsAfterLastBearish.length === 0) {
     return {
-      found: true,
-      crossoverType: "BEARISH_CROSSOVER",
-      crossover: latestCrossover,
-      bullishBCVCs: bullishFormations,
-      lastWhiteBCVC: lastWhiteBCVC,
-      redCandle: confirmingBearish,
-      candlesBetween,
-      validation: {
-        totalBullishBCVCs: bullishFormations.length,
-        whiteLow: whiteLow,
-        whiteClose: lastWhiteBCVC.close,
-        redClose: confirmingBearish.close,
-        redLow: confirmingBearish.low,
-        closedBelowWhiteLow: true,
-        candlesBetween,
-      },
-      summary: {
-        crossoverTime: latestCrossover.timestamp,
-        lastWhiteTime: lastWhiteBCVC.timestamp,
-        redTime: confirmingBearish.timestamp,
-        crossoverPrice: latestCrossover.price,
-        whiteLow: whiteLow,
-        whiteClose: lastWhiteBCVC.close,
-        redClose: confirmingBearish.close,
-        redLow: confirmingBearish.low,
-        candlesBetween,
-      },
+      found: false,
+      reason: `No BCVC found after the last BEARISH BCVC (${lastBearishBCVC.candleColor})`,
+    };
+  }
+
+  // Step 2: Find white candle closing above bearish BCVC high
+  const confirmingBullish = formationsAfterLastBearish.find(
+    (f) => f.isBullish && f.candleColor === "white" && f.close > bearishHigh,
+  );
+
+  if (!confirmingBullish) {
+    return {
+      found: false,
+      reason: `No BULLISH BCVC closed above last BEARISH BCVC high (${bearishHigh}) [ref: ${lastBearishBCVC.candleColor}]`,
+    };
+  }
+
+  const elapsedMinutes = getTradingMinutesBetween(
+    crossoverTimestamp,
+    confirmingBullish.timestampUnix,
+  );
+  const candlesBetween =
+    elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
+
+  if (!isToday(confirmingBullish.timestampUnix)) {
+    return {
+      found: false,
+      reason: `Bullish signal candle is not from today (found: ${moment.unix(confirmingBullish.timestampUnix).format("YYYY-MM-DD")})`,
+    };
+  }
+
+  // ── Step 3: 9 EMA RETEST CHECK ────────────────────────────────
+  // Build per-candle 9 EMA of highs from rawCandles
+  const ema9HighArray = buildEma9HighArray(rawCandles);
+
+  // Find the index of the signal candle in rawCandles by timestamp
+  const signalTs = confirmingBullish.timestampUnix;
+  const signalIdx = rawCandles.findIndex((c) => c[0] === signalTs);
+
+  if (signalIdx === -1 || rawCandles.length === 0) {
+    return {
+      found: false,
+      reason: "Signal candle not found in raw candles — cannot check 9 EMA retest",
+    };
+  }
+
+  // Look at up to 5 candles AFTER the signal candle
+  const RETEST_WINDOW = 5;
+  let retestCandle = null;
+  let retestEma9 = null;
+
+  for (
+    let i = signalIdx + 1;
+    i < rawCandles.length && i <= signalIdx + RETEST_WINDOW;
+    i++
+  ) {
+    const c = rawCandles[i];
+    const ema = ema9HighArray[i];
+    if (ema === null) continue;
+
+    const low = parseFloat(c[3]);
+    const close = parseFloat(c[4]);
+    const ts = c[0];
+
+    // Touched 9 EMA of highs (low ≤ ema9) AND recovered above signal candle's high
+    if (low <= ema && close >= confirmingBullish.high) {
+      retestCandle = {
+        timestamp: moment.unix(ts).format("YYYY-MM-DD HH:mm"),
+        timestampUnix: ts,
+        low: +low.toFixed(2),
+        close: +close.toFixed(2),
+        high: parseFloat(c[2]).toFixed(2),
+      };
+      retestEma9 = +ema.toFixed(2);
+      console.log(
+        `✅ 9 EMA retest confirmed for signal at ${moment.unix(signalTs).format("HH:mm")} — ` +
+        `Retest candle: ${moment.unix(ts).format("HH:mm")} | Low ₹${low.toFixed(2)} ≤ EMA9-High ₹${ema.toFixed(2)} → Close ₹${close.toFixed(2)} ≥ Signal High ₹${confirmingBullish.high}`,
+      );
+      break;
+    }
+  }
+
+  if (!retestCandle) {
+    return {
+      found: false,
+      reason: `No 9 EMA retest found within ${RETEST_WINDOW} candles after signal at ${moment.unix(signalTs).format("HH:mm")}`,
     };
   }
 
   return {
-    found: false,
-    reason: `Unknown crossover type: ${latestCrossover.type}`,
+    found: true,
+    crossoverType: "BULLISH_CROSSOVER",
+    crossover: latestCrossover,
+    bearishBCVCs: bearishFormations,
+    lastBearishBCVC: lastBearishBCVC,
+    bullishBCVC: confirmingBullish,
+    retestCandle,
+    retestEma9,
+    candlesBetween,
+    validation: {
+      totalBearishBCVCs: bearishFormations.length,
+      bearishCandleColor: lastBearishBCVC.candleColor,
+      bearishHigh: bearishHigh,
+      bullishClose: confirmingBullish.close,
+      bullishHigh: confirmingBullish.high,
+      closedAboveBearishHigh: true,
+      candlesBetween,
+      retestConfirmed: true,
+      retestEma9,
+    },
+    summary: {
+      crossoverTime: latestCrossover.timestamp,
+      lastBearishTime: lastBearishBCVC.timestamp,
+      bullishTime: confirmingBullish.timestamp,
+      crossoverPrice: latestCrossover.price,
+      bearishHigh: bearishHigh,
+      bearishClose: lastBearishBCVC.close,
+      bullishClose: confirmingBullish.close,
+      bullishHigh: confirmingBullish.high,
+      candlesBetween,
+      retestTime: retestCandle.timestamp,
+      retestLow: retestCandle.low,
+      retestClose: retestCandle.close,
+      retestEma9,
+    },
   };
 };
 
@@ -612,14 +618,8 @@ const getTrailingTradingDays = (tradingDaysCount) => {
 
 const generatePatternId = (symbol, pattern) => {
   const crossoverTime = pattern.crossover.timestampUnix;
-
-  if (pattern.crossoverType === "BULLISH_CROSSOVER") {
-    const signalTime = pattern.bullishBCVC.timestampUnix;
-    return `${symbol}_BULL_${crossoverTime}_${signalTime}`;
-  } else {
-    const signalTime = pattern.redCandle.timestampUnix;
-    return `${symbol}_BEAR_${crossoverTime}_${signalTime}`;
-  }
+  const signalTime = pattern.bullishBCVC.timestampUnix;
+  return `${symbol}_BULL_${crossoverTime}_${signalTime}`;
 };
 
 // 🎯 OPTIMIZED FOR INTRADAY: Track only within current session
@@ -796,34 +796,22 @@ const startlogic = async (isFirstRun = false) => {
         );
         let bcvc;
 
+        // ── BULLISH ONLY: skip bearish crossovers immediately ──
         if (latestCrossover.type === "BEARISH_CROSSOVER") {
-          console.log(
-            `  🔻 Bearish crossover detected - including RED candles`,
-          );
-          bcvc = await bcvcManager.getHistoricalBCVC(
-            symbol,
-            "15",
-            BCVC_LOOKBACK_DAYS,
-            "red",
-          );
-        } else {
-          console.log(
-            `  🚀 Bullish crossover detected - BCVC with white, orange & maroon`,
-          );
-          bcvc = await bcvcManager.getHistoricalBCVC(
-            symbol,
-            "15",
-            BCVC_LOOKBACK_DAYS,
-          );
-          // No special flag needed — maroon is now always detected in analyzeBCVC
+          console.log(`⏭️  Skipping ${symbol}: Bearish crossover — bullish-only mode`);
+          continue;
         }
 
-        const pattern = analyzePattern(emadata, bcvc);
+        console.log(`  🚀 Bullish crossover — fetching BCVC (white, orange & maroon)`);
+        bcvc = await bcvcManager.getHistoricalBCVC(
+          symbol,
+          "15",
+          BCVC_LOOKBACK_DAYS,
+        );
+
+        const pattern = analyzePattern(emadata, bcvc, emadata.rawCandles || []);
         if (pattern.found) {
-          const signalCandle =
-            pattern.crossoverType === "BULLISH_CROSSOVER"
-              ? pattern.bullishBCVC
-              : pattern.redCandle;
+          const signalCandle = pattern.bullishBCVC;
 
           // const srAnalysis = getSRBeforeSignal(
           //   emadata.rawCandles,
@@ -871,13 +859,9 @@ const startlogic = async (isFirstRun = false) => {
           let entryScore = null;
           let entryMapBlock = "";
           try {
-            const sc =
-              pattern.crossoverType === "BULLISH_CROSSOVER"
-                ? pattern.bullishBCVC
-                : pattern.redCandle;
+            const sc = pattern.bullishBCVC;
             const ep = sc.close;
-            const sl =
-              pattern.crossoverType === "BULLISH_CROSSOVER" ? sc.low : sc.high;
+            const sl = sc.low;
             entryScore = scoreEntry({
               pattern,
               srAnalysis,
@@ -962,57 +946,8 @@ ${entryMapBlock ? `\n${entryMapBlock}` : ""}
 
 🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
 🔴 <b>Bearish BCVCs :</b> ${pattern.validation.totalBearishBCVCs} found | Last: ${pattern.lastBearishBCVC.timestamp} [${pattern.validation.bearishCandleColor.toUpperCase()}]
-🚀 <b>Entry Signal :</b> ${pattern.bullishBCVC.timestamp} — White candle
-${srBlock}
-${dowBlock}
-${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
-${waveBlock ? `\n${waveBlock}` : ""}
-⏰ <b>Detected :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
-`.trim();
-          }
-
-          // ── BEARISH message  (replace your existing bearish telegramMessage string) ──
-          else if (pattern.crossoverType === "BEARISH_CROSSOVER") {
-            const tvLink = getTradingViewLink(symbol);
-            const bearEntryPrice = pattern.redCandle.close;
-            const bearSL = pattern.redCandle.high;
-            const { risk, t1, t2 } = calcTieredExits(
-              bearEntryPrice,
-              bearSL,
-              "BEARISH_CROSSOVER",
-            );
-
-            const alignLabel =
-              niftyBias.bias === "SHORT"
-                ? `${niftyBias.emoji} ${niftyBias.bias} — Aligned ✅`
-                : niftyBias.bias === "LONG"
-                  ? `${niftyBias.emoji} ${niftyBias.bias} — Counter Trend ⚠️`
-                  : `${niftyBias.emoji} ${niftyBias.bias} — Choppy ⚠️`;
-
-            const srBlock = BCVCManager.buildSRTelegramBlock(
-              bcvc.srAnalysis,
-              "BEARISH",
-            );
-
-            telegramMessage = `
-🔴 <b>BEARISH SIGNAL</b> — ${symbol}
-━━━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>Chart      :</b> <a href="${tvLink}">${symbol} (15min)</a>
-📉 Candle Span : ${pattern.candlesBetween}/10
-
-📥 <b>Entry      :</b> ₹${bearEntryPrice} (next candle open)
-🛑 <b>Stop Loss  :</b> ₹${bearSL}  |  Risk : ₹${risk} pts
-
-🎯 <b>Tiered Exits:</b>
-   T1 → ₹${t1}   Book 40% → move SL to breakeven
-   T2 → ₹${t2}   Book 40% → trail remainder
-   T3 → Trail 20% with SL above each lower high
-${entryMapBlock ? `\n${entryMapBlock}` : ""}
-🧭 Nifty Bias  : ${alignLabel}
-
-🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
-⚪ <b>Bullish BCVCs :</b> ${pattern.validation.totalBullishBCVCs} found | Last: ${pattern.lastWhiteBCVC.timestamp}
-🔻 <b>Entry Signal :</b> ${pattern.redCandle.timestamp} — Bearish candle
+🚀 <b>Signal Candle:</b> ${pattern.bullishBCVC.timestamp} — White candle → ₹${pattern.bullishBCVC.high}
+📍 <b>9 EMA Retest :</b> ${pattern.retestCandle.timestamp} | Low ₹${pattern.retestCandle.low} ≤ EMA9-H ₹${pattern.retestEma9} → Close ₹${pattern.retestCandle.close} ✅
 ${srBlock}
 ${dowBlock}
 ${wyckoffBlock ? `\n${wyckoffBlock}` : ""}
