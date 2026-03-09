@@ -1318,7 +1318,7 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-startPatternScheduler();
+// startPatternScheduler();
 // runauth();
 // startlogic(true)
 // authenticate()
