@@ -17,66 +17,70 @@
  *   - OPEN trades: PnL columns left blank (no mark-to-market assumption)
  *   - PnL % = PnL pts / entryPrice × 100
  *
+ * SL logic:
+ *   - BULLISH: SL = signal candle LOW  (price must not fall below)
+ *   - BEARISH: SL = signal candle HIGH (price must not rise above)
+ *
  * Usage:     node backtest_signals.js
  * Exported:  runBacktest, readSignals, backtestSignal, writeResults, fetchCandles
  */
 
 const ExcelJS = require("exceljs");
-const moment  = require("moment");
-const path    = require("path");
+const moment = require("moment");
+const path = require("path");
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const INPUT_FILE  = path.resolve("pattern_signals.xlsx");
+const INPUT_FILE = path.resolve("pattern_signals.xlsx");
 const OUTPUT_FILE = path.resolve("backtest_results.xlsx");
-const SHEET_NAME  = "Signals";
+const SHEET_NAME = "Signals";
 
 const fyers = require("../utils/func/fyersapi");
 
 const RESOLUTION = "15"; // 15-min candles
-const PRICE_FMT  = '"₹"#,##0.00';
-const PCT_FMT    = '0.00"%"';
-const DT_FMT     = "YYYY-MM-DD HH:mm";
+const PRICE_FMT = '"₹"#,##0.00';
+const PCT_FMT = '0.00"%"';
+const DT_FMT = "YYYY-MM-DD HH:mm";
 
 // ─── Styling ──────────────────────────────────────────────────────────────────
 
-const HEADER_FONT  = { name: "Arial", bold: true, size: 11, color: { argb: "FFFFFFFF" } };
-const HEADER_FILL  = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3864" } };
+const HEADER_FONT = { name: "Arial", bold: true, size: 11, color: { argb: "FFFFFFFF" } };
+const HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3864" } };
 const HEADER_ALIGN = { horizontal: "center", vertical: "middle" };
-const BORDER       = { style: "thin", color: { argb: "FFBFBFBF" } };
-const CELL_BORDER  = { top: BORDER, left: BORDER, bottom: BORDER, right: BORDER };
+const BORDER = { style: "thin", color: { argb: "FFBFBFBF" } };
+const CELL_BORDER = { top: BORDER, left: BORDER, bottom: BORDER, right: BORDER };
 
 const FILLS = {
   TARGET_HIT: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2EFDA" } }, // green
-  SL_HIT:     { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE4D6" } }, // red/orange
-  OPEN:       { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } }, // yellow
-  ERROR:      { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } }, // grey
+  SL_HIT: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE4D6" } }, // red/orange
+  OPEN: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } }, // yellow
+  ERROR: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } }, // grey
 };
 
 const RESULT_HEADERS = [
-  { header: "Pattern ID",          key: "patternId",     width: 34 },
-  { header: "Symbol",              key: "symbol",        width: 18 },
-  { header: "Crossover Type",      key: "crossoverType", width: 16 },
-  { header: "Signal Candle Time",  key: "signalTime",    width: 22 },
-  { header: "Signal Candle High",  key: "signalHigh",    width: 20 },
-  { header: "Signal Candle Low",   key: "signalLow",     width: 20 },
-  { header: "Signal Candle Close", key: "signalClose",   width: 22 },
-  { header: "Entry (Next Open)",   key: "entryPrice",    width: 18 },
-  { header: "Stop Loss",           key: "stopLoss",      width: 16 },
-  { header: "Target (1:1 RR)",     key: "target",        width: 16 },
-  { header: "Sync OK?",            key: "syncOk",        width: 12 },
-  { header: "Result",              key: "result",        width: 14 },
-  { header: "Hit Candle Time",     key: "hitTime",       width: 22 },
-  { header: "Hit Price",           key: "hitPrice",      width: 16 },
-  { header: "Candles to Hit",      key: "candlesToHit",  width: 16 },
-  { header: "PnL (pts)",           key: "pnlPoints",     width: 14 },
-  { header: "PnL %",               key: "pnlPct",        width: 10 },
-  { header: "Notes",               key: "notes",         width: 40 },
+  { header: "Pattern ID", key: "patternId", width: 34 },
+  { header: "Symbol", key: "symbol", width: 18 },
+  { header: "Crossover Type", key: "crossoverType", width: 16 },
+  { header: "Signal Candle Time", key: "signalTime", width: 22 },
+  { header: "Signal Candle High", key: "signalHigh", width: 20 },
+  { header: "Signal Candle Low", key: "signalLow", width: 20 },
+  { header: "Signal Candle Close", key: "signalClose", width: 22 },
+  { header: "Entry (Next Open)", key: "entryPrice", width: 18 },
+  { header: "Stop Loss", key: "stopLoss", width: 16 },
+  { header: "Target (1:1 RR)", key: "target", width: 16 },
+  { header: "Sync OK?", key: "syncOk", width: 12 },
+  { header: "Result", key: "result", width: 14 },
+  { header: "Hit Candle Time", key: "hitTime", width: 22 },
+  { header: "Hit Price", key: "hitPrice", width: 16 },
+  { header: "Candles to Hit", key: "candlesToHit", width: 16 },
+  { header: "PnL (pts)", key: "pnlPoints", width: 14 },
+  { header: "PnL %", key: "pnlPct", width: 10 },
+  { header: "Notes", key: "notes", width: 40 },
 ];
 
 // 1-based column indices for formatting
 const PRICE_COLS = [5, 6, 7, 8, 9, 10, 14, 16]; // price fields + PnL pts
-const PCT_COLS   = [17];                           // PnL %
+const PCT_COLS = [17];                           // PnL %
 
 // ─── Pattern ID parser ────────────────────────────────────────────────────────
 // Format: SYMBOL_BULL_<crossoverTs>_<signalTs>  /  SYMBOL_BEAR_<crossoverTs>_<signalTs>
@@ -84,7 +88,7 @@ const PCT_COLS   = [17];                           // PnL %
 function parsePatternId(patternId) {
   const parts = patternId.split("_");
   return {
-    signalTs:    parseInt(parts[parts.length - 1], 10),
+    signalTs: parseInt(parts[parts.length - 1], 10),
     crossoverTs: parseInt(parts[parts.length - 2], 10),
   };
 }
@@ -111,11 +115,11 @@ function calcPnl(entryPrice, exitPrice, isBullish) {
 async function fetchCandles(symbol, fromDate, toDate) {
   const response = await fyers.getHistory({
     symbol,
-    resolution:  RESOLUTION,
+    resolution: RESOLUTION,
     date_format: "1",
-    range_from:  fromDate.format("YYYY-MM-DD"),
-    range_to:    toDate.format("YYYY-MM-DD"),
-    cont_flag:   "1",
+    range_from: fromDate.format("YYYY-MM-DD"),
+    range_to: toDate.format("YYYY-MM-DD"),
+    cont_flag: "1",
   });
 
   if (!response || response.s !== "ok" || !response.candles) {
@@ -153,9 +157,9 @@ async function readSignals(inputFile = INPUT_FILE) {
 
     signals.push({
       patternId,
-      symbol:        String(get(2) ?? "").trim(),
+      symbol: String(get(2) ?? "").trim(),
       crossoverType: String(get(3) ?? "").trim(), // "BULLISH" or "BEARISH"
-      detectedAt:    String(get(10) ?? "").trim(),
+      detectedAt: String(get(10) ?? "").trim(),
       signalTs, // unix ts from Pattern ID — single source of truth for Fyers sync
     });
   });
@@ -170,50 +174,50 @@ async function readSignals(inputFile = INPUT_FILE) {
  * 2. Fetch Fyers candles from signal date → today
  * 3. Find signal candle by unix timestamp (sync guaranteed on match)
  * 4. Compute from Fyers data:
- *      SL         = signal candle low
- *      Entry      = next candle open
- *      Target     = entry ± risk  (1:1 RR)
+ *      BULLISH → SL = signal candle LOW,  Entry = next candle open, Target = entry + risk
+ *      BEARISH → SL = signal candle HIGH, Entry = next candle open, Target = entry - risk
  * 5. Walk forward candles to find first SL or Target hit
  * 6. Calculate PnL for closed trades
  */
 async function backtestSignal(signal) {
   const result = {
-    patternId:     signal.patternId,
-    symbol:        signal.symbol,
+    patternId: signal.patternId,
+    symbol: signal.symbol,
     crossoverType: signal.crossoverType,
-    signalTime:    null,
-    signalHigh:    null,
-    signalLow:     null,
-    signalClose:   null,
-    entryPrice:    null,
-    stopLoss:      null,
-    target:        null,
-    syncOk:        null,
-    result:        "OPEN",
-    hitTime:       null,
-    hitPrice:      null,
-    candlesToHit:  null,
-    pnlPoints:     null,
-    pnlPct:        null,
-    notes:         "",
+    signalTime: null,
+    signalHigh: null,
+    signalLow: null,
+    signalClose: null,
+    entryPrice: null,
+    stopLoss: null,
+    target: null,
+    syncOk: null,
+    result: "OPEN",
+    hitTime: null,
+    hitPrice: null,
+    candlesToHit: null,
+    pnlPoints: null,
+    pnlPct: null,
+    notes: "",
   };
 
   if (!signal.signalTs || isNaN(signal.signalTs)) {
     result.result = "ERROR";
-    result.notes  = "Could not parse signal timestamp from Pattern ID";
+    result.notes = "Could not parse signal timestamp from Pattern ID";
     return result;
   }
 
+  const isBullish = signal.crossoverType === "BULLISH";
   const signalMoment = moment.unix(signal.signalTs);
-  const fromDate     = signalMoment.clone().subtract(1, "day");
-  const toDate       = moment().add(2, "day");
+  const fromDate = signalMoment.clone().subtract(1, "day");
+  const toDate = moment().add(2, "day");
 
   let candles;
   try {
     candles = await fetchCandles(signal.symbol, fromDate, toDate);
   } catch (err) {
     result.result = "ERROR";
-    result.notes  = `Fyers fetch failed: ${err.message}`;
+    result.notes = `Fyers fetch failed: ${err.message}`;
     return result;
   }
 
@@ -222,31 +226,33 @@ async function backtestSignal(signal) {
 
   if (signalIdx === -1) {
     result.result = "ERROR";
-    result.notes  = `Signal ts=${signal.signalTs} (${signalMoment.format(DT_FMT)} IST) not found in Fyers data`;
+    result.notes = `Signal ts=${signal.signalTs} (${signalMoment.format(DT_FMT)} IST) not found in Fyers data`;
     return result;
   }
 
   const signalCandle = candles[signalIdx];
-  const entryCandle  = candles[signalIdx + 1];
+  const entryCandle = candles[signalIdx + 1];
 
-  result.syncOk    = "YES";
-  result.signalTime  = signalCandle.timestamp;
-  result.signalHigh  = signalCandle.high;
-  result.signalLow   = signalCandle.low;
+  result.syncOk = "YES";
+  result.signalTime = signalCandle.timestamp;
+  result.signalHigh = signalCandle.high;
+  result.signalLow = signalCandle.low;
   result.signalClose = signalCandle.close;
-  result.stopLoss    = signalCandle.low;
+
+  // ── SL: LOW for bullish (support), HIGH for bearish (resistance) ──────────
+  result.stopLoss = isBullish ? signalCandle.low : signalCandle.high;
 
   if (!entryCandle) {
     result.result = "OPEN";
-    result.notes  = "Entry candle not yet available — trade not entered";
+    result.notes = "Entry candle not yet available — trade not entered";
     return result;
   }
 
   result.entryPrice = entryCandle.open;
 
-  const isBullish = signal.crossoverType === "BULLISH";
-  const risk      = Math.abs(entryCandle.open - signalCandle.low);
-  result.target   = parseFloat(
+  // ── Risk = distance from entry to SL ─────────────────────────────────────
+  const risk = Math.abs(entryCandle.open - result.stopLoss);
+  result.target = parseFloat(
     (isBullish ? entryCandle.open + risk : entryCandle.open - risk).toFixed(2)
   );
 
@@ -255,44 +261,46 @@ async function backtestSignal(signal) {
 
   if (forwardCandles.length === 0) {
     result.result = "OPEN";
-    result.notes  = "No candles after entry yet — trade open";
+    result.notes = "No candles after entry yet — trade open";
     return result;
   }
 
   let candleCount = 0;
-  let hit         = null;
+  let hit = null;
 
   for (const candle of forwardCandles) {
     candleCount++;
 
     if (isBullish) {
+      // Long: TP hit when price rises to target, SL hit when price falls to SL
       const tpHit = candle.high >= result.target;
-      const slHit = candle.low  <= result.stopLoss;
-      if (slHit && tpHit) { hit = { result: "SL HIT",     hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
-      if (tpHit)           { hit = { result: "TARGET HIT", hitTime: candle.timestamp, hitPrice: result.target   }; break; }
-      if (slHit)           { hit = { result: "SL HIT",     hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
+      const slHit = candle.low <= result.stopLoss;
+      if (slHit && tpHit) { hit = { result: "SL HIT", hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
+      if (tpHit) { hit = { result: "TARGET HIT", hitTime: candle.timestamp, hitPrice: result.target }; break; }
+      if (slHit) { hit = { result: "SL HIT", hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
     } else {
-      const tpHit = candle.low  <= result.target;
+      // Short: TP hit when price falls to target, SL hit when price rises to SL
+      const tpHit = candle.low <= result.target;
       const slHit = candle.high >= result.stopLoss;
-      if (slHit && tpHit) { hit = { result: "SL HIT",     hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
-      if (tpHit)           { hit = { result: "TARGET HIT", hitTime: candle.timestamp, hitPrice: result.target   }; break; }
-      if (slHit)           { hit = { result: "SL HIT",     hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
+      if (slHit && tpHit) { hit = { result: "SL HIT", hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
+      if (tpHit) { hit = { result: "TARGET HIT", hitTime: candle.timestamp, hitPrice: result.target }; break; }
+      if (slHit) { hit = { result: "SL HIT", hitTime: candle.timestamp, hitPrice: result.stopLoss }; break; }
     }
   }
 
   if (hit) {
-    result.result       = hit.result;
-    result.hitTime      = hit.hitTime;
-    result.hitPrice     = hit.hitPrice;
+    result.result = hit.result;
+    result.hitTime = hit.hitTime;
+    result.hitPrice = hit.hitPrice;
     result.candlesToHit = candleCount;
 
     // ── PnL: only calculated for closed trades ────────────────────────────
     const { pnlPoints, pnlPct } = calcPnl(result.entryPrice, hit.hitPrice, isBullish);
     result.pnlPoints = pnlPoints;
-    result.pnlPct    = pnlPct;
+    result.pnlPct = pnlPct;
   } else {
     result.result = "OPEN";
-    result.notes  = `Checked ${forwardCandles.length} candle(s) — neither SL nor Target hit yet`;
+    result.notes = `Checked ${forwardCandles.length} candle(s) — neither SL nor Target hit yet`;
     // pnlPoints / pnlPct left null for open trades
   }
 
@@ -312,38 +320,38 @@ async function writeResults(rows, outputFile = OUTPUT_FILE) {
   const headerRow = ws.getRow(1);
   headerRow.height = 24;
   headerRow.eachCell((cell) => {
-    cell.font      = HEADER_FONT;
-    cell.fill      = HEADER_FILL;
+    cell.font = HEADER_FONT;
+    cell.fill = HEADER_FILL;
     cell.alignment = HEADER_ALIGN;
-    cell.border    = CELL_BORDER;
+    cell.border = CELL_BORDER;
   });
   headerRow.commit();
 
   ws.autoFilter = {
     from: { row: 1, column: 1 },
-    to:   { row: 1, column: RESULT_HEADERS.length },
+    to: { row: 1, column: RESULT_HEADERS.length },
   };
 
   for (const r of rows) {
     const row = ws.addRow({
-      patternId:     r.patternId,
-      symbol:        r.symbol,
+      patternId: r.patternId,
+      symbol: r.symbol,
       crossoverType: r.crossoverType,
-      signalTime:    r.signalTime,
-      signalHigh:    r.signalHigh,
-      signalLow:     r.signalLow,
-      signalClose:   r.signalClose,
-      entryPrice:    r.entryPrice    ?? null,
-      stopLoss:      r.stopLoss      ?? null,
-      target:        r.target        ?? null,
-      syncOk:        r.syncOk,
-      result:        r.result,
-      hitTime:       r.hitTime,
-      hitPrice:      r.hitPrice      ?? null,
-      candlesToHit:  r.candlesToHit  ?? null,
-      pnlPoints:     r.pnlPoints     ?? null,
-      pnlPct:        r.pnlPct        ?? null,
-      notes:         r.notes,
+      signalTime: r.signalTime,
+      signalHigh: r.signalHigh,
+      signalLow: r.signalLow,
+      signalClose: r.signalClose,
+      entryPrice: r.entryPrice ?? null,
+      stopLoss: r.stopLoss ?? null,
+      target: r.target ?? null,
+      syncOk: r.syncOk,
+      result: r.result,
+      hitTime: r.hitTime,
+      hitPrice: r.hitPrice ?? null,
+      candlesToHit: r.candlesToHit ?? null,
+      pnlPoints: r.pnlPoints ?? null,
+      pnlPct: r.pnlPct ?? null,
+      notes: r.notes,
     });
 
     PRICE_COLS.forEach((col) => {
@@ -374,9 +382,9 @@ async function writeResults(rows, outputFile = OUTPUT_FILE) {
 
     const fill =
       r.result === "TARGET HIT" ? FILLS.TARGET_HIT :
-      r.result === "SL HIT"     ? FILLS.SL_HIT     :
-      r.result === "ERROR"      ? FILLS.ERROR       :
-                                  FILLS.OPEN;
+        r.result === "SL HIT" ? FILLS.SL_HIT :
+          r.result === "ERROR" ? FILLS.ERROR :
+            FILLS.OPEN;
 
     row.eachCell({ includeEmpty: true }, (cell) => {
       cell.border = CELL_BORDER;
@@ -390,25 +398,25 @@ async function writeResults(rows, outputFile = OUTPUT_FILE) {
   }
 
   // ── Summary row ───────────────────────────────────────────────────────────
-  const closedRows  = rows.filter((r) => r.result === "TARGET HIT" || r.result === "SL HIT");
-  const wins        = rows.filter((r) => r.result === "TARGET HIT").length;
-  const losses      = rows.filter((r) => r.result === "SL HIT").length;
-  const totalPnl    = closedRows.reduce((sum, r) => sum + (r.pnlPoints ?? 0), 0);
-  const winRate     = closedRows.length > 0 ? ((wins / closedRows.length) * 100).toFixed(1) : "—";
+  const closedRows = rows.filter((r) => r.result === "TARGET HIT" || r.result === "SL HIT");
+  const wins = rows.filter((r) => r.result === "TARGET HIT").length;
+  const losses = rows.filter((r) => r.result === "SL HIT").length;
+  const totalPnl = closedRows.reduce((sum, r) => sum + (r.pnlPoints ?? 0), 0);
+  const winRate = closedRows.length > 0 ? ((wins / closedRows.length) * 100).toFixed(1) : "—";
 
   ws.addRow({}); // blank spacer
 
   const summaryRow = ws.addRow({
-    patternId:  `SUMMARY — ${wins}W / ${losses}L / ${rows.filter(r => r.result === "OPEN").length} OPEN  |  Win Rate: ${winRate}%`,
-    pnlPoints:  parseFloat(totalPnl.toFixed(2)),
-    notes:      `Total closed trades: ${closedRows.length} of ${rows.length}`,
+    patternId: `SUMMARY — ${wins}W / ${losses}L / ${rows.filter(r => r.result === "OPEN").length} OPEN  |  Win Rate: ${winRate}%`,
+    pnlPoints: parseFloat(totalPnl.toFixed(2)),
+    notes: `Total closed trades: ${closedRows.length} of ${rows.length}`,
   });
 
   summaryRow.eachCell({ includeEmpty: false }, (cell) => {
-    cell.font   = { name: "Arial", bold: true, size: 11 };
-    cell.fill   = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3864" } };
+    cell.font = { name: "Arial", bold: true, size: 11 };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F3864" } };
     cell.border = CELL_BORDER;
-    cell.font   = {
+    cell.font = {
       name: "Arial", bold: true, size: 11,
       color: { argb: "FFFFFFFF" },
     };
@@ -418,7 +426,7 @@ async function writeResults(rows, outputFile = OUTPUT_FILE) {
   const summaryPnlCell = summaryRow.getCell(16);
   if (summaryPnlCell.value != null) {
     summaryPnlCell.numFmt = PRICE_FMT;
-    summaryPnlCell.font   = {
+    summaryPnlCell.font = {
       name: "Arial", bold: true, size: 11,
       color: { argb: totalPnl >= 0 ? "FF90EE90" : "FFFF6B6B" },
     };
@@ -440,9 +448,9 @@ async function writeResults(rows, outputFile = OUTPUT_FILE) {
  * @returns {Promise<object[]>}         Array of result objects
  */
 async function runBacktest(opts = {}) {
-  const inputFile  = opts.inputFile  ?? INPUT_FILE;
+  const inputFile = opts.inputFile ?? INPUT_FILE;
   const outputFile = opts.outputFile ?? OUTPUT_FILE;
-  const delayMs    = opts.delayMs    ?? 300;
+  const delayMs = opts.delayMs ?? 300;
 
   console.log("📂 Reading signals from", inputFile);
   const signals = await readSignals(inputFile);
@@ -478,10 +486,10 @@ async function runBacktest(opts = {}) {
   await writeResults(results, outputFile);
   console.log("✅ Done!\n");
 
-  const closed   = results.filter((r) => ["TARGET HIT", "SL HIT"].includes(r.result));
+  const closed = results.filter((r) => ["TARGET HIT", "SL HIT"].includes(r.result));
   const totalPnl = closed.reduce((s, r) => s + (r.pnlPoints ?? 0), 0);
-  const wins     = results.filter((r) => r.result === "TARGET HIT").length;
-  const losses   = results.filter((r) => r.result === "SL HIT").length;
+  const wins = results.filter((r) => r.result === "TARGET HIT").length;
+  const losses = results.filter((r) => r.result === "SL HIT").length;
 
   console.log("Summary:");
   console.log(`  TARGET HIT : ${wins}`);
@@ -502,4 +510,3 @@ module.exports = {
   fetchCandles,   // fetch raw Fyers candles for symbol + date range
   calcPnl,        // calculate PnL for a single trade
 };
-
