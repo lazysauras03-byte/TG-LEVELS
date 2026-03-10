@@ -54,7 +54,7 @@ let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
-const SEND_FIRST_RUN_NOTIFICATIONS = true;
+const SEND_FIRST_RUN_NOTIFICATIONS = false;
 const symbols = ["NSE:SOLARINDS-EQ"];
 
 const app = express();
@@ -715,7 +715,7 @@ const startlogic = async (isFirstRun = false) => {
     const now = moment();
     const today = now.format("YYYY-MM-DD");
 
-    const TRADING_DAYS_LOOKBACK = 10;
+    const TRADING_DAYS_LOOKBACK = 1;
     const { lookbackDate, calendarDaysBack, tradingDaysCount } =
       getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
 
@@ -1318,7 +1318,7 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-// startPatternScheduler();
+startPatternScheduler();
 // runauth();
 // startlogic(true)
 // authenticate()
