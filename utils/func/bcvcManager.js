@@ -1,12 +1,12 @@
 const moment = require('moment');
-const fyers  = require('./fyersapi')
+const fyers = require('./fyersapi')
 const bot = require('./telegram')
-const telegramchat ="8559767849"
+const telegramchat = "8559767849"
 
 class BCVCManager {
     constructor() {
         this.fyers = fyers;
-        
+
         this.config = {
             volumePeriod: 20,
             volumeProportion: 1.25,
@@ -684,42 +684,51 @@ class BCVCManager {
         console.log(`\n${'='.repeat(80)}\n`);
         return report;
     }
+
     static buildSRTelegramBlock(srAnalysis, direction = "BULLISH") {
-  if (!srAnalysis || srAnalysis.error) return "";
+        if (!srAnalysis || srAnalysis.error) return "";
 
-  const fmtLevel = (l) => {
-    const scoreStr = l.score !== undefined ? ` · ${l.score}/100` : "";
-    const touchStr = l.touches !== undefined
-      ? ` · ${l.touches} touch${l.touches !== 1 ? "es" : ""}`
-      : "";
-    const flipStr = l.flippedFrom ? ` [flipped]` : "";
-    return `₹${l.price} (${l.distancePct}% away) [${l.strength}${scoreStr}${touchStr}${flipStr}]`;
-  };
+        const fmtLevel = (l) => {
+            const touchStr = l.touches !== undefined
+                ? ` · ${l.touches} touch${l.touches !== 1 ? "es" : ""}`
+                : "";
+            return `₹${l.price} (${l.distancePct}% away) [${l.strength} · ${l.score}/100${touchStr}]`;
+        };
 
-  const lines = ["", "📊 <b>S/R Levels:</b>"];
+        // Period extremes only — strong resistances, any support
+        let resistances = (srAnalysis.resistance || [])
+            .filter(l => l.isPeriodExtreme && l.strength === "STRONG")
+            .slice(0, 3);
 
-  if (direction === "BULLISH") {
-    const supports = (srAnalysis.support || []).slice(0, 3);
-    const resistances = (srAnalysis.resistance || []).slice(0, 3);
-    supports.forEach((s, i)    => lines.push(`🟢 S${i + 1}: ${fmtLevel(s)}`));
-    resistances.forEach((r, i) => lines.push(`🔴 R${i + 1}: ${fmtLevel(r)}`));
-    if (srAnalysis.accumulation && srAnalysis.accumulation.length > 0) {
-      const a = srAnalysis.accumulation[0];
-      lines.push(`📦 Accum    : ₹${a.low}–₹${a.high} (${a.candleCount} candles)`);
+        let supports = (srAnalysis.support || [])
+            .filter(l => l.isPeriodExtreme)
+            .slice(0, 3);
+
+        // Fallbacks
+        if (resistances.length === 0)
+            resistances = (srAnalysis.resistance || []).filter(l => l.strength === "STRONG").slice(0, 3);
+        if (supports.length === 0)
+            supports = (srAnalysis.support || []).slice(0, 3);
+
+        if (!resistances.length && !supports.length) return "";
+
+        const lines = ["", "📐 <b>S/R Levels:</b>"];
+
+        resistances.forEach((r, i) => lines.push(`🔴 R${i + 1}: ${fmtLevel(r)}`));
+        supports.forEach((s, i) => lines.push(`🟢 S${i + 1}: ${fmtLevel(s)}`));
+
+        const nearR = resistances[0];
+        const nearS = supports[0];
+        const cp = srAnalysis.currentPrice;
+        if (nearR && nearS && cp) {
+            const upside = ((nearR.price - cp) / cp * 100).toFixed(2);
+            const downside = ((cp - nearS.price) / cp * 100).toFixed(2);
+            const rr = downside > 0 ? (upside / downside).toFixed(1) : "∞";
+            lines.push(`\n📊 R:R  →  ${rr}:1  (↑${upside}% to R1 / ↓${downside}% to S1)`);
+        }
+
+        return lines.join("\n");
     }
-  } else {
-    const resistances = (srAnalysis.resistance || []).slice(0, 3);
-    const supports = (srAnalysis.support || []).slice(0, 3);
-    resistances.forEach((r, i) => lines.push(`🔴 R${i + 1}: ${fmtLevel(r)}`));
-    supports.forEach((s, i)    => lines.push(`🟢 S${i + 1}: ${fmtLevel(s)}`));
-    if (srAnalysis.distribution && srAnalysis.distribution.length > 0) {
-      const d = srAnalysis.distribution[0];
-      lines.push(`📤 Dist     : ₹${d.low}–₹${d.high} (${d.candleCount} candles)`);
-    }
-  }
-
-  return lines.join("\n");
-}
 }
 
 module.exports = BCVCManager;

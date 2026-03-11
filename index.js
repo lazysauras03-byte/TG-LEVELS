@@ -56,7 +56,7 @@ const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
 const SEND_FIRST_RUN_NOTIFICATIONS = false;
-// const symbols = ["NSE:DIVISLAB-EQ","NSE:SUPREMEIND-EQ","NSE:PIDILITIND-EQ","NSE:DABUR-EQ","NSE:BHEL-EQ","NSE:ASTRAL-EQ"];
+// const symbols = ["NSE:INDHOTEL-EQ", "NSE:PAGEIND-EQ"];
 
 const app = express();
 
@@ -265,19 +265,19 @@ ${strategyLine}
 
   return bias;
 };
-const getSRBeforeSignal = (rawCandles, signalCandleTs, signalCandleClose) => {
-  if (!rawCandles || rawCandles.length === 0) return null;
+// const getSRBeforeSignal = (rawCandles, signalCandleTs, signalCandleClose) => {
+//   if (!rawCandles || rawCandles.length === 0) return null;
 
-  // Keep only candles that CLOSED before the signal candle
-  const candlesBeforeSignal = rawCandles.filter((c) => c[0] < signalCandleTs);
+//   // Keep only candles that CLOSED before the signal candle
+//   const candlesBeforeSignal = rawCandles.filter((c) => c[0] < signalCandleTs);
 
-  if (candlesBeforeSignal.length < 20) {
-    console.log("⚠️ Not enough pre-signal candles for SR analysis");
-    return null;
-  }
+//   if (candlesBeforeSignal.length < 20) {
+//     console.log("⚠️ Not enough pre-signal candles for SR analysis");
+//     return null;
+//   }
 
-  return srAnalyzer.analyze(candlesBeforeSignal, signalCandleClose);
-};
+//   return srAnalyzer.analyze(candlesBeforeSignal, signalCandleClose);
+// };
 function loadSymbols(inputExcel, columnName = "symbol") {
   const workbook = XLSX.readFile(inputExcel);
 
@@ -830,13 +830,7 @@ const startlogic = async (isFirstRun = false) => {
           //   signalCandle.timestampUnix,
           //   signalCandle.close,
           // );
-          const srAnalysis = getSRBeforeSignal(
-            emadata.rawCandles,
-            pattern.crossover.timestampUnix, // ← cut off AT crossover, not signal candle
-            // pattern.crossover.price,
-            signalCandle.close,
-          );
-
+          const srAnalysis = srAnalyzer.analyze(emadata.rawCandles, signalCandle.close);
           // Attach to bcvc so buildSRTelegramBlock (already called below) gets real data
           bcvc.srAnalysis = srAnalysis;
           const dowAnalysis = analyzeDowTheory(
