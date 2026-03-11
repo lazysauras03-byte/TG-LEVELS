@@ -825,7 +825,7 @@ const startlogic = async (isFirstRun = false) => {
               ? pattern.bullishBCVC
               : pattern.redCandle;
 
-          // const srAnalysis = getSRBeforeSignal(
+          // const srAnalysis = getSRBefore Signal(
           //   emadata.rawCandles,
           //   signalCandle.timestampUnix,
           //   signalCandle.close,
