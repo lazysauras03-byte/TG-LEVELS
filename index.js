@@ -38,7 +38,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 }
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-// const telegramchat = "-1003727905299";
+const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
@@ -48,14 +48,14 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
-const telegramchat = "8559767849";
+// const telegramchat = "8559767849";
 
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
-const SEND_FIRST_RUN_NOTIFICATIONS = true;
+const SEND_FIRST_RUN_NOTIFICATIONS = false
 // const symbols = ["NSE:INDHOTEL-EQ", "NSE:PAGEIND-EQ"];
 
 const app = express();
@@ -402,9 +402,11 @@ const analyzePattern = (emadata) => {
   //            Cond2: green close > red candle's open
   // Scan newest-to-oldest so the most recent valid signal wins
   if (latestCrossover.type === "BULLISH_CROSSOVER") {
-    for (let i = candlesAfterCrossover.length - 2; i >= 0; i--) {
-      const pb = candlesAfterCrossover[i];       // pullback candle
-      const cf = candlesAfterCrossover[i + 1];   // confirmation candle
+    const validBullishPairs = [];
+
+    for (let i = 0; i <= candlesAfterCrossover.length - 2; i++) {
+      const pb = candlesAfterCrossover[i];
+      const cf = candlesAfterCrossover[i + 1];
 
       const pbTs = pb[0];
       const pbOpen = parseFloat(pb[1]);
@@ -426,33 +428,39 @@ const analyzePattern = (emadata) => {
         continue;
       }
 
-      // Pullback conditions
       const isRedCandle = pbClose < pbOpen;
-      const closedBelowEMA9 = pbClose < ema9AtPb;   // strict
+      const closedBelowEMA9 = pbClose < ema9AtPb;
       if (!isRedCandle || !closedBelowEMA9) continue;
 
-      // Confirmation conditions
       const isGreenCandle = cfClose > cfOpen;
       if (!isGreenCandle) continue;
 
-      const cond1 = cfClose > ema9AtCf;   // close above EMA9
-      const cond2 = cfClose > pbOpen;     // close above red candle's open
+      const cond1 = cfClose > ema9AtCf;
+      const cond2 = cfClose > pbOpen;
       if (!cond1 || !cond2) continue;
 
-      // Only fire if confirmation candle is today
-      if (!isToday(cfTs)) continue;
+      validBullishPairs.push({ pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf });
+    }
+
+    // Only fire if the LATEST valid pair has a today-confirmed candle
+    if (validBullishPairs.length > 0) {
+      const attemptNumber = validBullishPairs.length;
+      const { pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf } = validBullishPairs[validBullishPairs.length - 1];
+
+      if (!isToday(cfTs)) {
+        return { found: false, reason: "Latest confirmation candle is not from today" };
+      }
 
       const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, cfTs);
       const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
 
-      console.log(`  ✅ Pullback found at ${moment.unix(pbTs).format("HH:mm")} | Confirm at ${moment.unix(cfTs).format("HH:mm")}`);
-      console.log(`     Red close ₹${pbClose} < EMA9 ₹${ema9AtPb.toFixed(2)} ✅`);
-      console.log(`     Green close ₹${cfClose} > EMA9 ₹${ema9AtCf.toFixed(2)} ✅  > Red open ₹${pbOpen} ✅`);
+      console.log(`  ✅ Pullback found at ${moment.unix(pbTs).format("HH:mm")} | Confirm at ${moment.unix(cfTs).format("HH:mm")} | Attempt #${attemptNumber}`);
 
       return {
         found: true,
         crossoverType: "BULLISH_CROSSOVER",
         crossover: latestCrossover,
+        attemptNumber,
         pullbackCandle: {
           timestampUnix: pbTs,
           timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
@@ -469,31 +477,23 @@ const analyzePattern = (emadata) => {
         stopLoss: pbLow,
         candlesBetween,
         validation: {
-          pullbackClose: pbClose,
-          pullbackEMA9: +ema9AtPb.toFixed(2),
-          closedBelowEMA9: true,
-          confirmClose: cfClose,
-          confirmEMA9: +ema9AtCf.toFixed(2),
-          cond1_closeAboveEMA9: true,
-          cond2_closeAboveRedOpen: true,
+          pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2), closedBelowEMA9: true,
+          confirmClose: cfClose, confirmEMA9: +ema9AtCf.toFixed(2),
+          cond1_closeAboveEMA9: true, cond2_closeAboveRedOpen: true,
         },
         summary: {
           crossoverTime: latestCrossover.timestamp,
           pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
           confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
           crossoverPrice: latestCrossover.price,
-          pullbackOpen: pbOpen,
-          pullbackLow: pbLow,
-          pullbackClose: pbClose,
-          pullbackEMA9: +ema9AtPb.toFixed(2),
-          confirmOpen: cfOpen,
-          confirmClose: cfClose,
-          confirmHigh: cfHigh,
-          confirmEMA9: +ema9AtCf.toFixed(2),
+          pullbackOpen: pbOpen, pullbackLow: pbLow, pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2),
+          confirmOpen: cfOpen, confirmClose: cfClose, confirmHigh: cfHigh, confirmEMA9: +ema9AtCf.toFixed(2),
           candlesBetween,
         },
       };
     }
+
+    return { found: false, reason: "No valid pullback+confirmation pair found after bullish crossover" };
 
     return { found: false, reason: "No valid pullback+confirmation pair found after bullish crossover" };
 
@@ -503,7 +503,9 @@ const analyzePattern = (emadata) => {
     //            Cond1: red open > EMA9 AND red close < EMA9 (rejection)
     //            Cond2: red close < green candle's open
   } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
-    for (let i = candlesAfterCrossover.length - 2; i >= 0; i--) {
+    const validBullishPairs = [];
+
+    for (let i = 0; i <= candlesAfterCrossover.length - 2; i++) {
       const pb = candlesAfterCrossover[i];
       const cf = candlesAfterCrossover[i + 1];
 
@@ -519,41 +521,47 @@ const analyzePattern = (emadata) => {
       const cfLow = parseFloat(cf[3]);
       const cfClose = parseFloat(cf[4]);
 
-      const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9High;
-      const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9High;
+      const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9Low;
+      const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9Low;
 
       if (ema9AtPb === undefined || ema9AtCf === undefined) {
         console.log(`  ⚠️ EMA9 lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping pair`);
         continue;
       }
 
-      // Pullback conditions
-      const isGreenCandle = pbClose > pbOpen;
-      const closedAboveEMA9 = pbClose > ema9AtPb;   // strict
-      if (!isGreenCandle || !closedAboveEMA9) continue;
+      const isRedCandle = pbClose < pbOpen;
+      const closedBelowEMA9 = pbClose < ema9AtPb;
+      if (!isRedCandle || !closedBelowEMA9) continue;
 
-      // Confirmation conditions
-      const isRedCandle = cfClose < cfOpen;
-      if (!isRedCandle) continue;
+      const isGreenCandle = cfClose > cfOpen;
+      if (!isGreenCandle) continue;
 
-      const cond1 = cfOpen > ema9AtCf && cfClose < ema9AtCf;  // rejection: opens above, closes below
-      const cond2 = cfClose < pbOpen;                          // close below green candle's open
+      const cond1 = cfClose > ema9AtCf;
+      const cond2 = cfClose > pbOpen;
       if (!cond1 || !cond2) continue;
 
-      // Only fire if confirmation candle is today
-      if (!isToday(cfTs)) continue;
+      validBullishPairs.push({ pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf });
+    }
+
+    // Only fire if the LATEST valid pair has a today-confirmed candle
+    if (validBullishPairs.length > 0) {
+      const attemptNumber = validBullishPairs.length;
+      const { pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf } = validBullishPairs[validBullishPairs.length - 1];
+
+      if (!isToday(cfTs)) {
+        return { found: false, reason: "Latest confirmation candle is not from today" };
+      }
 
       const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, cfTs);
       const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
 
-      console.log(`  ✅ Pullback found at ${moment.unix(pbTs).format("HH:mm")} | Confirm at ${moment.unix(cfTs).format("HH:mm")}`);
-      console.log(`     Green close ₹${pbClose} > EMA9 ₹${ema9AtPb.toFixed(2)} ✅`);
-      console.log(`     Red open ₹${cfOpen} > EMA9 ₹${ema9AtCf.toFixed(2)} ✅  Red close ₹${cfClose} < EMA9 ✅  < Green open ₹${pbOpen} ✅`);
+      console.log(`  ✅ Pullback found at ${moment.unix(pbTs).format("HH:mm")} | Confirm at ${moment.unix(cfTs).format("HH:mm")} | Attempt #${attemptNumber}`);
 
       return {
         found: true,
-        crossoverType: "BEARISH_CROSSOVER",
+        crossoverType: "BULLISH_CROSSOVER",
         crossover: latestCrossover,
+        attemptNumber,
         pullbackCandle: {
           timestampUnix: pbTs,
           timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
@@ -567,35 +575,26 @@ const analyzePattern = (emadata) => {
           ema9: +ema9AtCf.toFixed(2),
         },
         entryPrice: cfClose,
-        stopLoss: pbHigh,
+        stopLoss: pbLow,
         candlesBetween,
         validation: {
-          pullbackClose: pbClose,
-          pullbackEMA9: +ema9AtPb.toFixed(2),
-          closedAboveEMA9: true,
-          confirmOpen: cfOpen,
-          confirmClose: cfClose,
-          confirmEMA9: +ema9AtCf.toFixed(2),
-          cond1_rejectionCandle: true,
-          cond2_closeBelowGreenOpen: true,
+          pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2), closedBelowEMA9: true,
+          confirmClose: cfClose, confirmEMA9: +ema9AtCf.toFixed(2),
+          cond1_closeAboveEMA9: true, cond2_closeAboveRedOpen: true,
         },
         summary: {
           crossoverTime: latestCrossover.timestamp,
           pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
           confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
           crossoverPrice: latestCrossover.price,
-          pullbackOpen: pbOpen,
-          pullbackHigh: pbHigh,
-          pullbackClose: pbClose,
-          pullbackEMA9: +ema9AtPb.toFixed(2),
-          confirmOpen: cfOpen,
-          confirmClose: cfClose,
-          confirmLow: cfLow,
-          confirmEMA9: +ema9AtCf.toFixed(2),
+          pullbackOpen: pbOpen, pullbackLow: pbLow, pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2),
+          confirmOpen: cfOpen, confirmClose: cfClose, confirmHigh: cfHigh, confirmEMA9: +ema9AtCf.toFixed(2),
           candlesBetween,
         },
       };
     }
+
+    return { found: false, reason: "No valid pullback+confirmation pair found after bullish crossover" };
 
     return { found: false, reason: "No valid pullback+confirmation pair found after bearish crossover" };
   }
@@ -910,7 +909,7 @@ const startlogic = async (isFirstRun = false) => {
               stopLoss: pattern.stopLoss,
               direction: pattern.crossoverType,
             });
-            entryMapBlock = buildEntryMapTelegramBlock(entryScore);
+            // entryMapBlock = buildEntryMapTelegramBlock(entryScore);
           } catch (e) {
             console.error("⚠️ Entry scoring failed:", e.message);
           }
@@ -959,13 +958,14 @@ const startlogic = async (isFirstRun = false) => {
                   ? `${niftyBias.emoji} ${niftyBias.bias} — Counter Trend ⚠️`
                   : `${niftyBias.emoji} ${niftyBias.bias} — Choppy ⚠️`;
 
-            const srBlock = BCVCManager.buildSRTelegramBlock(srAnalysis, "BULLISH");
+            // const srBlock = BCVCManager.buildSRTelegramBlock(srAnalysis, "BULLISH");
 
             telegramMessage = `
 🟢 <b>BULLISH SIGNAL</b> — ${symbol}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📊 <b>Chart      :</b> <a href="${tvLink}">${symbol} (15min)</a>
 📈 Candle Span : ${pattern.candlesBetween}
+🔁 Attempt     : #${pattern.attemptNumber}
 
 🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
 
@@ -977,15 +977,8 @@ const startlogic = async (isFirstRun = false) => {
    Close ₹${cf.close} &gt; EMA9 ₹${cf.ema9} ✅
    Close ₹${cf.close} &gt; Red Open ₹${pb.open} ✅
 
-📥 <b>Entry      :</b> ₹${pattern.entryPrice} (next candle open)
-🛑 <b>Stop Loss  :</b> ₹${pattern.stopLoss} (pullback low) | Risk : ₹${risk} pts
 
-🎯 <b>Tiered Exits:</b>
-   T1 → ₹${t1}   Book 40% → move SL to breakeven
-   T2 → ₹${t2}   Book 40% → trail remainder
-   T3 → Trail 20% with SL below each higher low
 🧭 Nifty Bias  : ${alignLabel}
-${srBlock}
 
 ⏰ <b>Detected  :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
@@ -1009,13 +1002,14 @@ ${srBlock}
                   ? `${niftyBias.emoji} ${niftyBias.bias} — Counter Trend ⚠️`
                   : `${niftyBias.emoji} ${niftyBias.bias} — Choppy ⚠️`;
 
-            const srBlock = BCVCManager.buildSRTelegramBlock(srAnalysis, "BEARISH");
+            // const srBlock = BCVCManager.buildSRTelegramBlock(srAnalysis, "BEARISH");
 
             telegramMessage = `
 🔴 <b>BEARISH SIGNAL</b> — ${symbol}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 📊 <b>Chart      :</b> <a href="${tvLink}">${symbol} (15min)</a>
 📉 Candle Span : ${pattern.candlesBetween}
+🔁 Attempt     : #${pattern.attemptNumber}
 
 🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
 
@@ -1028,16 +1022,8 @@ ${srBlock}
    Close ₹${cf.close} &lt; EMA9 ₹${cf.ema9} ✅
    Close ₹${cf.close} &lt; Green Open ₹${pb.open} ✅
 
-📥 <b>Entry      :</b> ₹${pattern.entryPrice} (next candle open)
-🛑 <b>Stop Loss  :</b> ₹${pattern.stopLoss} (pullback high) | Risk : ₹${risk} pts
-
-🎯 <b>Tiered Exits:</b>
-   T1 → ₹${t1}   Book 40% → move SL to breakeven
-   T2 → ₹${t2}   Book 40% → trail remainder
-   T3 → Trail 20% with SL above each lower high
-
 🧭 Nifty Bias  : ${alignLabel}
-${srBlock}
+
 ⏰ <b>Detected  :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
