@@ -495,7 +495,6 @@ const analyzePattern = (emadata) => {
 
     return { found: false, reason: "No valid pullback+confirmation pair found after bullish crossover" };
 
-    return { found: false, reason: "No valid pullback+confirmation pair found after bullish crossover" };
 
     // ── BEARISH SETUP ─────────────────────────────────────────────
     // Pullback : green candle (close > open) closing STRICTLY above EMA9-of-Highs
@@ -503,7 +502,7 @@ const analyzePattern = (emadata) => {
     //            Cond1: red open > EMA9 AND red close < EMA9 (rejection)
     //            Cond2: red close < green candle's open
   } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
-    const validBullishPairs = [];
+    const validBearishPairs = [];
 
     for (let i = 0; i <= candlesAfterCrossover.length - 2; i++) {
       const pb = candlesAfterCrossover[i];
@@ -521,32 +520,31 @@ const analyzePattern = (emadata) => {
       const cfLow = parseFloat(cf[3]);
       const cfClose = parseFloat(cf[4]);
 
-      const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9Low;
-      const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9Low;
+      const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9High;
+      const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9High;
 
       if (ema9AtPb === undefined || ema9AtCf === undefined) {
         console.log(`  ⚠️ EMA9 lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping pair`);
         continue;
       }
 
-      const isRedCandle = pbClose < pbOpen;
-      const closedBelowEMA9 = pbClose < ema9AtPb;
-      if (!isRedCandle || !closedBelowEMA9) continue;
+      const isGreenCandle = pbClose > pbOpen;
+      const closedAboveEMA9 = pbClose > ema9AtPb;
+      if (!isGreenCandle || !closedAboveEMA9) continue;
 
-      const isGreenCandle = cfClose > cfOpen;
-      if (!isGreenCandle) continue;
+      const isRedCandle = cfClose < cfOpen;
+      if (!isRedCandle) continue;
 
-      const cond1 = cfClose > ema9AtCf;
-      const cond2 = cfClose > pbOpen;
+      const cond1 = cfOpen > ema9AtCf && cfClose < ema9AtCf;
+      const cond2 = cfClose < pbOpen;
       if (!cond1 || !cond2) continue;
 
-      validBullishPairs.push({ pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf });
+      validBearishPairs.push({ pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf });
     }
 
-    // Only fire if the LATEST valid pair has a today-confirmed candle
-    if (validBullishPairs.length > 0) {
-      const attemptNumber = validBullishPairs.length;
-      const { pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf } = validBullishPairs[validBullishPairs.length - 1];
+    if (validBearishPairs.length > 0) {
+      const attemptNumber = validBearishPairs.length;
+      const { pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf } = validBearishPairs[validBearishPairs.length - 1];
 
       if (!isToday(cfTs)) {
         return { found: false, reason: "Latest confirmation candle is not from today" };
@@ -559,7 +557,7 @@ const analyzePattern = (emadata) => {
 
       return {
         found: true,
-        crossoverType: "BULLISH_CROSSOVER",
+        crossoverType: "BEARISH_CROSSOVER",
         crossover: latestCrossover,
         attemptNumber,
         pullbackCandle: {
@@ -575,28 +573,27 @@ const analyzePattern = (emadata) => {
           ema9: +ema9AtCf.toFixed(2),
         },
         entryPrice: cfClose,
-        stopLoss: pbLow,
+        stopLoss: pbHigh,
         candlesBetween,
         validation: {
-          pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2), closedBelowEMA9: true,
-          confirmClose: cfClose, confirmEMA9: +ema9AtCf.toFixed(2),
-          cond1_closeAboveEMA9: true, cond2_closeAboveRedOpen: true,
+          pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2), closedAboveEMA9: true,
+          confirmOpen: cfOpen, confirmClose: cfClose, confirmEMA9: +ema9AtCf.toFixed(2),
+          cond1_rejectionCandle: true, cond2_closeBelowGreenOpen: true,
         },
         summary: {
           crossoverTime: latestCrossover.timestamp,
           pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
           confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
           crossoverPrice: latestCrossover.price,
-          pullbackOpen: pbOpen, pullbackLow: pbLow, pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2),
-          confirmOpen: cfOpen, confirmClose: cfClose, confirmHigh: cfHigh, confirmEMA9: +ema9AtCf.toFixed(2),
+          pullbackOpen: pbOpen, pullbackHigh: pbHigh, pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2),
+          confirmOpen: cfOpen, confirmClose: cfClose, confirmLow: cfLow, confirmEMA9: +ema9AtCf.toFixed(2),
           candlesBetween,
         },
       };
     }
 
-    return { found: false, reason: "No valid pullback+confirmation pair found after bullish crossover" };
-
     return { found: false, reason: "No valid pullback+confirmation pair found after bearish crossover" };
+
   }
 
   return { found: false, reason: `Unknown crossover type: ${latestCrossover.type}` };
