@@ -19,43 +19,43 @@ function prompt(question) {
   return new Promise((resolve) => rl.question(question, (ans) => { rl.close(); resolve(ans); }));
 }
 
-async function authenticate() {
-  // Step 1: Generate the auth URL (equivalent to session.generate_authcode())
-  const authUrl = fyers.generateAuthCode({
-    client_id,
-    redirect_uri,
-    response_type,
-    state,
-  });
+// async function authenticate() {
+//   // Step 1: Generate the auth URL (equivalent to session.generate_authcode())
+//   const authUrl = fyers.generateAuthCode({
+//     client_id,
+//     redirect_uri,
+//     response_type,
+//     state,
+//   });
 
-  console.log("Auth URL:", authUrl);
-  console.log("Open the above URL in your browser and copy the auth_code from the redirect.");
+//   console.log("Auth URL:", authUrl);
+//   console.log("Open the above URL in your browser and copy the auth_code from the redirect.");
 
-  // Step 2: Get auth code from user
-  const auth_code = await prompt("Enter Auth Code: ");
+//   // Step 2: Get auth code from user
+//   const auth_code = await prompt("Enter Auth Code: ");
 
-  // Step 3: Exchange auth code for tokens (equivalent to session.set_token() + session.generate_token())
-  const response = await fyers.generate_access_token({
-    client_id,
-    secret_key,
-    auth_code: auth_code.trim(),
-    grant_type,
-  });
+//   // Step 3: Exchange auth code for tokens (equivalent to session.set_token() + session.generate_token())
+//   const response = await fyers.generate_access_token({
+//     client_id,
+//     secret_key,
+//     auth_code: auth_code.trim(),
+//     grant_type,
+//   });
 
-  if (response.s !== 'ok') {
-    throw new Error(`Failed to get access token: ${JSON.stringify(response)}`);
-  }
+//   if (response.s !== 'ok') {
+//     throw new Error(`Failed to get access token: ${JSON.stringify(response)}`);
+//   }
 
-  const { refresh_token } = response;
+//   const { refresh_token } = response;
 
-  fs.writeFileSync("fyers_refresh_token.txt", refresh_token);
+//   fs.writeFileSync("fyers_refresh_token.txt", refresh_token);
 
-  console.log("Refresh Tokens saved to files.");
+//   console.log("Refresh Tokens saved to files.");
 
- 
 
-  return
-}
+
+//   return
+// }
 
 function getStoredTokens() {
   const refreshTokenPath = "fyers_refresh_token.txt";
@@ -68,3 +68,45 @@ function getStoredTokens() {
 }
 
 module.exports = { authenticate, getStoredTokens };
+
+
+async function authenticate() {
+  const authUrl = fyers.generateAuthCode({
+    client_id,
+    redirect_uri,
+    response_type,
+    state,
+  });
+
+  console.log("Auth URL:", authUrl);
+  console.log("Open the above URL in your browser and copy the auth_code from the redirect.");
+
+  const auth_code = await prompt("Enter Auth Code: ");
+
+  const response = await fyers.generate_access_token({
+    client_id,
+    secret_key,
+    auth_code: auth_code.trim(),
+    grant_type,
+  });
+
+  if (response.s !== 'ok') {
+    throw new Error(`Failed to get access token: ${JSON.stringify(response)}`);
+  }
+
+  const { access_token, refresh_token } = response;
+
+  // ✅ Save refresh token to file (existing)
+  fs.writeFileSync("fyers_refresh_token.txt", refresh_token);
+
+  // ✅ Save access token to localStorage so index.js can read it
+  if (typeof localStorage === "undefined" || localStorage === null) {
+    var LocalStorage = require("node-localstorage").LocalStorage;
+    localStorage = new LocalStorage("./scratch");
+  }
+  localStorage.setItem("token", JSON.stringify(access_token));
+
+  console.log("✅ Access token and refresh token saved.");
+
+  return access_token;
+}

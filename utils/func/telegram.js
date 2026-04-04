@@ -9,6 +9,9 @@ const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
 // const telegramchat =  "8559767849"
+/////////////------------IQOO bot 
+// const telegramtoken = "8671371710:AAFXdzpLwRWQ1TNgN8g1PV4Sm8CZ4oMiIbc"
+// const telegramchat = "8559767849"
 
 const bot = new TelegramBot(telegramtoken, { polling: false });
 

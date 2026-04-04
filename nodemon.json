@@ -1,0 +1,12 @@
+{
+  "watch": [
+    "."
+  ],
+  "ext": "js,json",
+  "ignore": [
+    "data/*",
+    "scratch/*",
+    "backtest_results.xlsx",
+    "*.xls"
+  ]
+}

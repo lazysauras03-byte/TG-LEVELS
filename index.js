@@ -1,5 +1,6 @@
-// MAIN FILE
+// 3C Break FILE 
 
+const { appendSignalToFile } = require("./generateDailySummaryDocx");
 const express = require("express");
 const axios = require("axios");
 const XLSX = require("xlsx");
@@ -17,6 +18,7 @@ const {
   buildDowTheoryTelegramBlock,
 } = require("./utils/func/dowTheory");
 const { analyzeWaves, buildWaveAnalysisTelegramBlock } = require("./utils/func/waveAnalysis");
+const crypto = require("crypto");
 
 const {
   analyzeWyckoff,
@@ -42,27 +44,29 @@ const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
-// const telegramchat = "8559767849";
 /////////////------------pnlbot
 // const telegramtoken = "7764791634:AAGGwGa6Sl7jNauuQvgnTXRTVixikBZCb-g";
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
 // const telegramchat = "8559767849";
+/////////////------------IQOO bot 
+// const telegramtoken = "8671371710:AAFXdzpLwRWQ1TNgN8g1PV4Sm8CZ4oMiIbc"
+// const telegramchat = "8559767849"
 
 let patternSchedulerTimeout = null;
 let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
-const SEND_FIRST_RUN_NOTIFICATIONS = false
-// const symbols = ["NSE:INDHOTEL-EQ", "NSE:PAGEIND-EQ"];
+const SEND_FIRST_RUN_NOTIFICATIONS = false;
+// const symbols = ["NSE:ADANIGREEN-EQ", "NSE:SOLARINDS-EQ"];
+const TESTING_MODE = false; // ← set false on Monday before market open
 
 const app = express();
 
-// const refresh_token =
-//   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcGxVRGFENklHeXBNY1UwVVFJMWhEMXlMT0FrYnhVTE1YV1ZhZHNsLWNiUmJEVy14NzJfb2VoNlFRUHlxVTVsdTdUbUF2WGRObDh3R00yZzJwRHBfbGQxXzhia2VWNlVEY2tKclVqeHhMaGw5TFJncz0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI0ZDcwNTIwMzlmMmM2NzI3NGViNzBlZTNlZmU4NzU0Y2E3ZDAyMDg1ZTQ1ZDhkY2FlOGRiMzJiOSIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiWFQwMzYyOSIsImFwcFR5cGUiOjEwMCwiZXhwIjoxNzcyNjcwNjAwLCJpYXQiOjE3NzEzODkxNDYsImlzcyI6ImFwaS5meWVycy5pbiIsIm5iZiI6MTc3MTM4OTE0Niwic3ViIjoicmVmcmVzaF90b2tlbiJ9.P-JdUPGC4hdwVOxo08zd7kVxS6XVyhUV5YwC5XToqOU";
-const tokens = getStoredTokens()
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+const tokens = getStoredTokens();
 var tempauth;
 
 const raw = localStorage.getItem("token");
@@ -70,25 +74,21 @@ tempauth = raw ? JSON.parse(raw) : null;
 
 let data = {
   grant_type: "refresh_token",
-  // appIdHash: "e86d29ff056bcc78df9cd894f163914c9b2d7581cc0aaf417fe03cbbfbd97db4",
-  // pin: "1234",
   appIdHash: process.env.HASH_ID,
   refresh_token: tokens.refresh_token,
   pin: process.env.PIN,
 };
+
 async function createAccess() {
   try {
     const response = await axios.post(
       "https://api-t1.fyers.in/api/v3/validate-refresh-token",
       data,
     );
-
     console.log("Success:", response.data.access_token);
     localStorage.setItem("token", JSON.stringify(response.data.access_token));
     const raw = localStorage.getItem("token");
-
     tempauth = raw ? JSON.parse(raw) : null;
-    console.log("Status:", response.status);
     return response.data;
   } catch (error) {
     console.error("Error:", error.message);
@@ -101,23 +101,25 @@ async function createAccess() {
 }
 
 const runauth = async () => {
-  await createAccess();
+  const raw = localStorage.getItem("token");
+  const accessToken = raw ? JSON.parse(raw) : null;
+  if (!accessToken) {
+    console.error("❌ No token found. Run authenticate() first.");
+    process.exit(1);
+  }
   fyers.setAppId(process.env.APP_ID);
-
   fyers.setRedirectUrl("https://www.google.com/");
-
-  fyers.setAccessToken(tempauth);
-
-  fyers
-    .get_profile()
-    .then((response) => {
-      console.log(response);
-    })
-    .catch((err) => {
-      console.log(err);
-    });
+  fyers.setAccessToken(accessToken);
+  tempauth = accessToken;
+  const profile = await fyers.get_profile();
+  console.log("✅ Auth OK:", profile);
 };
 
+// ── 🔐 AUTHENTICATE (once a month) ───────────────────────────────
+authenticate().then(() => {
+  console.log("✅ Authentication complete. You can now run runauth() daily.");
+  process.exit(0);
+}).catch(console.error);
 let niftyBiasCache = null;
 let niftyBiasCacheTime = null;
 
@@ -358,247 +360,650 @@ const getTradingMinutesBetween = (startUnix, endUnix) => {
   return totalMinutes;
 };
 
-// ─────────────────────────────────────────────────────────────────
-// analyzePattern — NEW: EMA Crossover + Pullback/Confirmation logic
-// Replaces the old BCVC-based pattern detection entirely.
-// bcvc param removed; emadata now carries ema9ByTimestamp.
-// ─────────────────────────────────────────────────────────────────
+// ─── isRecentEnough: accepts confirm candles from last 1 trading day ──────────
+// Works correctly when market is closed (uses previous trading day as "today")
+const getLastTradingDay = () => {
+  let d = moment();
+  // If before 9:15 AM or weekend, roll back to previous trading day
+  if (d.day() === 0) d.subtract(2, "days");       // Sunday → Friday
+  else if (d.day() === 6) d.subtract(1, "day");   // Saturday → Friday
+  else if (d.hour() < 9 || (d.hour() === 9 && d.minute() < 15)) {
+    d.subtract(1, "day");
+    if (d.day() === 0) d.subtract(2, "days");     // rolled to Sunday → Friday
+    if (d.day() === 6) d.subtract(1, "day");      // rolled to Saturday → Friday
+  }
+  return d.format("YYYY-MM-DD");
+};
+
+const isRecentEnough = (ts) => {
+  const signalDate = moment.unix(ts).format("YYYY-MM-DD");
+  const lastTradingDay = getLastTradingDay();
+  const prevTradingDay = moment(lastTradingDay).subtract(1, "day");
+  // roll back over weekends
+  if (prevTradingDay.day() === 0) prevTradingDay.subtract(2, "days");
+  if (prevTradingDay.day() === 6) prevTradingDay.subtract(1, "day");
+
+  return TESTING_MODE
+    ? (signalDate === lastTradingDay || signalDate === prevTradingDay.format("YYYY-MM-DD"))
+    : signalDate === lastTradingDay;
+};
+
 const analyzePattern = (emadata) => {
-  if (!emadata.crossover || emadata.crossover.length === 0) {
+
+  if (!emadata.crossover || emadata.crossover.length === 0)
     return { found: false, reason: "No crossovers found" };
-  }
-
-  if (!emadata.rawCandles || emadata.rawCandles.length === 0) {
+  if (!emadata.rawCandles || emadata.rawCandles.length === 0)
     return { found: false, reason: "No raw candles available" };
-  }
+  if (!emadata.ema9ByTimestamp)
+    return { found: false, reason: "ema9ByTimestamp not available — check generateEMAReport" };
+  if (!emadata.ema100ByTimestamp)
+    return { found: false, reason: "ema100ByTimestamp not available — check generateEMAReport" };
 
-  if (!emadata.ema9ByTimestamp) {
-    return { found: false, reason: "EMA9 series not available — check generateEMAReport" };
-  }
-
-  const isToday = (timestampUnix) => {
-    const candleDate = moment.unix(timestampUnix).format("YYYY-MM-DD");
+  const isRecentEnough = (ts) => {
+    const signalDate = moment.unix(ts).format("YYYY-MM-DD");
     const today = moment().format("YYYY-MM-DD");
-    return candleDate === today;
+    // Only today. Crossover can be any age — only the confirm candle must be today.
+    return TESTING_MODE
+      ? (signalDate === today || signalDate === moment().subtract(1, "days").format("YYYY-MM-DD"))
+      : signalDate === today;  // ✅ production: confirm candle must be today
   };
 
+  // ── STRICT per-candle purity check ───────────────────────────────────────
+  // Scans every candle strictly AFTER crossoverTs up to and including cfTs.
+  // For BULLISH: both ema9Low AND ema9High must remain > ema100 at every candle.
+  // For BEARISH: both ema9High AND ema9Low must remain < ema100 at every candle.
+  const isWindowPure = (crossoverTs, cfTs, crossoverType, ema9ByTimestamp, ema100ByTimestamp, rawCandles) => {
+    const windowCandles = rawCandles.filter(
+      (c) => c[0] > crossoverTs && c[0] <= cfTs
+    );
+
+    for (const candle of windowCandles) {
+      const ts = candle[0];
+      const ema9 = ema9ByTimestamp[ts];
+      const ema100Entry = ema100ByTimestamp[ts];
+
+      if (!ema9 || ema100Entry === undefined) {
+        console.log(`  ⚠️  Purity check: EMA lookup miss at ${moment.unix(ts).format("HH:mm")} — treating as impure`);
+        return { pure: false, failedAt: moment.unix(ts).format("HH:mm"), reason: "EMA lookup miss" };
+      }
+
+      const ema100 = ema100Entry;
+
+      if (crossoverType === "BULLISH_CROSSOVER") {
+        // Both EMA9 lines must stay ABOVE ema100
+        if (ema9.ema9Low <= ema100) {
+          console.log(`  🚫 Purity FAIL (BULLISH): ema9Low ₹${ema9.ema9Low.toFixed(2)} ≤ ema100 ₹${ema100.toFixed(2)} at ${moment.unix(ts).format("HH:mm")}`);
+          return { pure: false, failedAt: moment.unix(ts).format("HH:mm"), reason: `ema9Low crossed below ema100` };
+        }
+        if (ema9.ema9High <= ema100) {
+          console.log(`  🚫 Purity FAIL (BULLISH): ema9High ₹${ema9.ema9High.toFixed(2)} ≤ ema100 ₹${ema100.toFixed(2)} at ${moment.unix(ts).format("HH:mm")}`);
+          return { pure: false, failedAt: moment.unix(ts).format("HH:mm"), reason: `ema9High crossed below ema100` };
+        }
+      } else if (crossoverType === "BEARISH_CROSSOVER") {
+        // Both EMA9 lines must stay BELOW ema100
+        if (ema9.ema9High >= ema100) {
+          console.log(`  🚫 Purity FAIL (BEARISH): ema9High ₹${ema9.ema9High.toFixed(2)} ≥ ema100 ₹${ema100.toFixed(2)} at ${moment.unix(ts).format("HH:mm")}`);
+          return { pure: false, failedAt: moment.unix(ts).format("HH:mm"), reason: `ema9High crossed above ema100` };
+        }
+        if (ema9.ema9Low >= ema100) {
+          console.log(`  🚫 Purity FAIL (BEARISH): ema9Low ₹${ema9.ema9Low.toFixed(2)} ≥ ema100 ₹${ema100.toFixed(2)} at ${moment.unix(ts).format("HH:mm")}`);
+          return { pure: false, failedAt: moment.unix(ts).format("HH:mm"), reason: `ema9Low crossed above ema100` };
+        }
+      }
+    }
+
+    return { pure: true };
+  };
+
+  // ── Latest crossover only ──────────────────────────────────────────────────
   const latestCrossover = emadata.crossover[0];
   const crossoverTimestamp = latestCrossover.timestampUnix;
   const ema9ByTimestamp = emadata.ema9ByTimestamp;
+  const ema100ByTimestamp = emadata.ema100ByTimestamp;
 
-  // Candles strictly after the crossover, in ascending time order
+  console.log(`  🔄 Using latest crossover: ${latestCrossover.type} at ${latestCrossover.timestamp}`);
+
+  // ── Candle window ──────────────────────────────────────────────────────────
   const candlesAfterCrossover = emadata.rawCandles
     .filter((c) => c[0] > crossoverTimestamp)
     .sort((a, b) => a[0] - b[0]);
 
   if (candlesAfterCrossover.length < 2) {
-    return { found: false, reason: "Not enough candles after crossover (need at least 2)" };
+    return {
+      found: false,
+      reason: `Only ${candlesAfterCrossover.length} candle(s) after latest crossover — need at least 2`,
+    };
   }
 
-  // ── BULLISH SETUP ─────────────────────────────────────────────
-  // Pullback : red candle (close < open) closing STRICTLY below EMA9-of-Lows
-  // Confirm  : very next candle is green AND
-  //            Cond1: green close > EMA9-of-Lows
-  //            Cond2: green close > red candle's open
-  // Scan newest-to-oldest so the most recent valid signal wins
+  // ═══════════════════════════════════════════════════════════════════════════
+  // BULLISH LOGIC
+  // ═══════════════════════════════════════════════════════════════════════════
   if (latestCrossover.type === "BULLISH_CROSSOVER") {
-    const validBullishPairs = [];
 
-    for (let i = 0; i <= candlesAfterCrossover.length - 2; i++) {
-      const pb = candlesAfterCrossover[i];
-      const cf = candlesAfterCrossover[i + 1];
-
-      const pbTs = pb[0];
-      const pbOpen = parseFloat(pb[1]);
-      const pbHigh = parseFloat(pb[2]);
-      const pbLow = parseFloat(pb[3]);
-      const pbClose = parseFloat(pb[4]);
-
-      const cfTs = cf[0];
-      const cfOpen = parseFloat(cf[1]);
-      const cfHigh = parseFloat(cf[2]);
-      const cfLow = parseFloat(cf[3]);
-      const cfClose = parseFloat(cf[4]);
+    for (let pbIdx = 0; pbIdx < candlesAfterCrossover.length; pbIdx++) {
+      const pbCandle = candlesAfterCrossover[pbIdx];
+      const pbTs = pbCandle[0];
+      const pbOpen = parseFloat(pbCandle[1]);
+      const pbHigh = parseFloat(pbCandle[2]);
+      const pbLow = parseFloat(pbCandle[3]);
+      const pbClose = parseFloat(pbCandle[4]);
 
       const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9Low;
-      const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9Low;
-
-      if (ema9AtPb === undefined || ema9AtCf === undefined) {
-        console.log(`  ⚠️ EMA9 lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping pair`);
+      if (ema9AtPb === undefined) {
+        console.log(`  ⚠️  EMA9(Low) lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping`);
         continue;
       }
 
-      const isRedCandle = pbClose < pbOpen;
-      const closedBelowEMA9 = pbClose < ema9AtPb;
-      if (!isRedCandle || !closedBelowEMA9) continue;
+      if (pbLow > ema9AtPb) continue;
 
-      const isGreenCandle = cfClose > cfOpen;
-      if (!isGreenCandle) continue;
+      console.log(`  📍 Pullback at ${moment.unix(pbTs).format("HH:mm")} | Low ₹${pbLow} ≤ EMA9(Low) ₹${ema9AtPb.toFixed(2)}`);
 
-      const cond1 = cfClose > ema9AtCf;
-      const cond2 = cfClose > pbOpen;
-      if (!cond1 || !cond2) continue;
+      for (let cfOffset = 1; cfOffset <= 3; cfOffset++) {
+        const cfCandle = candlesAfterCrossover[pbIdx + cfOffset];
+        if (!cfCandle) break;
 
-      validBullishPairs.push({ pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf });
-    }
+        const cfTs = cfCandle[0];
+        const cfOpen = parseFloat(cfCandle[1]);
+        const cfHigh = parseFloat(cfCandle[2]);
+        const cfLow = parseFloat(cfCandle[3]);
+        const cfClose = parseFloat(cfCandle[4]);
 
-    // Only fire if the LATEST valid pair has a today-confirmed candle
-    if (validBullishPairs.length > 0) {
-      const attemptNumber = validBullishPairs.length;
-      const { pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf } = validBullishPairs[validBullishPairs.length - 1];
+        const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9Low;
+        if (ema9AtCf === undefined) {
+          console.log(`  ⚠️  EMA9(Low) lookup miss at confirm ${moment.unix(cfTs).format("HH:mm")} — skipping`);
+          continue;
+        }
 
-      if (!isToday(cfTs)) {
-        return { found: false, reason: "Latest confirmation candle is not from today" };
+        if (cfClose <= pbHigh) {
+          console.log(`  ↩️  +${cfOffset} ${moment.unix(cfTs).format("HH:mm")}: close ₹${cfClose} ≤ pb high ₹${pbHigh}`);
+          continue;
+        }
+
+        if (!isRecentEnough(cfTs)) {
+          console.log(`  ⏩  Confirm at ${moment.unix(cfTs).format("YYYY-MM-DD")} not recent — skipping pullback`);
+          break;
+        }
+
+        // ── STRICT PURITY CHECK (replaces hasCrossoverPollution) ──────────
+        const purity = isWindowPure(
+          crossoverTimestamp, cfTs,
+          "BULLISH_CROSSOVER",
+          ema9ByTimestamp, ema100ByTimestamp,
+          emadata.rawCandles
+        );
+        if (!purity.pure) {
+          return {
+            found: false,
+            reason: `Bullish setup invalidated — ${purity.reason} at ${purity.failedAt}`,
+          };
+        }
+
+        console.log(`  ✅ BULLISH signal | ${moment.unix(cfTs).format("HH:mm")} close ₹${cfClose} > pb high ₹${pbHigh} (+${cfOffset} candle)`);
+
+        return {
+          found: true,
+          crossoverType: "BULLISH_CROSSOVER",
+          crossover: latestCrossover,
+          pullbackCandle: {
+            timestampUnix: pbTs,
+            timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+            open: pbOpen, high: pbHigh, low: pbLow, close: pbClose,
+            ema9: +ema9AtPb.toFixed(2),
+          },
+          confirmationCandle: {
+            timestampUnix: cfTs,
+            timestamp: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+            open: cfOpen, high: cfHigh, low: cfLow, close: cfClose,
+            ema9: +ema9AtCf.toFixed(2),
+          },
+          entryPrice: cfClose,
+          stopLoss: pbLow,
+          validation: {
+            pullbackLow: pbLow,
+            pullbackEMA9Low: +ema9AtPb.toFixed(2),
+            touchedBelowEMA9: pbLow <= ema9AtPb,
+            pullbackHigh: pbHigh,
+            confirmClose: cfClose,
+            bodyBreakAbovePullbackHigh: cfClose > pbHigh,
+            confirmationOffset: cfOffset,
+            purityClean: true,
+          },
+          summary: {
+            tag: "EMA9 LOW Strategy Bullish",
+            crossoverTime: latestCrossover.timestamp,
+            pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+            confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+            crossoverPrice: latestCrossover.price,
+            pullbackLow: pbLow,
+            pullbackHigh: pbHigh,
+            pullbackEMA9: +ema9AtPb.toFixed(2),
+            confirmClose: cfClose,
+            confirmHigh: cfHigh,
+            confirmEMA9: +ema9AtCf.toFixed(2),
+            entryPrice: cfClose,
+            stopLoss: pbLow,
+          },
+        };
       }
-
-      const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, cfTs);
-      const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
-
-      console.log(`  ✅ Pullback found at ${moment.unix(pbTs).format("HH:mm")} | Confirm at ${moment.unix(cfTs).format("HH:mm")} | Attempt #${attemptNumber}`);
-
-      return {
-        found: true,
-        crossoverType: "BULLISH_CROSSOVER",
-        crossover: latestCrossover,
-        attemptNumber,
-        pullbackCandle: {
-          timestampUnix: pbTs,
-          timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
-          open: pbOpen, high: pbHigh, low: pbLow, close: pbClose,
-          ema9: +ema9AtPb.toFixed(2),
-        },
-        confirmationCandle: {
-          timestampUnix: cfTs,
-          timestamp: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
-          open: cfOpen, high: cfHigh, low: cfLow, close: cfClose,
-          ema9: +ema9AtCf.toFixed(2),
-        },
-        entryPrice: cfClose,
-        stopLoss: pbLow,
-        candlesBetween,
-        validation: {
-          pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2), closedBelowEMA9: true,
-          confirmClose: cfClose, confirmEMA9: +ema9AtCf.toFixed(2),
-          cond1_closeAboveEMA9: true, cond2_closeAboveRedOpen: true,
-        },
-        summary: {
-          crossoverTime: latestCrossover.timestamp,
-          pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
-          confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
-          crossoverPrice: latestCrossover.price,
-          pullbackOpen: pbOpen, pullbackLow: pbLow, pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2),
-          confirmOpen: cfOpen, confirmClose: cfClose, confirmHigh: cfHigh, confirmEMA9: +ema9AtCf.toFixed(2),
-          candlesBetween,
-        },
-      };
     }
 
-    return { found: false, reason: "No valid pullback+confirmation pair found after bullish crossover" };
+    return { found: false, reason: "No valid pullback + body-breakout pair found after latest bullish crossover" };
 
-
-    // ── BEARISH SETUP ─────────────────────────────────────────────
-    // Pullback : green candle (close > open) closing STRICTLY above EMA9-of-Highs
-    // Confirm  : very next candle is red AND
-    //            Cond1: red open > EMA9 AND red close < EMA9 (rejection)
-    //            Cond2: red close < green candle's open
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BEARISH LOGIC
+    // ═══════════════════════════════════════════════════════════════════════════
   } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
-    const validBearishPairs = [];
 
-    for (let i = 0; i <= candlesAfterCrossover.length - 2; i++) {
-      const pb = candlesAfterCrossover[i];
-      const cf = candlesAfterCrossover[i + 1];
-
-      const pbTs = pb[0];
-      const pbOpen = parseFloat(pb[1]);
-      const pbHigh = parseFloat(pb[2]);
-      const pbLow = parseFloat(pb[3]);
-      const pbClose = parseFloat(pb[4]);
-
-      const cfTs = cf[0];
-      const cfOpen = parseFloat(cf[1]);
-      const cfHigh = parseFloat(cf[2]);
-      const cfLow = parseFloat(cf[3]);
-      const cfClose = parseFloat(cf[4]);
+    for (let pbIdx = 0; pbIdx < candlesAfterCrossover.length; pbIdx++) {
+      const pbCandle = candlesAfterCrossover[pbIdx];
+      const pbTs = pbCandle[0];
+      const pbOpen = parseFloat(pbCandle[1]);
+      const pbHigh = parseFloat(pbCandle[2]);
+      const pbLow = parseFloat(pbCandle[3]);
+      const pbClose = parseFloat(pbCandle[4]);
 
       const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9High;
-      const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9High;
-
-      if (ema9AtPb === undefined || ema9AtCf === undefined) {
-        console.log(`  ⚠️ EMA9 lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping pair`);
+      if (ema9AtPb === undefined) {
+        console.log(`  ⚠️  EMA9(High) lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping`);
         continue;
       }
 
-      const isGreenCandle = pbClose > pbOpen;
-      const closedAboveEMA9 = pbClose > ema9AtPb;
-      if (!isGreenCandle || !closedAboveEMA9) continue;
+      if (pbHigh < ema9AtPb) continue;
 
-      const isRedCandle = cfClose < cfOpen;
-      if (!isRedCandle) continue;
+      console.log(`  📍 Bearish pullback at ${moment.unix(pbTs).format("HH:mm")} | High ₹${pbHigh} ≥ EMA9(High) ₹${ema9AtPb.toFixed(2)}`);
 
-      const cond1 = cfOpen > ema9AtCf && cfClose < ema9AtCf;
-      const cond2 = cfClose < pbOpen;
-      if (!cond1 || !cond2) continue;
+      for (let cfOffset = 1; cfOffset <= 3; cfOffset++) {
+        const cfCandle = candlesAfterCrossover[pbIdx + cfOffset];
+        if (!cfCandle) break;
 
-      validBearishPairs.push({ pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf });
-    }
+        const cfTs = cfCandle[0];
+        const cfOpen = parseFloat(cfCandle[1]);
+        const cfHigh = parseFloat(cfCandle[2]);
+        const cfLow = parseFloat(cfCandle[3]);
+        const cfClose = parseFloat(cfCandle[4]);
 
-    if (validBearishPairs.length > 0) {
-      const attemptNumber = validBearishPairs.length;
-      const { pb, cf, pbTs, pbOpen, pbHigh, pbLow, pbClose, cfTs, cfOpen, cfHigh, cfLow, cfClose, ema9AtPb, ema9AtCf } = validBearishPairs[validBearishPairs.length - 1];
+        const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9High;
+        if (ema9AtCf === undefined) {
+          console.log(`  ⚠️  EMA9(High) lookup miss at confirm ${moment.unix(cfTs).format("HH:mm")} — skipping`);
+          continue;
+        }
 
-      if (!isToday(cfTs)) {
-        return { found: false, reason: "Latest confirmation candle is not from today" };
+        if (cfClose >= pbLow) {
+          console.log(`  ↩️  +${cfOffset} ${moment.unix(cfTs).format("HH:mm")}: close ₹${cfClose} ≥ pb low ₹${pbLow}`);
+          continue;
+        }
+
+        if (!isRecentEnough(cfTs)) {
+          console.log(`  ⏩  Bearish confirm at ${moment.unix(cfTs).format("YYYY-MM-DD")} not recent — skipping pullback`);
+          break;
+        }
+
+        // ── STRICT PURITY CHECK ───────────────────────────────────────────
+        const purity = isWindowPure(
+          crossoverTimestamp, cfTs,
+          "BEARISH_CROSSOVER",
+          ema9ByTimestamp, ema100ByTimestamp,
+          emadata.rawCandles
+        );
+        if (!purity.pure) {
+          return {
+            found: false,
+            reason: `Bearish setup invalidated — ${purity.reason} at ${purity.failedAt}`,
+          };
+        }
+
+        console.log(`  ✅ BEARISH signal | ${moment.unix(cfTs).format("HH:mm")} close ₹${cfClose} < pb low ₹${pbLow} (+${cfOffset} candle)`);
+
+        return {
+          found: true,
+          crossoverType: "BEARISH_CROSSOVER",
+          crossover: latestCrossover,
+          pullbackCandle: {
+            timestampUnix: pbTs,
+            timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+            open: pbOpen, high: pbHigh, low: pbLow, close: pbClose,
+            ema9: +ema9AtPb.toFixed(2),
+          },
+          confirmationCandle: {
+            timestampUnix: cfTs,
+            timestamp: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+            open: cfOpen, high: cfHigh, low: cfLow, close: cfClose,
+            ema9: +ema9AtCf.toFixed(2),
+          },
+          entryPrice: cfClose,
+          stopLoss: pbHigh,
+          validation: {
+            pullbackHigh: pbHigh,
+            pullbackEMA9High: +ema9AtPb.toFixed(2),
+            touchedAboveEMA9: pbHigh >= ema9AtPb,
+            pullbackLow: pbLow,
+            confirmClose: cfClose,
+            bodyBreakBelowPullbackLow: cfClose < pbLow,
+            confirmationOffset: cfOffset,
+            purityClean: true,
+          },
+          summary: {
+            tag: "EMA9 HIGH Strategy Bearish",
+            crossoverTime: latestCrossover.timestamp,
+            pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+            confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+            crossoverPrice: latestCrossover.price,
+            pullbackHigh: pbHigh,
+            pullbackLow: pbLow,
+            pullbackEMA9: +ema9AtPb.toFixed(2),
+            confirmClose: cfClose,
+            confirmLow: cfLow,
+            confirmEMA9: +ema9AtCf.toFixed(2),
+            entryPrice: cfClose,
+            stopLoss: pbHigh,
+          },
+        };
       }
-
-      const elapsedMinutes = getTradingMinutesBetween(crossoverTimestamp, cfTs);
-      const candlesBetween = elapsedMinutes <= 150 ? 10 : Math.ceil(elapsedMinutes / 15);
-
-      console.log(`  ✅ Pullback found at ${moment.unix(pbTs).format("HH:mm")} | Confirm at ${moment.unix(cfTs).format("HH:mm")} | Attempt #${attemptNumber}`);
-
-      return {
-        found: true,
-        crossoverType: "BEARISH_CROSSOVER",
-        crossover: latestCrossover,
-        attemptNumber,
-        pullbackCandle: {
-          timestampUnix: pbTs,
-          timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
-          open: pbOpen, high: pbHigh, low: pbLow, close: pbClose,
-          ema9: +ema9AtPb.toFixed(2),
-        },
-        confirmationCandle: {
-          timestampUnix: cfTs,
-          timestamp: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
-          open: cfOpen, high: cfHigh, low: cfLow, close: cfClose,
-          ema9: +ema9AtCf.toFixed(2),
-        },
-        entryPrice: cfClose,
-        stopLoss: pbHigh,
-        candlesBetween,
-        validation: {
-          pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2), closedAboveEMA9: true,
-          confirmOpen: cfOpen, confirmClose: cfClose, confirmEMA9: +ema9AtCf.toFixed(2),
-          cond1_rejectionCandle: true, cond2_closeBelowGreenOpen: true,
-        },
-        summary: {
-          crossoverTime: latestCrossover.timestamp,
-          pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
-          confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
-          crossoverPrice: latestCrossover.price,
-          pullbackOpen: pbOpen, pullbackHigh: pbHigh, pullbackClose: pbClose, pullbackEMA9: +ema9AtPb.toFixed(2),
-          confirmOpen: cfOpen, confirmClose: cfClose, confirmLow: cfLow, confirmEMA9: +ema9AtCf.toFixed(2),
-          candlesBetween,
-        },
-      };
     }
 
-    return { found: false, reason: "No valid pullback+confirmation pair found after bearish crossover" };
-
+    return { found: false, reason: "No valid pullback + body-breakdown pair found after latest bearish crossover" };
   }
 
-  return { found: false, reason: `Unknown crossover type: ${latestCrossover.type}` };
+  return { found: false, reason: `Unknown crossover type: ${latestCrossover?.type}` };
 };
 
+// ─────────────────────────────────────────────────────────────────
+// analyzePattern — NEW: EMA Crossover + Pullback/Confirmation logic
+// Replaces the old BCVC-based pattern detection entirely.
+// bcvc param removed; emadata now carries ema9ByTimestamp.
+// ─────────────────────────────────────────────────────────────────
+// const analyzePattern = (emadata) => {
+
+//   if (!emadata.crossover || emadata.crossover.length === 0)
+//     return { found: false, reason: "No crossovers found" };
+//   if (!emadata.rawCandles || emadata.rawCandles.length === 0)
+//     return { found: false, reason: "No raw candles available" };
+//   if (!emadata.ema9ByTimestamp)
+//     return { found: false, reason: "ema9ByTimestamp not available — check generateEMAReport" };
+
+//   // ── Recent-enough gate ────────────────────────────────────────────────────
+//   const isRecentEnough = (ts) => {
+//     const signalDate = moment.unix(ts).format("YYYY-MM-DD");
+//     const today = moment().format("YYYY-MM-DD");
+//     const yesterday = moment().subtract(1, "days").format("YYYY-MM-DD");
+//     return TESTING_MODE
+//       ? (signalDate === today || signalDate === yesterday)
+//       : signalDate === today;
+//   };
+
+//   // ── Purity check ──────────────────────────────────────────────────────────
+//   // "No additional EMA crossover may occur between Condition 1 and Condition 3"
+//   // ANY crossover (same or opposite direction) in window (crossoverTs, cfTs]
+//   // invalidates the setup.
+//   //
+//   // Note: crossoverType param removed — we check ALL crossovers, not just opposite.
+//   const hasCrossoverPollution = (crossoverTs, cfTs, allCrossovers) => {
+//     if (!allCrossovers || allCrossovers.length === 0) return false;
+
+//     const intruder = allCrossovers.find(
+//       (c) =>
+//         c.timestampUnix > crossoverTs &&  // strictly after setup crossover
+//         c.timestampUnix <= cfTs           // up to and including confirm candle
+//     );
+
+//     if (intruder) {
+//       console.log(
+//         `  🚫 Purity FAIL: ${intruder.type} at ${intruder.timestamp} ` +
+//         `found in window (C1 → C3) — setup invalidated`
+//       );
+//       return true;
+//     }
+//     return false;
+//   };
+
+//   // ── Latest crossover only ──────────────────────────────────────────────────
+//   const latestCrossover = emadata.crossover[0];
+//   const crossoverTimestamp = latestCrossover.timestampUnix;
+//   const ema9ByTimestamp = emadata.ema9ByTimestamp;
+//   const allCrossovers = emadata.allCrossovers || [];
+
+//   console.log(`  🔄 Using latest crossover: ${latestCrossover.type} at ${latestCrossover.timestamp}`);
+//   console.log(`  📋 Total crossovers in history: ${allCrossovers.length}`);
+//   if (emadata.crossover.length > 1) {
+//     console.log(
+//       `  ⚠️  ${emadata.crossover.length - 1} older crossover(s) in recent-5 ignored:`,
+//       emadata.crossover.slice(1).map((c) => `${c.type} @ ${c.timestamp}`).join(" | ")
+//     );
+//   }
+
+//   // ── Candle window ──────────────────────────────────────────────────────────
+//   const candlesAfterCrossover = emadata.rawCandles
+//     .filter((c) => c[0] > crossoverTimestamp)
+//     .sort((a, b) => a[0] - b[0]);
+
+//   if (candlesAfterCrossover.length < 2) {
+//     return {
+//       found: false,
+//       reason: `Only ${candlesAfterCrossover.length} candle(s) after latest crossover — need at least 2`,
+//     };
+//   }
+
+//   console.log(`  📊 Candles in window after crossover: ${candlesAfterCrossover.length}`);
+
+//   // ═══════════════════════════════════════════════════════════════════════════
+//   // BULLISH LOGIC
+//   // ═══════════════════════════════════════════════════════════════════════════
+//   if (latestCrossover.type === "BULLISH_CROSSOVER") {
+
+//     for (let pbIdx = 0; pbIdx < candlesAfterCrossover.length; pbIdx++) {
+//       const pbCandle = candlesAfterCrossover[pbIdx];
+//       const pbTs = pbCandle[0];
+//       const pbOpen = parseFloat(pbCandle[1]);
+//       const pbHigh = parseFloat(pbCandle[2]);
+//       const pbLow = parseFloat(pbCandle[3]);
+//       const pbClose = parseFloat(pbCandle[4]);
+
+//       const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9Low;
+//       if (ema9AtPb === undefined) {
+//         console.log(`  ⚠️  EMA9(Low) lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping`);
+//         continue;
+//       }
+
+//       // Condition 2: LOW must touch or go below EMA9(Low)
+//       if (pbLow > ema9AtPb) continue;
+
+//       console.log(`  📍 Pullback at ${moment.unix(pbTs).format("HH:mm")} | Low ₹${pbLow} ≤ EMA9(Low) ₹${ema9AtPb.toFixed(2)}`);
+
+//       // Condition 3: within 1–3 candles, body closes ABOVE pullback HIGH
+//       for (let cfOffset = 1; cfOffset <= 3; cfOffset++) {
+//         const cfCandle = candlesAfterCrossover[pbIdx + cfOffset];
+//         if (!cfCandle) break;
+
+//         const cfTs = cfCandle[0];
+//         const cfOpen = parseFloat(cfCandle[1]);
+//         const cfHigh = parseFloat(cfCandle[2]);
+//         const cfLow = parseFloat(cfCandle[3]);
+//         const cfClose = parseFloat(cfCandle[4]);
+
+//         const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9Low;
+//         if (ema9AtCf === undefined) {
+//           console.log(`  ⚠️  EMA9(Low) lookup miss at confirm ${moment.unix(cfTs).format("HH:mm")} — skipping`);
+//           continue;
+//         }
+
+//         if (cfClose <= pbHigh) {
+//           console.log(`  ↩️  +${cfOffset} ${moment.unix(cfTs).format("HH:mm")}: close ₹${cfClose} ≤ pb high ₹${pbHigh}`);
+//           continue;
+//         }
+
+//         if (!isRecentEnough(cfTs)) {
+//           console.log(`  ⏩  Confirm at ${moment.unix(cfTs).format("YYYY-MM-DD")} not recent — skipping pullback`);
+//           break;
+//         }
+
+//         // ── PURITY CHECK ───────────────────────────────────────────────────
+//         if (hasCrossoverPollution(crossoverTimestamp, cfTs, allCrossovers)) {
+//           return { found: false, reason: "Bullish setup invalidated — crossover occurred between C1 and C3" };
+//         }
+
+//         console.log(`  ✅ BULLISH signal | ${moment.unix(cfTs).format("HH:mm")} close ₹${cfClose} > pb high ₹${pbHigh} (+${cfOffset} candle)`);
+
+//         return {
+//           found: true,
+//           crossoverType: "BULLISH_CROSSOVER",
+//           crossover: latestCrossover,
+//           pullbackCandle: {
+//             timestampUnix: pbTs,
+//             timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+//             open: pbOpen, high: pbHigh, low: pbLow, close: pbClose,
+//             ema9: +ema9AtPb.toFixed(2),
+//           },
+//           confirmationCandle: {
+//             timestampUnix: cfTs,
+//             timestamp: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+//             open: cfOpen, high: cfHigh, low: cfLow, close: cfClose,
+//             ema9: +ema9AtCf.toFixed(2),
+//           },
+//           entryPrice: cfClose,
+//           stopLoss: pbLow,
+//           validation: {
+//             pullbackLow: pbLow,
+//             pullbackEMA9Low: +ema9AtPb.toFixed(2),
+//             touchedBelowEMA9: pbLow <= ema9AtPb,
+//             pullbackHigh: pbHigh,
+//             confirmClose: cfClose,
+//             bodyBreakAbovePullbackHigh: cfClose > pbHigh,
+//             confirmationOffset: cfOffset,
+//             purityClean: true,
+//           },
+//           summary: {
+//             tag: "EMA9 LOW Strategy Bullish",
+//             crossoverTime: latestCrossover.timestamp,
+//             pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+//             confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+//             crossoverPrice: latestCrossover.price,
+//             pullbackLow: pbLow,
+//             pullbackHigh: pbHigh,
+//             pullbackEMA9: +ema9AtPb.toFixed(2),
+//             confirmClose: cfClose,
+//             confirmHigh: cfHigh,
+//             confirmEMA9: +ema9AtCf.toFixed(2),
+//             entryPrice: cfClose,
+//             stopLoss: pbLow,
+//           },
+//         };
+//       }
+//     }
+
+//     return { found: false, reason: "No valid pullback + body-breakout pair found after latest bullish crossover" };
+
+//     // ═══════════════════════════════════════════════════════════════════════════
+//     // BEARISH LOGIC — exact mirror
+//     // ═══════════════════════════════════════════════════════════════════════════
+//   } else if (latestCrossover.type === "BEARISH_CROSSOVER") {
+
+//     for (let pbIdx = 0; pbIdx < candlesAfterCrossover.length; pbIdx++) {
+//       const pbCandle = candlesAfterCrossover[pbIdx];
+//       const pbTs = pbCandle[0];
+//       const pbOpen = parseFloat(pbCandle[1]);
+//       const pbHigh = parseFloat(pbCandle[2]);
+//       const pbLow = parseFloat(pbCandle[3]);
+//       const pbClose = parseFloat(pbCandle[4]);
+
+//       const ema9AtPb = ema9ByTimestamp[pbTs]?.ema9High;
+//       if (ema9AtPb === undefined) {
+//         console.log(`  ⚠️  EMA9(High) lookup miss at ${moment.unix(pbTs).format("HH:mm")} — skipping`);
+//         continue;
+//       }
+
+//       // Condition 2: HIGH must touch or go above EMA9(High)
+//       if (pbHigh < ema9AtPb) continue;
+
+//       console.log(`  📍 Bearish pullback at ${moment.unix(pbTs).format("HH:mm")} | High ₹${pbHigh} ≥ EMA9(High) ₹${ema9AtPb.toFixed(2)}`);
+
+//       // Condition 3: within 1–3 candles, body closes BELOW pullback LOW
+//       for (let cfOffset = 1; cfOffset <= 3; cfOffset++) {
+//         const cfCandle = candlesAfterCrossover[pbIdx + cfOffset];
+//         if (!cfCandle) break;
+
+//         const cfTs = cfCandle[0];
+//         const cfOpen = parseFloat(cfCandle[1]);
+//         const cfHigh = parseFloat(cfCandle[2]);
+//         const cfLow = parseFloat(cfCandle[3]);
+//         const cfClose = parseFloat(cfCandle[4]);
+
+//         const ema9AtCf = ema9ByTimestamp[cfTs]?.ema9High;
+//         if (ema9AtCf === undefined) {
+//           console.log(`  ⚠️  EMA9(High) lookup miss at confirm ${moment.unix(cfTs).format("HH:mm")} — skipping`);
+//           continue;
+//         }
+
+//         if (cfClose >= pbLow) {
+//           console.log(`  ↩️  +${cfOffset} ${moment.unix(cfTs).format("HH:mm")}: close ₹${cfClose} ≥ pb low ₹${pbLow}`);
+//           continue;
+//         }
+
+//         if (!isRecentEnough(cfTs)) {
+//           console.log(`  ⏩  Bearish confirm at ${moment.unix(cfTs).format("YYYY-MM-DD")} not recent — skipping pullback`);
+//           break;
+//         }
+
+//         // ── PURITY CHECK ───────────────────────────────────────────────────
+//         if (hasCrossoverPollution(crossoverTimestamp, cfTs, allCrossovers)) {
+//           return { found: false, reason: "Bearish setup invalidated — crossover occurred between C1 and C3" };
+//         }
+
+//         console.log(`  ✅ BEARISH signal | ${moment.unix(cfTs).format("HH:mm")} close ₹${cfClose} < pb low ₹${pbLow} (+${cfOffset} candle)`);
+
+//         return {
+//           found: true,
+//           crossoverType: "BEARISH_CROSSOVER",
+//           crossover: latestCrossover,
+//           pullbackCandle: {
+//             timestampUnix: pbTs,
+//             timestamp: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+//             open: pbOpen, high: pbHigh, low: pbLow, close: pbClose,
+//             ema9: +ema9AtPb.toFixed(2),
+//           },
+//           confirmationCandle: {
+//             timestampUnix: cfTs,
+//             timestamp: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+//             open: cfOpen, high: cfHigh, low: cfLow, close: cfClose,
+//             ema9: +ema9AtCf.toFixed(2),
+//           },
+//           entryPrice: cfClose,
+//           stopLoss: pbHigh,
+//           validation: {
+//             pullbackHigh: pbHigh,
+//             pullbackEMA9High: +ema9AtPb.toFixed(2),
+//             touchedAboveEMA9: pbHigh >= ema9AtPb,
+//             pullbackLow: pbLow,
+//             confirmClose: cfClose,
+//             bodyBreakBelowPullbackLow: cfClose < pbLow,
+//             confirmationOffset: cfOffset,
+//             purityClean: true,
+//           },
+//           summary: {
+//             tag: "EMA9 HIGH Strategy Bearish",
+//             crossoverTime: latestCrossover.timestamp,
+//             pullbackTime: moment.unix(pbTs).format("YYYY-MM-DD HH:mm"),
+//             confirmationTime: moment.unix(cfTs).format("YYYY-MM-DD HH:mm"),
+//             crossoverPrice: latestCrossover.price,
+//             pullbackHigh: pbHigh,
+//             pullbackLow: pbLow,
+//             pullbackEMA9: +ema9AtPb.toFixed(2),
+//             confirmClose: cfClose,
+//             confirmLow: cfLow,
+//             confirmEMA9: +ema9AtCf.toFixed(2),
+//             entryPrice: cfClose,
+//             stopLoss: pbHigh,
+//           },
+//         };
+//       }
+//     }
+
+//     return { found: false, reason: "No valid pullback + body-breakdown pair found after latest bearish crossover" };
+//   }
+
+//   return { found: false, reason: `Unknown crossover type: ${latestCrossover?.type}` };
+// };
+
+module.exports = { analyzePattern };
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getTradingViewLink = (symbol) => {
@@ -675,10 +1080,9 @@ const startlogic = async (isFirstRun = false) => {
     const now = moment();
     const today = now.format("YYYY-MM-DD");
 
-    const TRADING_DAYS_LOOKBACK = 1;
-    const { lookbackDate, calendarDaysBack, tradingDaysCount } =
-      getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
-
+    let bcvc = null;
+    const TRADING_DAYS_LOOKBACK = 3;
+    const { lookbackDate, calendarDaysBack, tradingDaysCount } = getTrailingTradingDays(TRADING_DAYS_LOOKBACK);
     const BCVC_LOOKBACK_DAYS = calendarDaysBack + 2;
 
     // For daily runs, we process ALL symbols that have recent crossovers
@@ -690,7 +1094,7 @@ const startlogic = async (isFirstRun = false) => {
     let crossoversChecked = 0;
     let recentCrossovers = 0;
     let skippedSymbols = 0;
-    let differentCrossoversDetected = 0; // Count of symbols with multiple crossovers today
+    let differentCrossoversDetected = 0;
     ``;
     const BATCH_SIZE = 25;
     const WAIT_TIME = 5000;
@@ -729,18 +1133,6 @@ const startlogic = async (isFirstRun = false) => {
         crossoversChecked++;
         const latestCrossover = emadata.crossover[0];
         const crossoverTime = moment.unix(latestCrossover.timestampUnix);
-
-        if (crossoverTime.isBefore(lookbackDate)) {
-          const daysAgo = now.diff(crossoverTime, "days");
-          const hoursAgo = now.diff(crossoverTime, "hours");
-          console.log(
-            `⏭️  Skipping ${symbol}: Latest crossover is ${daysAgo} calendar days (${hoursAgo} hours) old`,
-          );
-          console.log(
-            `   Crossover: ${latestCrossover.type} at ${crossoverTime.format("YYYY-MM-DD HH:mm")} (${crossoverTime.format("dddd")})`,
-          );
-          continue;
-        }
 
         // 🔥 CRITICAL FIX: Check if this is a DIFFERENT crossover than what we've seen today
         const cachedCrossover = symbolCrossoverCache.get(symbol);
@@ -781,33 +1173,14 @@ const startlogic = async (isFirstRun = false) => {
           });
         }
 
-        // 🔥 SMART SKIP LOGIC: Only skip if SAME crossover already has pattern sent
-        if (!isNewOrDifferentCrossover && !isFirstRun) {
-          // Generate the specific pattern ID for THIS crossover
-          const crossoverTypePrefix = latestCrossover.type.includes("BULLISH")
-            ? "BULL"
-            : "BEAR";
-          const potentialPatternPrefix = `${symbol}_${crossoverTypePrefix}_${latestCrossover.timestampUnix}`;
+        // ── Dedup: skip only if same direction already sent today ──────────────────
+        const directionKey = `${symbol}_${latestCrossover.type.includes("BULLISH") ? "BULL" : "BEAR"}_TODAY_${today}`;
 
-          // Check if this EXACT crossover already has a pattern sent
-          const alreadySentThisPattern = Array.from(sentPatterns).some(
-            (patternId) => patternId.startsWith(potentialPatternPrefix),
-          );
-
-          if (alreadySentThisPattern) {
+        if (!TESTING_MODE && !isFirstRun) {
+          if (sentPatterns.has(directionKey)) {
             skippedSymbols++;
-            console.log(
-              `⏭️  Skipping ${symbol}: Pattern already sent for this crossover`,
-            );
-            const matchingPattern = Array.from(sentPatterns).find((id) =>
-              id.startsWith(potentialPatternPrefix),
-            );
-            console.log(`   Pattern ID: ${matchingPattern}`);
+            console.log(`⏭️  Skipping ${symbol}: same direction (${latestCrossover.type}) already sent today`);
             continue;
-          } else {
-            console.log(
-              `✓ Processing ${symbol}: Same crossover but pattern not sent yet (still forming)`,
-            );
           }
         }
 
@@ -890,13 +1263,6 @@ const startlogic = async (isFirstRun = false) => {
           let entryScore = null;
           let entryMapBlock = "";
           try {
-            const sc =
-              pattern.crossoverType === "BULLISH_CROSSOVER"
-                ? pattern.bullishBCVC
-                : pattern.redCandle;
-            const ep = sc.close;
-            const sl =
-              pattern.crossoverType === "BULLISH_CROSSOVER" ? sc.low : sc.high;
             entryScore = scoreEntry({
               pattern,
               srAnalysis,
@@ -960,24 +1326,23 @@ const startlogic = async (isFirstRun = false) => {
             telegramMessage = `
 🟢 <b>BULLISH SIGNAL</b> — ${symbol}
 ━━━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>Chart      :</b> <a href="${tvLink}">${symbol} (15min)</a>
-📈 Candle Span : ${pattern.candlesBetween}
-🔁 Attempt     : #${pattern.attemptNumber}
-
-🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
-
-🔴 <b>Pullback   :</b> ${pb.timestamp}
-   Open ₹${pb.open} | Close ₹${pb.close} | Low ₹${pb.low}
-   EMA9(Low) ₹${pb.ema9} | Close &lt; EMA9 ✅
-
-🟢 <b>Confirm    :</b> ${cf.timestamp}
-   Close ₹${cf.close} &gt; EMA9 ₹${cf.ema9} ✅
-   Close ₹${cf.close} &gt; Red Open ₹${pb.open} ✅
-
-
+📊 <b>Chart       :</b> <a href="${tvLink}">${symbol} (15min)</a>
 🧭 Nifty Bias  : ${alignLabel}
-
-⏰ <b>Detected  :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
+ 
+🔄 <b>Crossover   :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
+ 
+📍 <b>Pullback    :</b> ${pb.timestamp}
+   Low  ₹${pb.low} ≤ EMA9(Low) ₹${pb.ema9} ✅
+   High ₹${pb.high} (breakout level)
+ 
+✅ <b>Confirm     :</b> ${cf.timestamp}  (+${pattern.validation.confirmationOffset} candle)
+   Close ₹${cf.close} &gt; Pullback High ₹${pb.high} ✅ (body breakout)
+ 
+💰 <b>Entry       :</b> ₹${pattern.entryPrice}
+🛑 <b>Stop Loss   :</b> ₹${pattern.stopLoss}  (pullback Low)
+📐 Risk         : ₹${(pattern.entryPrice - pattern.stopLoss).toFixed(2)}
+ 
+⏰ <b>Detected    :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
 
@@ -1004,24 +1369,23 @@ const startlogic = async (isFirstRun = false) => {
             telegramMessage = `
 🔴 <b>BEARISH SIGNAL</b> — ${symbol}
 ━━━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>Chart      :</b> <a href="${tvLink}">${symbol} (15min)</a>
-📉 Candle Span : ${pattern.candlesBetween}
-🔁 Attempt     : #${pattern.attemptNumber}
-
-🔄 <b>Crossover  :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
-
-🟢 <b>Pullback   :</b> ${pb.timestamp}
-   Open ₹${pb.open} | Close ₹${pb.close} | High ₹${pb.high}
-   EMA9(High) ₹${pb.ema9} | Close &gt; EMA9 ✅
-
-🔴 <b>Confirm    :</b> ${cf.timestamp}
-   Open ₹${cf.open} &gt; EMA9 ₹${cf.ema9} ✅ (rejection)
-   Close ₹${cf.close} &lt; EMA9 ₹${cf.ema9} ✅
-   Close ₹${cf.close} &lt; Green Open ₹${pb.open} ✅
-
+📊 <b>Chart       :</b> <a href="${tvLink}">${symbol} (15min)</a>
 🧭 Nifty Bias  : ${alignLabel}
-
-⏰ <b>Detected  :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
+ 
+🔄 <b>Crossover   :</b> ${pattern.crossover.timestamp} (${moment.unix(pattern.crossover.timestampUnix).fromNow()})
+ 
+📍 <b>Pullback    :</b> ${pb.timestamp}
+   High ₹${pb.high} ≥ EMA9(High) ₹${pb.ema9} ✅
+   Low  ₹${pb.low} (breakdown level)
+ 
+✅ <b>Confirm     :</b> ${cf.timestamp}  (+${pattern.validation.confirmationOffset} candle)
+   Close ₹${cf.close} &lt; Pullback Low ₹${pb.low} ✅ (body breakdown)
+ 
+💰 <b>Entry       :</b> ₹${pattern.entryPrice}
+🛑 <b>Stop Loss   :</b> ₹${pattern.stopLoss}  (pullback High)
+📐 Risk         : ₹${(pattern.stopLoss - pattern.entryPrice).toFixed(2)}
+ 
+⏰ <b>Detected    :</b> ${moment().format("YYYY-MM-DD HH:mm:ss")}
 `.trim();
           }
           const sendAndRecord = async () => {
@@ -1042,71 +1406,76 @@ const startlogic = async (isFirstRun = false) => {
 
             // 3) Mark as sent in memory
             sentPatterns.add(patternId);
+            sentPatterns.add(directionKey);
             console.log(`📝 Pattern tracked: ${patternId}`);
           };
-          // ✅ NOW guard sending on isFirstRun / isNewPattern — message is always ready
-          if (!isFirstRun && isNewPattern) {
+          if (isNewPattern || TESTING_MODE) {
             newPatternsFound++;
+
+            // ── Decide whether to send Telegram ──────────────────────────
+            // First run + SEND_FIRST_RUN_NOTIFICATIONS=false → silent baseline
+            // First run + SEND_FIRST_RUN_NOTIFICATIONS=true  → send all
+            // Any subsequent run                             → always send
+            const shouldSendTelegram = !isFirstRun || SEND_FIRST_RUN_NOTIFICATIONS;
+
             try {
-              await bot.sendMessage(telegramchat, telegramMessage, {
-                parse_mode: "HTML",
-              });
-              await writePatternToExcel(
-                symbol,
-                pattern,
-                isFirstRun,
-                SEND_FIRST_RUN_NOTIFICATIONS,
-                bcvc,
-              );
-              console.log(`✅ Telegram notification sent for ${symbol}`);
-              sentPatterns.add(patternId);
-              console.log(`📝 Pattern tracked: ${patternId}`);
-            } catch (telegramError) {
-              console.error(
-                `❌ Failed to send Telegram message:`,
-                telegramError.message,
-              );
-            }
-          } else {
-            if (isFirstRun) {
-              if (SEND_FIRST_RUN_NOTIFICATIONS) {
-                // First run WITH notifications enabled — send + save
-                console.log(
-                  `🔔 First run with notifications ENABLED - sending alert`,
-                );
-                try {
-                  await sendAndRecord();
-                } catch (err) {
-                  console.error(
-                    `❌ Failed to send/save for ${symbol}:`,
-                    err.message,
-                  );
-                }
+              if (shouldSendTelegram) {
+                await bot.sendMessage(telegramchat, telegramMessage, { parse_mode: "HTML" });
+                console.log(`✅ Telegram notification sent for ${symbol}`);
               } else {
-                // First run WITHOUT notifications — save to Excel only, no Telegram
-                console.log(
-                  `🔕 First run - storing pattern without Telegram notification`,
-                );
+                console.log(`🔕 First run silent baseline — Telegram suppressed for ${symbol}`);
+              }
+
+              if (TESTING_MODE) {
+                // TESTING MODE — Telegram only (if allowed above), no Excel, no JSON, no tracking
+                console.log(`🧪 TESTING MODE — no Excel, no JSON, no sentPatterns tracking`);
+              } else {
+                // Production — always track in memory so it won't re-send next run
+                sentPatterns.add(patternId);
+                sentPatterns.add(directionKey);
+                console.log(`📝 Pattern tracked in memory: ${patternId}`);
+
+                // ── Save to telegram_signals.json (only if actually sent) ──
+                if (shouldSendTelegram) {
+                  try {
+                    const symClean = symbol.replace(/^NSE:/i, "").replace(/-EQ$/i, "");
+                    appendSignalToFile({
+                      patternId,
+                      raw: telegramMessage,
+                      symbol: symClean,
+                      direction: pattern.crossoverType,
+                      crossoverTime: pattern.crossover.timestamp,
+                      pullbackTime: pattern.pullbackCandle.timestamp,
+                      confirmTime: pattern.confirmationCandle.timestamp,
+                      niftyBias: niftyBias.bias,
+                      niftyEmoji: niftyBias.emoji,
+                      niftyAlignLabel: niftyBias.bias === "LONG"
+                        ? (pattern.crossoverType === "BULLISH_CROSSOVER" ? "Aligned ✅" : "Counter Trend ⚠️")
+                        : niftyBias.bias === "SHORT"
+                          ? (pattern.crossoverType === "BEARISH_CROSSOVER" ? "Aligned ✅" : "Counter Trend ⚠️")
+                          : "Choppy ⚠️",
+                      entry: pattern.entryPrice,
+                      sl: pattern.stopLoss,
+                      date: moment().format("YYYY-MM-DD"),
+                    });
+                    console.log(`💾 Signal saved to telegram_signals.json: ${symClean}`);
+                  } catch (jsonError) {
+                    console.error(`⚠️  appendSignalToFile failed for ${symbol}:`, jsonError.message);
+                  }
+                }
+
+                // ── Save to Excel ──────────────────────────────────────────
                 try {
-                  await writePatternToExcel(
-                    symbol,
-                    pattern,
-                    isFirstRun,
-                    SEND_FIRST_RUN_NOTIFICATIONS,
-                    bcvc,
-                  );
-                  sentPatterns.add(patternId);
-                  console.log(`📝 Pattern tracked (Excel only): ${patternId}`);
-                } catch (err) {
-                  console.error(
-                    `❌ Failed to save to Excel for ${symbol}:`,
-                    err.message,
-                  );
+                  await writePatternToExcel(symbol, pattern, isFirstRun, SEND_FIRST_RUN_NOTIFICATIONS, null);
+                } catch (excelError) {
+                  console.error(`⚠️  writePatternToExcel failed for ${symbol}:`, excelError.message);
                 }
               }
-            } else {
-              console.log(`⏭️  Pattern already sent previously - skipping`);
+            } catch (telegramError) {
+              console.error(`❌ Failed to send Telegram:`, telegramError.message);
             }
+          } else {
+            console.log(`⏭️  Pattern already sent — skipping`);
           }
         } else {
           console.log(`❌ Pattern not found for ${symbol}: ${pattern.reason}`);
@@ -1187,7 +1556,7 @@ const startPatternScheduler = () => {
   let firstRun = moment().hour(9).minute(15).second(10).millisecond(0);
 
   if (now.isAfter(firstRun)) {
-    firstRun = now.clone().second(10).millisecond(0);
+    firstRun = now.clone().add(2, "seconds"); // run almost immediately
   }
 
   // if (firstRun.isAfter(endTime)) {
@@ -1195,7 +1564,7 @@ const startPatternScheduler = () => {
   //   return;
   // }
 
-  const delay = firstRun.diff(moment());
+  const delay = Math.max(0, firstRun.diff(moment()));
   console.log(
     `⏳ Pattern detection will start at: ${firstRun.format("HH:mm:ss")}`,
   );
@@ -1317,6 +1686,8 @@ startPatternScheduler();
 // startlogic(true)
 // authenticate()
 // runBacktest();
+
+
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 
 app.listen(PORT, async () => {

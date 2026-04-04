@@ -1,3 +1,5 @@
+// 3C Break FILE 
+
 const moment = require("moment");
 const fyers = require("./fyersapi");
 const bot = require("./telegram");
@@ -519,7 +521,8 @@ class EMAManager {
 
         const emaHistory = [];
         const crossovers = [];
-        const ema9SeriesFull = [];   // NEW — full per-candle lookup used by analyzePattern
+        const ema9SeriesFull = [];   // full per-candle lookup used by analyzePattern
+        const ema100SeriesFull = []; // full per-candle ema100 lookup for purity check
         let bullishCrossovers = 0;
         let bearishCrossovers = 0;
         let currentTrend = null;
@@ -542,8 +545,9 @@ class EMAManager {
             const ema9High = emaResult.ema9High;    // NEW
             const ema100Close = emaResult.ema100Close;
 
-            // NEW: store every candle's EMA9 values for O(1) lookup in analyzePattern
+            // store every candle's EMA9 + EMA100 values for O(1) lookup in analyzePattern
             ema9SeriesFull.push({ timestampUnix: timestamp, ema9Low, ema9High });
+            ema100SeriesFull.push({ timestampUnix: timestamp, ema100Close });
 
             // Trend: bullish = ema9Low > ema100 | bearish = ema9High < ema100
             const isBullishTrend = ema9Low > ema100Close;
@@ -669,7 +673,8 @@ class EMAManager {
         };
 
         result._rawCandles = candles;
-        result.ema9SeriesFull = ema9SeriesFull;   // NEW
+        result.ema9SeriesFull = ema9SeriesFull;
+        result.ema100SeriesFull = ema100SeriesFull;
         return result;
 
       } catch (error) {
@@ -698,6 +703,13 @@ class EMAManager {
         };
       }
     }
+    // O(1) per-candle EMA100 lookup for strict purity check in analyzePattern
+    const ema100ByTimestamp = {};
+    if (historical.ema100SeriesFull) {
+      for (const entry of historical.ema100SeriesFull) {
+        ema100ByTimestamp[entry.timestampUnix] = entry.ema100Close;
+      }
+    }
 
     return {
       header: {
@@ -706,9 +718,13 @@ class EMAManager {
         dateRange: `${historical.periodStart} to ${historical.periodEnd}`,
         generatedAt: moment().format("YYYY-MM-DD HH:mm:ss"),
       },
-      crossover: historical.crossoverStats.allCrossovers.slice(-5).reverse(),
+      crossover: historical.crossoverStats.allCrossovers
+        .slice(-5)
+        .reverse(),
+      allCrossovers: historical.crossoverStats.allCrossovers,
       rawCandles: historical._rawCandles || [],
-      ema9ByTimestamp, // NEW — keyed by unix timestamp
+      ema9ByTimestamp,
+      ema100ByTimestamp, // keyed by unix timestamp → value is ema100Close number
     };
   }
 
@@ -723,7 +739,6 @@ class EMAManager {
       topBullish: [],
       topBearish: [],
     };
-
     for (const symbol of symbols) {
       const historical = await this.getHistoricalEMA(symbol, days, maxRetries, retryDelay);
       if (historical) {
