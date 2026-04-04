@@ -20,7 +20,6 @@ function prompt(question) {
 }
 
 async function authenticate() {
-  // Step 1: Generate the auth URL (equivalent to session.generate_authcode())
   const authUrl = fyers.generateAuthCode({
     client_id,
     redirect_uri,
@@ -31,10 +30,8 @@ async function authenticate() {
   console.log("Auth URL:", authUrl);
   console.log("Open the above URL in your browser and copy the auth_code from the redirect.");
 
-  // Step 2: Get auth code from user
   const auth_code = await prompt("Enter Auth Code: ");
 
-  // Step 3: Exchange auth code for tokens (equivalent to session.set_token() + session.generate_token())
   const response = await fyers.generate_access_token({
     client_id,
     secret_key,
@@ -46,23 +43,30 @@ async function authenticate() {
     throw new Error(`Failed to get access token: ${JSON.stringify(response)}`);
   }
 
-  const { refresh_token } = response;
+  const { access_token, refresh_token } = response;
 
-  fs.writeFileSync("fyers_refresh_token.txt", refresh_token);
+  // Save access_token for today's session
+  fs.writeFileSync("fyers_access_token.txt", access_token);
 
-  console.log("Refresh Tokens saved to files.");
+  // Save refresh_token only if provided (may be empty due to SEBI rules)
+  if (refresh_token) {
+    fs.writeFileSync("fyers_refresh_token.txt", refresh_token);
+  }
 
- 
-
-  return
+  console.log("✅ Tokens saved to files.");
+  return;
 }
 
 function getStoredTokens() {
   const refreshTokenPath = "fyers_refresh_token.txt";
+  const accessTokenPath = "fyers_access_token.txt";
 
   return {
     refresh_token: fs.existsSync(refreshTokenPath)
       ? fs.readFileSync(refreshTokenPath, "utf8").trim()
+      : null,
+    access_token: fs.existsSync(accessTokenPath)
+      ? fs.readFileSync(accessTokenPath, "utf8").trim()
       : null,
   };
 }
