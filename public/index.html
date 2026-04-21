@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Trading Analytics</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #21262d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --green: #3fb950;
+      --red: #f85149;
+      --blue: #58a6ff;
+      --yellow: #e3b341;
+      --purple: #bc8cff;
+      --card: #1c2128;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 13px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    header h1 {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    header h1 span {
+      color: var(--blue);
+    }
+
+    .hdr-r {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      background: var(--border);
+      border-radius: 4px;
+      padding: 3px 9px;
+      font-size: 11px;
+    }
+
+    .badge.ok {
+      background: rgba(63, 185, 80, .15);
+      color: var(--green);
+    }
+
+    .btn {
+      background: rgba(88, 166, 255, .1);
+      color: var(--blue);
+      border: 1px solid rgba(88, 166, 255, .3);
+      border-radius: 5px;
+      padding: 5px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      background: rgba(88, 166, 255, .2);
+    }
+
+    .filter-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 9px 22px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .filter-bar label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .filter-bar input[type=date],
+    .filter-bar select {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 9px;
+      font-size: 12px;
+    }
+
+    .filter-bar input[type=date]::-webkit-calendar-picker-indicator {
+      filter: invert(.6);
+    }
+
+    .fsep {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+    }
+
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      padding: 0 22px;
+      overflow-x: auto;
+    }
+
+    .tab {
+      padding: 10px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .tab.active {
+      color: var(--blue);
+      border-bottom-color: var(--blue);
+    }
+
+    .tab:hover:not(.active) {
+      color: var(--text);
+    }
+
+    .page {
+      display: none;
+      padding: 18px 22px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    .sg {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      gap: 9px;
+      margin-bottom: 18px;
+    }
+
+    .sc {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 13px;
+    }
+
+    .sc .l {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      margin-bottom: 4px;
+    }
+
+    .sc .v {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .sc .s {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    .vg {
+      color: var(--green);
+    }
+
+    .vr {
+      color: var(--red);
+    }
+
+    .vb {
+      color: var(--blue);
+    }
+
+    .vy {
+      color: var(--yellow);
+    }
+
+    .vp {
+      color: var(--purple);
+    }
+
+    .g2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .gf {
+      margin-bottom: 12px;
+    }
+
+    .cc {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 16px;
+    }
+
+    .cc h3 {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .cc .note {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 7px;
+      line-height: 1.5;
+    }
+
+    .tw {
+      overflow-x: auto;
+    }
+
+    .ts {
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    table.t {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    table.t th {
+      background: var(--border);
+      padding: 7px 10px;
+      text-align: left;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--muted);
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    table.t td {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    table.t tr:hover td {
+      background: rgba(255, 255, 255, .02);
+    }
+
+    .dg td {
+      background: rgba(88, 166, 255, .06) !important;
+      color: var(--blue);
+      font-weight: 700;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      padding: 5px 10px;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 3px;
+      padding: 1px 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .t-w {
+      background: rgba(63, 185, 80, .15);
+      color: var(--green);
+    }
+
+    .t-l {
+      background: rgba(248, 81, 73, .15);
+      color: var(--red);
+    }
+
+    .t-o {
+      background: rgba(88, 166, 255, .15);
+      color: var(--blue);
+    }
+
+    .t-b {
+      background: rgba(63, 185, 80, .1);
+      color: var(--green);
+    }
+
+    .t-s {
+      background: rgba(248, 81, 73, .1);
+      color: var(--red);
+    }
+
+    .t-y {
+      background: rgba(63, 185, 80, .1);
+      color: var(--green);
+    }
+
+    .t-n {
+      background: rgba(248, 81, 73, .1);
+      color: var(--red);
+    }
+
+    .t-u {
+      background: var(--border);
+      color: var(--muted);
+    }
+
+    .t-tg {
+      background: rgba(63, 185, 80, .15);
+      color: var(--green);
+    }
+
+    .t-sl {
+      background: rgba(248, 81, 73, .15);
+      color: var(--red);
+    }
+
+    .hmt {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .hmt th {
+      background: var(--border);
+      padding: 7px 11px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .hmt th:first-child {
+      text-align: left;
+    }
+
+    .hmt td {
+      padding: 7px 11px;
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .hc {
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      display: inline-block;
+      min-width: 85px;
+    }
+
+    .hg {
+      background: rgba(63, 185, 80, .15);
+      color: var(--green);
+    }
+
+    .hr {
+      background: rgba(248, 81, 73, .15);
+      color: var(--red);
+    }
+
+    .hn {
+      background: var(--border);
+      color: var(--muted);
+    }
+
+    .ibox {
+      background: rgba(88, 166, 255, .05);
+      border: 1px solid rgba(88, 166, 255, .15);
+      border-radius: 7px;
+      padding: 12px 16px;
+      margin-bottom: 12px;
+    }
+
+    .ibox h4 {
+      font-size: 11px;
+      color: var(--blue);
+      margin-bottom: 7px;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+
+    .ibox ul {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .ibox li {
+      font-size: 12px;
+      color: var(--text);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 10px;
+    }
+
+    #loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 55vh;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .spin {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: sp .8s linear infinite;
+    }
+
+    @keyframes sp {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .pm-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+
+    .pm-box h3 {
+      font-size: 11px;
+      color: var(--yellow);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 10px;
+    }
+
+    .pm-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+
+    .pm-item {
+      background: rgba(255, 255, 255, .03);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .pm-item .pm-t {
+      font-size: 11px;
+      color: var(--blue);
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .pm-item .pm-d {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .pm-item .pm-stat {
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+
+    .no-data {
+      color: var(--muted);
+      font-size: 11px;
+      padding: 10px 0;
+      font-style: italic;
+    }
+
+    @media(max-width:900px) {
+      .g2 {
+        grid-template-columns: 1fr;
+      }
+
+      .page {
+        padding: 12px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>&#9889; <span>Trading Analytics</span></h1>
+    <div class="hdr-r">
+      <span id="rt" class="badge">Loading...</span>
+      <span id="sb" class="badge">&#8212;</span>
+      <button class="btn" onclick="applyFilters()">&#8635; Apply Filter</button>
+      <button class="btn" onclick="resetFilters()">&#10005; Reset</button>
+      <button class="btn" onclick="refreshData()">&#8634; Refresh</button>
+    </div>
+  </header>
+  <div class="filter-bar">
+    <label>From</label><input type="date" id="fFrom" />
+    <label>To</label><input type="date" id="fTo" />
+    <div class="fsep"></div>
+    <label>Alignment</label>
+    <select id="fAlign">
+      <option value="">All</option>
+      <option value="YES">Aligned</option>
+      <option value="NO">Counter</option>
+    </select>
+    <div class="fsep"></div>
+    <label>Direction</label>
+    <select id="fDir">
+      <option value="">All</option>
+      <option value="BUY">BUY / BULL</option>
+      <option value="SELL">SELL / BEAR</option>
+    </select>
+  </div>
+  <div class="tabs">
+    <div class="tab active" onclick="showTab('neo')">Live Trades</div>
+    <div class="tab" onclick="showTab('bt')">Backtest</div>
+    <div class="tab" onclick="showTab('pm')">Strategy</div>
+    <div class="tab" onclick="showTab('sig')">Signal Intel</div>
+    <div class="tab" onclick="showTab('sym')">Symbols</div>
+    <div class="tab" onclick="showTab('cmp')">Live vs Backtest</div>
+  </div>
+  <div id="loading">
+    <div class="spin"></div><span style="color:var(--muted)">Analysing...</span>
+  </div>
+
+  <!-- LIVE TRADES -->
+  <div class="page" id="page-neo">
+    <div class="sg" id="neo-sg"></div>
+    <div class="ibox" id="neo-ib"></div>
+    <div class="cc gf">
+      <h3>PnL per 15-Min Slot - Live Trades (9:15-15:30)</h3><canvas id="neo-pnl" height="110"></canvas>
+    </div>
+    <div class="g2">
+      <div class="cc gf">
+        <h3>Nifty Alignment - Aligned vs Counter</h3><canvas id="neo-ap" height="180"></canvas>
+        <div id="neo-ap-nd" class="no-data" style="display:none">Nifty alignment data not available</div>
+      </div>
+      <div class="cc gf">
+        <h3>Aligned vs Counter Win Rate</h3><canvas id="neo-aw" height="180"></canvas>
+      </div>
+    </div>
+    <div class="cc gf">
+      <h3>Win Rate by 15-Min Candle - Live</h3><canvas id="neo-wr" height="110"></canvas>
+    </div>
+    <div class="cc gf">
+      <h3>15-Min Candle x Nifty Alignment Heatmap</h3>
+      <div id="neo-hm"></div>
+      <div class="note">GREEN = &gt;=50% WR | RED = &lt;50% | Aligned = trade direction matches Nifty trend</div>
+    </div>
+    <div class="cc">
+      <h3>Trade Log - Live <span id="neo-tc"
+          style="color:var(--muted);font-size:10px;font-weight:400;text-transform:none"></span></h3>
+      <div class="ts tw" id="neo-tbl"></div>
+    </div>
+  </div>
+
+  <!-- BACKTEST -->
+  <div class="page" id="page-bt">
+    <div class="sg" id="bt-sg"></div>
+    <div class="ibox" id="bt-ib"></div>
+    <div class="cc gf">
+      <h3>PnL per 15-Min Slot - Backtest (9:15-15:30)</h3><canvas id="bt-pnl" height="110"></canvas>
+    </div>
+    <div class="g2">
+      <div class="cc gf">
+        <h3>Nifty Alignment - Aligned vs Counter</h3><canvas id="bt-ap" height="180"></canvas>
+        <div id="bt-ap-nd" class="no-data" style="display:none">Nifty alignment data not available</div>
+      </div>
+      <div class="cc gf">
+        <h3>Aligned vs Counter Win Rate</h3><canvas id="bt-aw" height="180"></canvas>
+      </div>
+    </div>
+    <div class="g2">
+      <div class="cc gf">
+        <h3>Win Rate by 15-Min - BULLISH</h3><canvas id="bt-wr-bull" height="180"></canvas>
+      </div>
+      <div class="cc gf">
+        <h3>Win Rate by 15-Min - BEARISH</h3><canvas id="bt-wr-bear" height="180"></canvas>
+      </div>
+    </div>
+    <div class="cc gf">
+      <h3>15-Min Candle x Alignment Heatmap</h3>
+      <div id="bt-hm"></div>
+    </div>
+    <div class="cc">
+      <h3>Backtest Trades <span id="bt-tc"
+          style="color:var(--muted);font-size:10px;font-weight:400;text-transform:none"></span></h3>
+      <div class="ts tw" id="bt-tbl"></div>
+    </div>
+  </div>
+
+  <!-- STRATEGY -->
+  <div class="page" id="page-pm">
+    <div class="cc gf">
+      <h3>Strategy Breakdown - Backtest Data</h3>
+      <div class="ts tw" id="strategy-breakdown">
+        <p class="no-data">Loading...</p>
+      </div>
+    </div>
+    <div class="pm-box">
+      <h3>Strategy Rule Analysis (Backtest)</h3>
+      <div class="pm-grid" id="pm-grid"></div>
+    </div>
+    <div class="g2">
+      <div class="cc">
+        <h3>After 14:00 - BULLISH Avg Move % + Win Rate</h3><canvas id="pm-bm" height="220"></canvas>
+        <div id="pm-bm-nd" class="no-data" style="display:none">No BULLISH trades after 14:00</div>
+      </div>
+      <div class="cc">
+        <h3>After 14:00 - BEARISH Avg Move % + Win Rate</h3><canvas id="pm-sm" height="220"></canvas>
+        <div id="pm-sm-nd" class="no-data" style="display:none">No BEARISH trades after 14:00</div>
+      </div>
+    </div>
+    <div class="g2">
+      <div class="cc">
+        <h3>% Move Distribution - Winning Trades (Backtest)</h3><canvas id="pm-dist" height="220"></canvas>
+        <div id="pm-dist-nd" class="no-data" style="display:none">No data</div>
+      </div>
+      <div class="cc">
+        <h3>Win Rate - Afternoon &gt;=14:00 (Backtest)</h3><canvas id="pm-aft" height="220"></canvas>
+        <div id="pm-aft-nd" class="no-data" style="display:none">No afternoon trades</div>
+      </div>
+    </div>
+    <!-- CHANGE 2: Detail table showing which stock gave how much % move -->
+    <div class="cc gf">
+      <h3>% Move Detail - Which Stock Gave How Much (Winning Trades) <span id="move-detail-lbl"
+          style="color:var(--muted);font-size:10px;font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+      <div class="ts tw" id="move-detail-tbl"></div>
+    </div>
+    <!-- CHANGE 1: Afternoon table shows ALL signals including OPEN and 15:15 no-entry -->
+    <div class="cc gf">
+      <h3>Afternoon Trades Table &gt;=14:00 (Backtest) - All Signals</h3>
+      <div class="ts tw" id="pm-tbl"></div>
+    </div>
+  </div>
+
+  <!-- SIGNAL INTEL -->
+  <div class="page" id="page-sig">
+    <div class="ibox" id="sig-sum"></div>
+    <div class="g2">
+      <div class="cc">
+        <h3>Daily PnL - Live Trades</h3><canvas id="sig-d" height="200"></canvas>
+      </div>
+      <div class="cc">
+        <h3>Cumulative PnL - Live Trades</h3><canvas id="sig-c" height="200"></canvas>
+      </div>
+    </div>
+    <div class="cc gf">
+      <h3>Signal Decision Log</h3>
+      <div class="note" style="margin-bottom:10px">Backtest signals on days you were active live. YES = live trade
+        placed.</div>
+      <div class="ts tw" id="sig-dl"></div>
+    </div>
+  </div>
+
+  <!-- SYMBOLS -->
+  <div class="page" id="page-sym">
+    <div class="g2">
+      <div class="cc">
+        <h3>Top Winning - Backtest (pts)</h3><canvas id="sym-bt-t" height="320"></canvas>
+      </div>
+      <div class="cc">
+        <h3>Worst Losing - Backtest (pts)</h3><canvas id="sym-bt-b" height="320"></canvas>
+      </div>
+    </div>
+    <div class="g2">
+      <div class="cc">
+        <h3>Top Winning - Live</h3><canvas id="sym-lt" height="320"></canvas>
+      </div>
+      <div class="cc">
+        <h3>Worst Losing - Live</h3><canvas id="sym-lb" height="320"></canvas>
+      </div>
+    </div>
+    <div class="cc gf">
+      <h3>All Symbols - Backtest (min 2 trades) by Win Rate</h3>
+      <div class="ts tw" id="sym-all"></div>
+    </div>
+  </div>
+
+  <!-- COMPARISON -->
+  <div class="page" id="page-cmp">
+    <div class="g2">
+      <div class="cc">
+        <h3>Win Rate by 15-Min - Live vs Backtest</h3><canvas id="cmp-wr" height="260"></canvas>
+      </div>
+      <div class="cc">
+        <h3>PnL by 15-Min - Live vs Backtest</h3><canvas id="cmp-pnl" height="260"></canvas>
+      </div>
+    </div>
+    <div class="cc gf">
+      <h3>Alignment Win Rate - Live vs Backtest</h3><canvas id="cmp-al" height="140"></canvas>
+    </div>
+    <div class="cc">
+      <h3>Summary Table</h3>
+      <div id="cmp-sum"></div>
+    </div>
+  </div>
+
+  <script>
+    let RAW = null, NEO = [], BT = [], charts = {};
+    const fmt = n => typeof n === 'number' ? n.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : (n || '--');
+    const pc = n => n >= 0 ? '#3fb950' : '#f85149';
+    const kc = id => { if (charts[id]) { charts[id].destroy(); delete charts[id]; } };
+    const mc = (id, cfg) => { kc(id); const c = document.getElementById(id); if (!c) return; charts[id] = new Chart(c, cfg); };
+
+    // All 15-min slots 09:15 to 15:30
+    const FULL_SLOTS = [];
+    for (let h = 9; h <= 15; h++) { for (let m = 0; m < 60; m += 15) { if (h === 9 && m < 15) continue; if (h === 15 && m > 30) break; FULL_SLOTS.push(String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0')); } }
+
+    function deriveSlot(dtStr) {
+      if (!dtStr) return null;
+      const m = String(dtStr).match(/(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      let h = parseInt(m[1], 10), mm = Math.floor(parseInt(m[2], 10) / 15) * 15;
+      if (h < 9 || (h === 9 && mm < 15)) return '09:15';
+      if (h > 15 || (h === 15 && mm > 30)) return null;
+      return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+    }
+
+    function enrichTrade(t, isBacktest) {
+      const timeRef = isBacktest ? (t.signal_time || t.hit_time || null) : (t.entry_time || null);
+      t._slot = deriveSlot(timeRef);
+      t._isBull = /^(BUY|BULLISH)$/i.test(t.direction || '');
+      t._isBear = /^(SELL|BEARISH)$/i.test(t.direction || '');
+      t._align = t.nifty_alignment || 'UNKNOWN';
+      t._pnl = isBacktest ? (t.pnl_pts || 0) : (t.net_pnl || 0);
+      return t;
+    }
+    function enrichAll(arr, isBacktest) { return arr.map(t => enrichTrade(t, isBacktest)); }
+
+    function showTab(n) {
+      const tabs = ['neo', 'bt', 'pm', 'sig', 'sym', 'cmp'];
+      document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', tabs[i] === n));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-' + n).classList.add('active');
+    }
+    function getF() { return { from: document.getElementById('fFrom').value, to: document.getElementById('fTo').value, align: document.getElementById('fAlign').value, dir: document.getElementById('fDir').value }; }
+    function filterT(trades, f) {
+      return trades.filter(t => {
+        const d = (t.trade_date || '').slice(0, 10);
+        if (f.from && d < f.from) return false;
+        if (f.to && d > f.to) return false;
+        if (f.align && t._align !== f.align) return false;
+        if (f.dir === 'BUY' && !t._isBull) return false;
+        if (f.dir === 'SELL' && !t._isBear) return false;
+        return true;
+      });
+    }
+    function applyFilters() { if (!RAW) return; const f = getF(); NEO = filterT(enrichAll([...RAW.neostox.trades], false), f); BT = filterT(enrichAll([...RAW.backtest.trades], true), f); renderAll(); }
+    function resetFilters() { ['fFrom', 'fTo'].forEach(id => document.getElementById(id).value = '');['fAlign', 'fDir'].forEach(id => document.getElementById(id).value = ''); if (RAW) { NEO = enrichAll([...RAW.neostox.trades], false); BT = enrichAll([...RAW.backtest.trades], true); renderAll(); } }
+
+    function bS(trades) {
+      const done = trades.filter(t => !t.is_open); const wins = done.filter(t => t.is_win); const pnls = done.map(t => t._pnl); const total = pnls.reduce((s, v) => s + v, 0);
+      let mW = 0, mL = 0, cw = 0, cl = 0; for (const t of done) { if (t.is_win) { cw++; cl = 0; mW = Math.max(mW, cw); } else { cl++; cw = 0; mL = Math.max(mL, cl); } }
+      return { total: done.length, wins: wins.length, losses: done.length - wins.length, wr: done.length ? (wins.length / done.length * 100).toFixed(1) : '0.0', pnl: +total.toFixed(2), avg: done.length ? +(total / done.length).toFixed(2) : 0, best: pnls.length ? Math.max(...pnls) : 0, worst: pnls.length ? Math.min(...pnls) : 0, mW, mL, open: trades.filter(t => t.is_open).length };
+    }
+    const xR = { grid: { color: '#21262d' }, ticks: { color: '#8b949e', maxRotation: 60, minRotation: 60, font: { size: 10 } } };
+    const yR = { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } };
+
+    function rSg(id, s) {
+      document.getElementById(id).innerHTML = `
+    <div class="sc"><div class="l">Trades</div><div class="v vb">${s.total}</div><div class="s">${s.wins}W / ${s.losses}L</div></div>
+    <div class="sc"><div class="l">Win Rate</div><div class="v ${+s.wr >= 50 ? 'vg' : 'vr'}">${s.wr}%</div></div>
+    <div class="sc"><div class="l">Total PnL</div><div class="v ${s.pnl >= 0 ? 'vg' : 'vr'}">${fmt(s.pnl)}</div></div>
+    <div class="sc"><div class="l">Avg PnL</div><div class="v ${s.avg >= 0 ? 'vg' : 'vr'}">${fmt(s.avg)}</div></div>
+    <div class="sc"><div class="l">Best</div><div class="v vg">${fmt(s.best)}</div></div>
+    <div class="sc"><div class="l">Worst</div><div class="v vr">${fmt(s.worst)}</div></div>
+    <div class="sc"><div class="l">Win Streak</div><div class="v vy">${s.mW}</div></div>
+    <div class="sc"><div class="l">Loss Streak</div><div class="v vp">${s.mL}</div></div>
+    ${s.open > 0 ? `<div class="sc"><div class="l">Open</div><div class="v vb">${s.open}</div></div>` : ''}`;
+    }
+
+    function rIb(id, trades, s) {
+      const el = document.getElementById(id); const done = trades.filter(t => !t.is_open && t._slot);
+      if (!done.length) { el.style.display = 'none'; return; } el.style.display = 'block';
+      const slotMap = {}; for (const t of done) { if (!slotMap[t._slot]) slotMap[t._slot] = { wins: 0, tot: 0, pnl: 0 }; slotMap[t._slot].tot++; if (t.is_win) slotMap[t._slot].wins++; slotMap[t._slot].pnl += t._pnl; }
+      const arr = Object.entries(slotMap).sort((a, b) => a[0].localeCompare(b[0]));
+      const best = arr.reduce((b, [sl, v]) => (!b || v.wins / v.tot > b.r) ? { sl, r: v.wins / v.tot, pnl: v.pnl } : b, null);
+      const worst = arr.reduce((b, [sl, v]) => (!b || v.wins / v.tot < b.r) ? { sl, r: v.wins / v.tot } : b, null);
+      const ya = done.filter(t => t._align === 'YES'), no = done.filter(t => t._align === 'NO');
+      const yaWr = ya.length ? (ya.filter(t => t.is_win).length / ya.length * 100).toFixed(1) : null;
+      const noWr = no.length ? (no.filter(t => t.is_win).length / no.length * 100).toFixed(1) : null;
+      el.innerHTML = `<h4>Key Insights</h4><ul>
+    ${best ? `<li>Best slot: <strong>${best.sl}</strong> (${(best.r * 100).toFixed(1)}% WR | PnL ${fmt(best.pnl)})</li>` : ''}
+    ${worst && worst.sl !== best?.sl ? `<li>Weakest slot: <strong>${worst.sl}</strong> (${(worst.r * 100).toFixed(1)}% WR)</li>` : ''}
+    ${yaWr !== null ? `<li>Aligned: <strong>${yaWr}%</strong> WR (${ya.length} trades)</li>` : ''}
+    ${noWr !== null ? `<li>Counter: <strong>${noWr}%</strong> WR (${no.length} trades)</li>` : ''}
+    <li>Overall: <strong>${s.wr}%</strong> WR | Net <strong>${fmt(s.pnl)}</strong></li>
+  </ul>`;
+    }
+
+    function rCandlePnl(id, trades) {
+      const done = trades.filter(t => !t.is_open);
+      const d = FULL_SLOTS.map(s => +done.filter(t => t._slot === s).reduce((a, t) => a + t._pnl, 0).toFixed(2));
+      mc(id, { type: 'bar', data: { labels: FULL_SLOTS, datasets: [{ data: d, backgroundColor: d.map(v => v > 0 ? 'rgba(63,185,80,.75)' : v < 0 ? 'rgba(248,81,73,.7)' : 'rgba(139,148,158,.15)'), borderRadius: 3 }] }, options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` PnL: ${fmt(c.raw)}` } } }, scales: { x: { ...xR, ticks: { ...xR.ticks, maxRotation: 45, minRotation: 45 } }, y: { ...yR, ticks: { ...yR.ticks, callback: v => fmt(v) } } } } });
+    }
+
+    function rCandleWr(id, trades, dir) {
+      let filtered = dir === 'BUY' ? trades.filter(t => t._isBull) : dir === 'SELL' ? trades.filter(t => t._isBear) : trades;
+      const done = filtered.filter(t => !t.is_open);
+      const vals = FULL_SLOTS.map(s => { const sub = done.filter(t => t._slot === s); return sub.length ? +(sub.filter(t => t.is_win).length / sub.length * 100).toFixed(1) : 0; });
+      mc(id, { type: 'bar', data: { labels: FULL_SLOTS, datasets: [{ data: vals, backgroundColor: vals.map(v => v > 0 ? (v >= 50 ? 'rgba(63,185,80,.75)' : 'rgba(248,81,73,.65)') : 'rgba(139,148,158,.15)'), borderRadius: 3 }] }, options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw}% WR` } } }, scales: { x: { ...xR, ticks: { ...xR.ticks, maxRotation: 45, minRotation: 45 } }, y: { ...yR, ticks: { ...yR.ticks, callback: v => v + '%' }, min: 0, max: 100 } } } });
+    }
+
+    function rAlignPie(id, trades, ndId) {
+      const done = trades.filter(t => !t.is_open && t._align !== 'UNKNOWN');
+      const y = done.filter(t => t._align === 'YES').length, n = done.filter(t => t._align === 'NO').length;
+      if (!y && !n) { const c = document.getElementById(id); if (c) c.style.display = 'none'; const nd = document.getElementById(ndId); if (nd) nd.style.display = 'block'; return; }
+      const c = document.getElementById(id); if (c) c.style.display = ''; const nd = document.getElementById(ndId); if (nd) nd.style.display = 'none';
+      mc(id, { type: 'doughnut', data: { labels: ['Aligned', 'Counter'], datasets: [{ data: [y, n], backgroundColor: ['#3fb950', '#f85149'], borderColor: '#1c2128', borderWidth: 2 }] }, options: { responsive: true, cutout: '62%', plugins: { legend: { position: 'bottom', labels: { color: '#e6edf3', padding: 14, font: { size: 11 } } }, tooltip: { callbacks: { label: c => ` ${c.label}: ${c.raw} trades` } } } } });
+    }
+
+    function rAlignWr(id, trades) {
+      const done = trades.filter(t => !t.is_open); const ya = done.filter(t => t._align === 'YES'), no = done.filter(t => t._align === 'NO');
+      const yWr = ya.length ? +(ya.filter(t => t.is_win).length / ya.length * 100).toFixed(1) : 0; const nWr = no.length ? +(no.filter(t => t.is_win).length / no.length * 100).toFixed(1) : 0;
+      mc(id, { type: 'bar', data: { labels: [`Aligned (${ya.length})`, `Counter (${no.length})`], datasets: [{ data: [yWr, nWr], backgroundColor: ['rgba(63,185,80,.75)', 'rgba(248,81,73,.7)'], borderRadius: 4 }] }, options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw}% WR` } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', callback: v => v + '%' }, min: 0, max: 100 } } } });
+    }
+
+    function rHm(id, trades) {
+      const blocks = [
+        { label: '09:15-10:15', slots: ['09:15', '09:30', '09:45', '10:00', '10:15'] },
+        { label: '10:30-11:45', slots: ['10:30', '10:45', '11:00', '11:15', '11:30', '11:45'] },
+        { label: '12:00-13:45', slots: ['12:00', '12:15', '12:30', '12:45', '13:00', '13:15', '13:30', '13:45'] },
+        { label: '14:00-15:30', slots: ['14:00', '14:15', '14:30', '14:45', '15:00', '15:15', '15:30'] },
+      ];
+      const done = trades.filter(t => !t.is_open && t._slot);
+      if (!done.length) { document.getElementById(id).innerHTML = '<p class="no-data">No Data Available</p>'; return; }
+      let html = `<table class="hmt"><thead><tr><th>Time Block</th><th>Aligned</th><th>Counter</th><th>Total</th></tr></thead><tbody>`;
+      let rows = 0;
+      for (const blk of blocks) {
+        const blkT = done.filter(t => blk.slots.includes(t._slot)); if (!blkT.length) continue; rows++;
+        html += `<tr><td style="text-align:left;font-weight:600;color:var(--blue)">${blk.label}</td>`;
+        for (const a of ['YES', 'NO']) {
+          const sub = blkT.filter(t => t._align === a);
+          if (!sub.length) { html += `<td><span class="hc hn">-- (0)</span></td>`; continue; }
+          const w = sub.filter(t => t.is_win).length, wr = (w / sub.length * 100).toFixed(1);
+          html += `<td><span class="hc ${parseFloat(wr) >= 50 ? 'hg' : 'hr'}" title="${w}W/${sub.length - w}L">${wr}% (${sub.length})</span></td>`;
+        }
+        html += `<td><strong>${blkT.length}</strong></td></tr>`;
+      }
+      if (!rows) { document.getElementById(id).innerHTML = '<p class="no-data">No Data Available</p>'; return; }
+      document.getElementById(id).innerHTML = html + '</tbody></table>';
+    }
+
+    /* CHANGE 3: RR = (day high after entry - entry) / risk for BULL
+                 RR = (entry - day low after entry) / risk for BEAR
+       Uses server-provided actual_rr if available (computed from Nifty candles).
+       Falls back to hit_price/target ratio when actual_rr not available. */
+    function calcRR(t, isBacktest) {
+      // Use server-computed actual_rr first (day high/low after entry)
+      if (t.actual_rr != null) return t.actual_rr;
+      if (isBacktest) {
+        const entry = t.entry_price, sl = t.stop_loss; if (!entry || !sl) return null;
+        const risk = t._isBull ? (entry - sl) : (sl - entry); if (!risk || risk <= 0) return null;
+        const exitP = t.hit_price || (t.is_win ? t.target : null); if (!exitP) return null;
+        const reward = t._isBull ? (exitP - entry) : (entry - exitP);
+        return +(reward / risk).toFixed(2);
+      } else {
+        const entry = t.entry_price, exit = t.exit_price; if (!entry || !exit || entry === 0) return null;
+        const rr = t._isBull ? ((exit - entry) / entry * 100) : ((entry - exit) / entry * 100);
+        return isNaN(rr) ? null : +rr.toFixed(2);
+      }
+    }
+
+    function rrHtml(rr, isBacktest) {
+      if (rr === null) return '<span style="color:var(--muted)">--</span>';
+      if (isBacktest) {
+        const col = rr >= 2 ? 'var(--green)' : rr >= 1 ? 'var(--yellow)' : 'var(--red)';
+        return `<span style="color:${col};font-weight:600">${rr}R</span>`;
+      } else {
+        const col = rr > 0 ? 'var(--green)' : rr < 0 ? 'var(--red)' : 'var(--muted)';
+        return `<span style="color:${col};font-weight:600">${rr.toFixed(2)}%</span>`;
+      }
+    }
+
+    function rNeoTbl(cid, trades) {
+      document.getElementById('neo-tc').textContent = `-- ${trades.length} trades`;
+      const sorted = [...trades].sort((a, b) => (a.entry_time || '').localeCompare(b.entry_time || ''));
+      let html = `<table class="t"><thead><tr><th>#</th><th>Date</th><th>Symbol</th><th>Dir</th><th>Entry</th><th>Exit</th><th>Entry Rs</th><th>Exit Rs</th><th>Net PnL</th><th>RR %</th><th>Slot</th><th>Result</th><th>Nifty</th><th>Aligned</th></tr></thead><tbody>`;
+      let lastD = '', n = 0;
+      for (const t of sorted) {
+        n++; if (t.trade_date !== lastD) { lastD = t.trade_date; html += `<tr class="dg"><td colspan="14">Date: ${t.trade_date}</td></tr>`; }
+        const pC = pc(t._pnl); const res = t.is_open ? `<span class="tag t-o">OPEN</span>` : t.is_win ? `<span class="tag t-w">WIN</span>` : `<span class="tag t-l">LOSS</span>`;
+        const dir = t._isBull ? `<span class="tag t-b">BUY</span>` : `<span class="tag t-s">SELL</span>`;
+        const nd = (!t.nifty_trend || t.nifty_trend === 'UNKNOWN') ? '--' : t.nifty_trend;
+        const al = t._align === 'YES' ? `<span class="tag t-y">YES</span>` : t._align === 'NO' ? `<span class="tag t-n">NO</span>` : `<span class="tag t-u">--</span>`;
+        html += `<tr><td style="color:var(--muted)">${n}</td><td>${t.trade_date || '--'}</td><td><strong>${t.symbol}</strong></td><td>${dir}</td><td>${(t.entry_time || '').slice(11, 16) || '--'}</td><td style="color:var(--muted)">${t.exit_time ? t.exit_time.slice(11, 16) : '--'}</td><td>${fmt(t.entry_price)}</td><td>${t.exit_price ? fmt(t.exit_price) : '--'}</td><td style="color:${pC}"><strong>${t.net_pnl !== null ? fmt(t.net_pnl) : '--'}</strong></td><td>${rrHtml(calcRR(t, false), false)}</td><td style="color:var(--blue)">${t._slot || '--'}</td><td>${res}</td><td style="color:${nd === 'UP' ? 'var(--green)' : nd === 'DOWN' ? 'var(--red)' : 'var(--muted)'}">${nd}</td><td>${al}</td></tr>`;
+      }
+      document.getElementById(cid).innerHTML = html + '</tbody></table>';
+    }
+
+    function rBtTbl(cid, trades) {
+      const valid = trades.filter(t => t.trade_date && t.entry_price);
+      document.getElementById('bt-tc').textContent = `-- ${valid.length} shown`;
+      const sorted = [...valid].sort((a, b) => (a.signal_time || '').localeCompare(b.signal_time || '')).slice(0, 300);
+      let html = `<table class="t"><thead><tr><th>#</th><th>Date</th><th>Symbol</th><th>Dir</th><th>Signal</th><th>Entry Rs</th><th>SL Rs</th><th>Target Rs</th><th>PnL Pts</th><th>PnL%</th><th>RR</th><th>Slot</th><th>Result</th><th>Aligned</th></tr></thead><tbody>`;
+      let lastD = '', n = 0;
+      for (const t of sorted) {
+        n++; if (t.trade_date !== lastD) { lastD = t.trade_date; html += `<tr class="dg"><td colspan="14">Date: ${t.trade_date}</td></tr>`; }
+        const pC = pc(t._pnl); const res = t.is_open ? `<span class="tag t-o">OPEN</span>` : t.is_win ? `<span class="tag t-tg">TARGET</span>` : `<span class="tag t-sl">SL HIT</span>`;
+        const dir = t._isBull ? `<span class="tag t-b">BULL</span>` : `<span class="tag t-s">BEAR</span>`;
+        const al = t._align === 'YES' ? `<span class="tag t-y">YES</span>` : t._align === 'NO' ? `<span class="tag t-n">NO</span>` : `<span class="tag t-u">--</span>`;
+        html += `<tr><td style="color:var(--muted)">${n}</td><td>${t.trade_date}</td><td><strong>${t.symbol}</strong></td><td>${dir}</td><td>${(t.signal_time || '').slice(11, 16) || '--'}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.stop_loss)}</td><td>${fmt(t.target)}</td><td style="color:${pC}"><strong>${fmt(t.pnl_pts)}</strong></td><td style="color:${pC}">${(t.pnl_pct || 0).toFixed(2)}%</td><td>${rrHtml(calcRR(t, true), true)}</td><td style="color:var(--blue)">${t._slot || '--'}</td><td>${res}</td><td>${al}</td></tr>`;
+      }
+      document.getElementById(cid).innerHTML = html + '</tbody></table>';
+    }
+
+    /* CHANGE 2: % Move Detail Table - shows each winning stock with exact % move */
+    function rMoveDetail(winners) {
+      const el = document.getElementById('move-detail-tbl'), lbl = document.getElementById('move-detail-lbl');
+      if (!el) return;
+      if (lbl) lbl.textContent = ` -- ${winners.length} winning trades sorted by % move`;
+      if (!winners.length) { el.innerHTML = '<p class="no-data">No winning trades found.</p>'; return; }
+      const sorted = [...winners].sort((a, b) => (b.pnl_pct || 0) - (a.pnl_pct || 0));
+      let html = `<table class="t"><thead><tr><th>Symbol</th><th>Date</th><th>Dir</th><th>Slot</th><th>Entry Rs</th><th>PnL Pts</th><th>% Move</th><th>Candles</th><th>RR</th><th>Aligned</th></tr></thead><tbody>`;
+      for (const t of sorted) {
+        const pct = t.pnl_pct || 0;
+        const pctCol = pct >= 2.5 ? 'var(--green)' : pct >= 2 ? '#58c96a' : pct >= 1.5 ? 'var(--yellow)' : pct >= 1 ? '#ffa657' : 'var(--muted)';
+        const dir = t._isBull ? `<span class="tag t-b">BULL</span>` : `<span class="tag t-s">BEAR</span>`;
+        const al = t._align === 'YES' ? `<span class="tag t-y">YES</span>` : t._align === 'NO' ? `<span class="tag t-n">NO</span>` : `<span class="tag t-u">--</span>`;
+        html += `<tr>
+      <td><strong>${t.symbol}</strong></td><td>${t.trade_date}</td><td>${dir}</td>
+      <td style="color:var(--blue)">${t._slot || '--'}</td>
+      <td>${fmt(t.entry_price)}</td>
+      <td style="color:var(--green)">${fmt(t.pnl_pts)}</td>
+      <td style="color:${pctCol};font-weight:700;font-size:13px">+${pct.toFixed(3)}%</td>
+      <td style="color:var(--muted)">${t.candles_to_hit || '--'}</td>
+      <td>${rrHtml(calcRR(t, true), true)}</td>
+      <td>${al}</td>
+    </tr>`;
+      }
+      el.innerHTML = html + '</tbody></table>';
+    }
+
+    function rPm(bt) {
+      const done = bt.filter(t => !t.is_open);
+      const xAft = { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } };
+      const aftSlots = ['14:00', '14:15', '14:30', '14:45', '15:00', '15:15'];
+
+      const byStrat = {};
+      for (const t of done) { const k = t.strategy || t.signal_type || t.setup || 'General'; if (!byStrat[k]) byStrat[k] = { trades: 0, wins: 0, pnl: 0 }; byStrat[k].trades++; if (t.is_win) byStrat[k].wins++; byStrat[k].pnl += t._pnl; }
+      const sEl = document.getElementById('strategy-breakdown'), sArr = Object.entries(byStrat).sort((a, b) => b[1].pnl - a[1].pnl);
+      sEl.innerHTML = sArr.length ? `<table class="t"><thead><tr><th>Strategy</th><th>Trades</th><th>Win Rate</th><th>Total PnL (pts)</th></tr></thead><tbody>` + sArr.map(([s, v]) => { const wr = v.trades ? (v.wins / v.trades * 100).toFixed(1) : '0.0'; return `<tr><td><strong>${s}</strong></td><td>${v.trades}</td><td style="color:${pc(v.wins / v.trades - .5)}">${wr}%</td><td style="color:${pc(v.pnl)}">${fmt(+v.pnl.toFixed(2))}</td></tr>`; }).join('') + '</tbody></table>' : '<p class="no-data">No completed backtest trades found.</p>';
+
+      const wr2 = arr => arr.length ? (arr.filter(t => t.is_win).length / arr.length * 100).toFixed(1) + '%' : '0%';
+      const avgMv = arr => { const v = arr.filter(t => t.pnl_pct != null); return v.length ? (v.reduce((s, t) => s + Math.abs(t.pnl_pct || 0), 0) / v.length).toFixed(3) + '%' : '0%'; };
+      const aft14 = done.filter(t => t._slot && t._slot >= '14:00'), aft14b = aft14.filter(t => t._isBull), aft14s = aft14.filter(t => t._isBear);
+      const rules = [
+        { t: 'After 14:00 - BULLISH', d: `Avg Move: ${avgMv(aft14b)}`, v: `${wr2(aft14b)} WR on ${aft14b.length} trades` },
+        { t: 'After 14:00 - BEARISH', d: `Avg Move: ${avgMv(aft14s)}`, v: `${wr2(aft14s)} WR on ${aft14s.length} trades` },
+        { t: 'Golden Zone 9:45-10:15', d: 'Best entry window', v: () => { const s = done.filter(t => t._slot >= '09:45' && t._slot <= '10:15'); return `${wr2(s)} WR on ${s.length} trades`; } },
+        { t: 'Aligned with Nifty', d: 'Trading WITH Nifty trend', v: () => { const s = done.filter(t => t._align === 'YES'); return `${wr2(s)} WR (${s.length} trades)`; } },
+        { t: 'Counter to Nifty', d: 'Trading AGAINST Nifty trend', v: () => { const s = done.filter(t => t._align === 'NO'); return `${wr2(s)} WR (${s.length} trades)`; } },
+        { t: 'Avg % Move - Winners', d: 'How far winners move', v: () => { const w = done.filter(t => t.is_win && t.pnl_pct != null); return w.length ? `Avg: ${avgMv(w)} (${w.length} trades)` : '0%'; } },
+        { t: 'Noon 12:00-13:00', d: 'Often below-average WR', v: () => { const s = done.filter(t => t._slot >= '12:00' && t._slot < '13:00'); return `${wr2(s)} WR on ${s.length} trades`; } },
+        { t: 'BEARISH at 14:15', d: 'Afternoon BEAR signal', v: () => { const s = done.filter(t => t._isBear && t._slot === '14:15'); return `${wr2(s)} WR on ${s.length} trades`; } },
+      ];
+      document.getElementById('pm-grid').innerHTML = rules.map(r => { const val = typeof r.v === 'function' ? r.v() : r.v; return `<div class="pm-item"><div class="pm-t">${r.t}</div><div class="pm-d">${r.d}</div><div class="pm-stat">${val}</div></div>`; }).join('');
+
+      const avgPct = (arr, s) => { const x = arr.filter(t => t._slot === s && t.pnl_pct != null); return x.length ? +(x.reduce((a, t) => a + t.pnl_pct, 0) / x.length).toFixed(3) : 0; };
+      const slotWr = (arr, s) => { const x = arr.filter(t => t._slot === s); return x.length ? +(x.filter(t => t.is_win).length / x.length * 100).toFixed(1) : 0; };
+      function showOrHide(cid, ndId, hasData, buildFn) { const c = document.getElementById(cid), nd = document.getElementById(ndId); if (hasData) { if (c) c.style.display = ''; if (nd) nd.style.display = 'none'; buildFn(); } else { if (c) c.style.display = 'none'; if (nd) nd.style.display = 'block'; } }
+
+      showOrHide('pm-bm', 'pm-bm-nd', aft14b.length > 0, () => mc('pm-bm', { type: 'bar', data: { labels: aftSlots, datasets: [{ label: 'Avg PnL%', data: aftSlots.map(s => avgPct(done.filter(t => t._isBull), s)), backgroundColor: aftSlots.map(s => { const v = avgPct(done.filter(t => t._isBull), s); return v >= 0 ? 'rgba(63,185,80,.7)' : 'rgba(248,81,73,.65)'; }), borderRadius: 3, yAxisID: 'y' }, { label: 'WR%', data: aftSlots.map(s => slotWr(done.filter(t => t._isBull), s)), type: 'line', borderColor: '#ffa657', borderWidth: 2, pointRadius: 4, fill: false, yAxisID: 'y2' }] }, options: { responsive: true, plugins: { legend: { labels: { color: '#8b949e' } } }, scales: { x: xAft, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', callback: v => v + '%' }, position: 'left' }, y2: { ticks: { color: '#ffa657', callback: v => v + '%' }, position: 'right', grid: { drawOnChartArea: false }, min: 0, max: 100 } } } }));
+      showOrHide('pm-sm', 'pm-sm-nd', aft14s.length > 0, () => mc('pm-sm', { type: 'bar', data: { labels: aftSlots, datasets: [{ label: 'Avg PnL%', data: aftSlots.map(s => avgPct(done.filter(t => t._isBear), s)), backgroundColor: aftSlots.map(s => { const v = avgPct(done.filter(t => t._isBear), s); return v >= 0 ? 'rgba(63,185,80,.7)' : 'rgba(248,81,73,.65)'; }), borderRadius: 3, yAxisID: 'y' }, { label: 'WR%', data: aftSlots.map(s => slotWr(done.filter(t => t._isBear), s)), type: 'line', borderColor: '#ffa657', borderWidth: 2, pointRadius: 4, fill: false, yAxisID: 'y2' }] }, options: { responsive: true, plugins: { legend: { labels: { color: '#8b949e' } } }, scales: { x: xAft, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', callback: v => v + '%' }, position: 'left' }, y2: { ticks: { color: '#ffa657', callback: v => v + '%' }, position: 'right', grid: { drawOnChartArea: false }, min: 0, max: 100 } } } }));
+
+      // CHANGE 2: % move distribution chart + detail table
+      const winners = done.filter(t => t.is_win && t.pnl_pct != null);
+      const wp = winners.map(t => Math.abs(t.pnl_pct));
+      showOrHide('pm-dist', 'pm-dist-nd', wp.length > 0, () => {
+        const bkts = { '0-0.5%': 0, '0.5-1%': 0, '1-1.5%': 0, '1.5-2%': 0, '2-2.5%': 0, '2.5%+': 0 };
+        for (const p of wp) { if (p < .5) bkts['0-0.5%']++; else if (p < 1) bkts['0.5-1%']++; else if (p < 1.5) bkts['1-1.5%']++; else if (p < 2) bkts['1.5-2%']++; else if (p < 2.5) bkts['2-2.5%']++; else bkts['2.5%+']++; }
+        mc('pm-dist', { type: 'bar', data: { labels: Object.keys(bkts), datasets: [{ data: Object.values(bkts), backgroundColor: ['rgba(248,81,73,.6)', 'rgba(255,166,87,.6)', 'rgba(88,166,255,.7)', 'rgba(63,185,80,.7)', 'rgba(63,185,80,.85)', 'rgba(63,185,80,1)'], borderRadius: 4 }] }, options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.raw} trades` } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: yR } } });
+      });
+      rMoveDetail(winners);
+
+      showOrHide('pm-aft', 'pm-aft-nd', aft14.length > 0, () => {
+        const aftWr = aftSlots.map(s => { const sub = done.filter(t => t._slot === s); return sub.length ? +(sub.filter(t => t.is_win).length / sub.length * 100).toFixed(1) : 0; });
+        mc('pm-aft', { type: 'bar', data: { labels: aftSlots, datasets: [{ data: aftWr, backgroundColor: aftWr.map(v => v >= 50 ? 'rgba(63,185,80,.75)' : 'rgba(248,81,73,.65)'), borderRadius: 3 }] }, options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: xAft, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', callback: v => v + '%' }, min: 0, max: 100 } } } });
+      });
+
+      // CHANGE 1: Show ALL afternoon signals including OPEN and 15:15 no-entry
+      const aft14All = bt.filter(t => t._slot && t._slot >= '14:00').sort((a, b) => (a.signal_time || '').localeCompare(b.signal_time || ''));
+      if (!aft14All.length) {
+        document.getElementById('pm-tbl').innerHTML = '<p class="no-data">No backtest trades after 14:00 found.</p>';
+      } else {
+        let html = `<table class="t"><thead><tr><th>Date</th><th>Symbol</th><th>Dir</th><th>Slot</th><th>Entry Rs</th><th>PnL Pts</th><th>PnL%</th><th>RR</th><th>Result</th><th>Aligned</th><th>Note</th></tr></thead><tbody>`;
+        for (const t of aft14All) {
+          const pC = pc(t._pnl); const dir = t._isBull ? `<span class="tag t-b">BULL</span>` : `<span class="tag t-s">BEAR</span>`;
+          const al = t._align === 'YES' ? `<span class="tag t-y">YES</span>` : t._align === 'NO' ? `<span class="tag t-n">NO</span>` : `<span class="tag t-u">--</span>`;
+          let res, note = '', rowStyle = '';
+          // CHANGE 1: 15:15 signal - entry cannot be done in intraday
+          if (t.is_last_candle) {
+            res = t.is_win ? `<span class="tag t-tg">TARGET</span>` : `<span class="tag t-sl">SL HIT</span>`;
+            note = `<span style="color:var(--red);font-size:10px;font-weight:600">Entry cannot be done - last candle (intraday)</span>`;
+            rowStyle = 'opacity:0.5;';
+          } else if (t.is_open) {
+            res = `<span class="tag t-o">OPEN</span>`;
+            note = `<span style="color:var(--muted);font-size:10px">Market closed before SL/Target hit</span>`;
+            rowStyle = 'opacity:0.7;';
+          } else if (t.is_win) {
+            res = `<span class="tag t-tg">TARGET</span>`;
+          } else {
+            res = `<span class="tag t-sl">SL HIT</span>`;
+          }
+          const pnlDisp = (t.is_open || t.is_last_candle) ? '--' : fmt(t.pnl_pts);
+          const pctDisp = (t.is_open || t.is_last_candle) ? '--' : `${(t.pnl_pct || 0).toFixed(2)}%`;
+          html += `<tr style="${rowStyle}"><td>${t.trade_date}</td><td><strong>${t.symbol}</strong></td><td>${dir}</td><td style="color:var(--blue)">${t._slot || '--'}</td><td>${fmt(t.entry_price)}</td><td style="color:${pC}"><strong>${pnlDisp}</strong></td><td style="color:${pC}">${pctDisp}</td><td>${rrHtml(calcRR(t, true), true)}</td><td>${res}</td><td>${al}</td><td>${note}</td></tr>`;
+        }
+        document.getElementById('pm-tbl').innerHTML = html + '</tbody></table>';
+      }
+    }
+
+    function rSig(neo, bt) {
+      const nd = new Set(neo.map(t => t.trade_date)); const nS = bS(neo), bSt = bS(bt);
+      const btD = [...new Set(bt.map(t => t.trade_date).filter(Boolean))].sort();
+      document.getElementById('sig-sum').innerHTML = `<h4>Signal Intelligence</h4><ul>
+    <li>Live days: <strong>${nd.size}</strong></li>
+    <li>Backtest range: <strong>${btD[0] || '--'} to ${btD.slice(-1)[0] || '--'}</strong></li>
+    <li>Backtest signals: <strong>${bt.length}</strong></li>
+    <li>Live WR: <strong>${nS.wr}%</strong> | Backtest WR: <strong>${bSt.wr}%</strong></li>
+  </ul>`;
+      const dm = {}; for (const t of neo.filter(t => !t.is_open)) { const d = t.trade_date; if (!dm[d]) dm[d] = 0; dm[d] += t._pnl; }
+      const dates = Object.keys(dm).sort(), dpnl = dates.map(d => +dm[d].toFixed(2));
+      if (dates.length) {
+        let cum = 0; const cpnl = dates.map(d => { cum += dm[d]; return +cum.toFixed(2); });
+        mc('sig-d', { type: 'bar', data: { labels: dates, datasets: [{ data: dpnl, backgroundColor: dpnl.map(v => v >= 0 ? 'rgba(63,185,80,.7)' : 'rgba(248,81,73,.7)'), borderRadius: 4 }] }, options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` Rs ${fmt(c.raw)}` } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', callback: v => 'Rs ' + fmt(v) } } } } });
+        mc('sig-c', { type: 'line', data: { labels: dates, datasets: [{ data: cpnl, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,.1)', borderWidth: 2, fill: true, tension: .3, pointRadius: 4 }] }, options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` Rs ${fmt(c.raw)}` } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', callback: v => 'Rs ' + fmt(v) } } } } });
+      }
+      const nm = {}; for (const t of neo) nm[`${t.trade_date}_${t.symbol}`] = t;
+      const overlap = bt.filter(t => nd.has(t.trade_date)).sort((a, b) => (a.signal_time || '').localeCompare(b.signal_time || ''));
+      let html = `<table class="t"><thead><tr><th>Date</th><th>Symbol</th><th>Dir</th><th>Slot</th><th>BT Result</th><th>BT PnL</th><th>Traded?</th><th>Live PnL</th><th>Reason</th></tr></thead><tbody>`;
+      for (const t of overlap) {
+        const tr = nm[`${t.trade_date}_${t.symbol}`];
+        const btR = t.is_win ? `<span class="tag t-tg">TARGET</span>` : t.is_open ? `<span class="tag t-o">OPEN</span>` : `<span class="tag t-sl">SL HIT</span>`;
+        const dir = t._isBull ? `<span class="tag t-b">BULL</span>` : `<span class="tag t-s">BEAR</span>`;
+        const tradedTag = tr ? `<span class="tag t-w">YES</span>` : `<span class="tag t-u">NO</span>`;
+        const livePnl = tr ? `<span style="color:${pc(tr._pnl)}">${fmt(tr._pnl)}</span>` : '--';
+        const reason = tr ? 'Signal taken' : t._slot >= '14:00' && t._align === 'NO' ? 'Late + counter-trend' : t._slot >= '14:00' ? 'Afternoon - selective' : t._align === 'NO' ? 'Counter Nifty' : 'Not in this scan';
+        html += `<tr><td>${t.trade_date}</td><td><strong>${t.symbol}</strong></td><td>${dir}</td><td style="color:var(--blue)">${t._slot || '--'}</td><td>${btR}</td><td style="color:${pc(t._pnl)}">${fmt(t.pnl_pts)}</td><td>${tradedTag}</td><td>${livePnl}</td><td style="color:var(--muted);font-size:11px">${reason}</td></tr>`;
+      }
+      document.getElementById('sig-dl').innerHTML = html + '</tbody></table>';
+    }
+
+    function rSym(neo, bt) {
+      const agg = arr => { const m = {}; for (const t of arr.filter(t => !t.is_open)) { if (!m[t.symbol]) m[t.symbol] = { w: 0, tot: 0, pnl: 0 }; m[t.symbol].tot++; if (t.is_win) m[t.symbol].w++; m[t.symbol].pnl += t._pnl; } return Object.entries(m).map(([s, v]) => ({ sym: s, tot: v.tot, wr: +(v.w / v.tot * 100).toFixed(1), pnl: +v.pnl.toFixed(2) })); };
+      const btArr = agg(bt).filter(v => v.tot >= 2), nArr = agg(neo);
+      const hBar = (id, data, col) => mc(id, { type: 'bar', data: { labels: data.map(d => d.sym), datasets: [{ data: data.map(d => d.pnl), backgroundColor: col, borderRadius: 3 }] }, options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${fmt(c.raw)}` } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 11 } } } } } });
+      hBar('sym-bt-t', btArr.sort((a, b) => b.pnl - a.pnl).slice(0, 12), 'rgba(63,185,80,.75)');
+      hBar('sym-bt-b', [...btArr].sort((a, b) => a.pnl - b.pnl).slice(0, 12), 'rgba(248,81,73,.75)');
+      hBar('sym-lt', nArr.sort((a, b) => b.pnl - a.pnl).slice(0, 12), 'rgba(63,185,80,.75)');
+      hBar('sym-lb', [...nArr].sort((a, b) => a.pnl - b.pnl).slice(0, 12), 'rgba(248,81,73,.75)');
+      const allS = [...btArr].sort((a, b) => b.wr - a.wr);
+      let html = `<table class="t"><thead><tr><th>Symbol</th><th>Trades</th><th>Win Rate</th><th>Total PnL (pts)</th><th>Grade</th></tr></thead><tbody>`;
+      for (const s of allS) { const g = s.wr >= 65 ? 'Strong' : s.wr >= 50 ? 'Average' : 'Weak'; html += `<tr><td><strong>${s.sym}</strong></td><td>${s.tot}</td><td style="color:${pc(s.wr - 50)}">${s.wr}%</td><td style="color:${pc(s.pnl)}">${fmt(s.pnl)}</td><td>${g}</td></tr>`; }
+      document.getElementById('sym-all').innerHTML = html + '</tbody></table>';
+    }
+
+    function rCmp(neo, bt) {
+      const nD = neo.filter(t => !t.is_open), bD = bt.filter(t => !t.is_open);
+      const wrf = (arr, s) => { const sub = arr.filter(t => t._slot === s); return sub.length ? +(sub.filter(t => t.is_win).length / sub.length * 100).toFixed(1) : 0; };
+      const pnlf = (arr, s) => +arr.filter(t => t._slot === s).reduce((a, t) => a + t._pnl, 0).toFixed(2);
+      mc('cmp-wr', { type: 'bar', data: { labels: FULL_SLOTS, datasets: [{ label: 'Live', data: FULL_SLOTS.map(s => wrf(nD, s)), backgroundColor: 'rgba(88,166,255,.7)', borderRadius: 3 }, { label: 'Backtest', data: FULL_SLOTS.map(s => wrf(bD, s)), backgroundColor: 'rgba(63,185,80,.7)', borderRadius: 3 }] }, options: { responsive: true, plugins: { legend: { labels: { color: '#e6edf3' } } }, scales: { x: { ...xR, ticks: { ...xR.ticks, maxRotation: 45, minRotation: 45 } }, y: { ...yR, ticks: { ...yR.ticks, callback: v => v + '%' }, min: 0, max: 100 } } } });
+      mc('cmp-pnl', { type: 'bar', data: { labels: FULL_SLOTS, datasets: [{ label: 'Live Rs', data: FULL_SLOTS.map(s => pnlf(nD, s)), backgroundColor: 'rgba(88,166,255,.6)', borderRadius: 3, yAxisID: 'y' }, { label: 'BT pts', data: FULL_SLOTS.map(s => pnlf(bD, s)), backgroundColor: 'rgba(63,185,80,.5)', borderRadius: 3, yAxisID: 'y2' }] }, options: { responsive: true, plugins: { legend: { labels: { color: '#e6edf3' } } }, scales: { x: { ...xR, ticks: { ...xR.ticks, maxRotation: 45, minRotation: 45 } }, y: { ...yR, ticks: { ...yR.ticks, callback: v => 'Rs' + fmt(v) }, position: 'left' }, y2: { ticks: { color: '#8b949e', callback: v => fmt(v) + 'p' }, position: 'right', grid: { drawOnChartArea: false } } } } });
+      const ya_n = nD.filter(t => t._align === 'YES'), no_n = nD.filter(t => t._align === 'NO');
+      const ya_b = bD.filter(t => t._align === 'YES'), no_b = bD.filter(t => t._align === 'NO');
+      const wrA = arr => arr.length ? +(arr.filter(t => t.is_win).length / arr.length * 100).toFixed(1) : 0;
+      mc('cmp-al', { type: 'bar', data: { labels: ['Aligned', 'Counter'], datasets: [{ label: 'Live', data: [wrA(ya_n), wrA(no_n)], backgroundColor: 'rgba(88,166,255,.7)', borderRadius: 4 }, { label: 'Backtest', data: [wrA(ya_b), wrA(no_b)], backgroundColor: 'rgba(63,185,80,.7)', borderRadius: 4 }] }, options: { responsive: true, plugins: { legend: { labels: { color: '#e6edf3' } } }, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', callback: v => v + '%' }, min: 0, max: 100 } } } });
+      const ns = bS(neo), bs = bS(bt);
+      document.getElementById('cmp-sum').innerHTML = `<table class="t"><thead><tr><th>Metric</th><th>Live Trades</th><th>Backtest</th></tr></thead><tbody>${[['Trades', ns.total, bs.total], ['Win Rate', ns.wr + '%', bs.wr + '%'], ['Total PnL', 'Rs ' + fmt(ns.pnl), fmt(bs.pnl) + ' pts'], ['Avg PnL', 'Rs ' + fmt(ns.avg), fmt(bs.avg) + ' pts'], ['Best', 'Rs ' + fmt(ns.best), fmt(bs.best) + ' pts'], ['Worst', 'Rs ' + fmt(ns.worst), fmt(bs.worst) + ' pts']].map(([m, l, b]) => `<tr><td>${m}</td><td>${l}</td><td>${b}</td></tr>`).join('')}</tbody></table>`;
+    }
+
+    function renderAll() {
+      const ns = bS(NEO), bs = bS(BT);
+      rSg('neo-sg', ns); rSg('bt-sg', bs);
+      rIb('neo-ib', NEO, ns); rIb('bt-ib', BT, bs);
+      rCandlePnl('neo-pnl', NEO); rCandlePnl('bt-pnl', BT);
+      rAlignPie('neo-ap', NEO, 'neo-ap-nd'); rAlignWr('neo-aw', NEO);
+      rAlignPie('bt-ap', BT, 'bt-ap-nd'); rAlignWr('bt-aw', BT);
+      rCandleWr('neo-wr', NEO, null);
+      rCandleWr('bt-wr-bull', BT, 'BUY'); rCandleWr('bt-wr-bear', BT, 'SELL');
+      rHm('neo-hm', NEO); rHm('bt-hm', BT);
+      rNeoTbl('neo-tbl', NEO); rBtTbl('bt-tbl', BT);
+      rPm(BT); rSig(NEO, BT); rSym(NEO, BT); rCmp(NEO, BT);
+    }
+
+    async function loadData() {
+      try {
+        const res = await fetch('/data'); const json = await res.json(); if (!json.success) throw new Error(json.error || 'Failed');
+        RAW = json.data; NEO = enrichAll([...RAW.neostox.trades], false); BT = enrichAll([...RAW.backtest.trades], true);
+        const allD = BT.map(t => t.trade_date).filter(Boolean).sort();
+        if (allD.length) { document.getElementById('fFrom').value = allD[0]; document.getElementById('fTo').value = allD[allD.length - 1]; }
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('page-neo').classList.add('active');
+        const d = new Date(json.last_refresh);
+        document.getElementById('rt').textContent = `Updated: ${d.toLocaleTimeString()}`;
+        document.getElementById('sb').textContent = `${NEO.length} live - ${BT.length} backtest`;
+        document.getElementById('sb').className = 'badge ok';
+        renderAll();
+      } catch (err) { document.getElementById('loading').innerHTML = `<div style="color:var(--red)">Error: ${err.message}</div><button class="btn" onclick="loadData()" style="margin-top:12px">Retry</button>`; }
+    }
+    async function refreshData() {
+      document.getElementById('sb').textContent = 'Refreshing...'; document.getElementById('sb').className = 'badge';
+      try { const res = await fetch('/refresh'); const json = await res.json(); if (!json.success) throw new Error(json.error); RAW = json.data; NEO = enrichAll([...RAW.neostox.trades], false); BT = enrichAll([...RAW.backtest.trades], true); const d = new Date(json.last_refresh); document.getElementById('rt').textContent = `Updated: ${d.toLocaleTimeString()}`; document.getElementById('sb').textContent = `${NEO.length} live - ${BT.length} backtest`; document.getElementById('sb').className = 'badge ok'; renderAll(); }
+      catch (err) { alert('Refresh failed: ' + err.message); }
+    }
+    loadData();
+  </script>
+</body>
+
+</html>
