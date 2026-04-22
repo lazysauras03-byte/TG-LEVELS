@@ -40,7 +40,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 
 /////////////------------ogbot
 // const telegramtoken = '8199688040:AAHGqr4cECCMb9kd4qXNM5bKAXXrqj8shQk';
-// const telegramchat = "-1003727905299";
+const telegramchat = "-1003727905299";
 /////////////------------pgfbot
 // const telegramtoken = "8390227157:AAFYQ2eWFAJdm9P8me9Nk2voYe00Mn33dSU";
 // const telegramchat = "8559767849";
@@ -49,7 +49,7 @@ if (typeof localStorage === "undefined" || localStorage === null) {
 // const telegramchat = "7781596314";
 /////////////------------Lazy bot
 // const telegramtoken = "8529663033:AAEBTgtqjKdqg3lG89ZMclD8lPTxN7mp3BI"
-const telegramchat = "8559767849";
+// const telegramchat = "8559767849";
 /////////////------------IQOO bot 
 // const telegramtoken = "8671371710:AAFXdzpLwRWQ1TNgN8g1PV4Sm8CZ4oMiIbc"
 // const telegramchat = "8559767849"
@@ -60,8 +60,8 @@ const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
 const SEND_FIRST_RUN_NOTIFICATIONS = true;
-const symbols = ["NSE:PPLPHARMA-EQ", "NSE:POLYCAB-EQ", "NSE:PFC-EQ", "NSE:POWERGRID-EQ", "NSE:PRESTIGE-EQ", "NSE:PNB-EQ", "NSE:RBLBANK-EQ", "NSE:RECLTD-EQ", "NSE:RVNL-EQ", "NSE:RELIANCE-EQ", "NSE:SBICARD-EQ", "NSE:SBILIFE-EQ", "NSE:SHREECEM-EQ", "NSE:SRF-EQ", "NSE:SAMMAANCAP-EQ", "NSE:MOTHERSON-EQ", "NSE:SHRIRAMFIN-EQ", "NSE:SIEMENS-EQ", "NSE:SOLARINDS-EQ", "NSE:SONACOMS-EQ", "NSE:SBIN-EQ", "NSE:SAIL-EQ", "NSE:SUNPHARMA-EQ", "NSE:SUPREMEIND-EQ", "NSE:SUZLON-EQ", "NSE:SYNGENE-EQ", "NSE:TATACONSUM-EQ", "NSE:TITAGARH-EQ", "NSE:TVSMOTOR-EQ", "NSE:TCS-EQ", "NSE:TATAELXSI-EQ", "NSE:TMPV-EQ", "NSE:TATAPOWER-EQ", "NSE:TATASTEEL-EQ", "NSE:TATATECH-EQ", "NSE:TECHM-EQ", "NSE:FEDERALBNK-EQ", "NSE:INDHOTEL-EQ", "NSE:PHOENIXLTD-EQ", "NSE:TITAN-EQ", "NSE:TORNTPHARM-EQ", "NSE:TORNTPOWER-EQ", "NSE:TRENT-EQ", "NSE:TIINDIA-EQ", "NSE:UNOMINDA-EQ", "NSE:UPL-EQ", "NSE:ULTRACEMCO-EQ", "NSE:UNIONBANK-EQ", "NSE:UNITDSPR-EQ", "NSE:VBL-EQ", "NSE:VEDL-EQ", "NSE:IDEA-EQ", "NSE:VOLTAS-EQ", "NSE:WIPRO-EQ", "NSE:YESBANK-EQ", "NSE:ZYDUSLIFE-EQ"];
-const TESTING_MODE = true;
+// const symbols = ["NSE:PPLPHARMA-EQ", "NSE:POLYCAB-EQ", "NSE:PFC-EQ", "NSE:POWERGRID-EQ", "NSE:PRESTIGE-EQ", "NSE:PNB-EQ", "NSE:RBLBANK-EQ", "NSE:RECLTD-EQ", "NSE:RVNL-EQ", "NSE:RELIANCE-EQ", "NSE:SBICARD-EQ", "NSE:SBILIFE-EQ", "NSE:SHREECEM-EQ", "NSE:SRF-EQ", "NSE:SAMMAANCAP-EQ", "NSE:MOTHERSON-EQ", "NSE:SHRIRAMFIN-EQ", "NSE:SIEMENS-EQ", "NSE:SOLARINDS-EQ", "NSE:SONACOMS-EQ", "NSE:SBIN-EQ", "NSE:SAIL-EQ", "NSE:SUNPHARMA-EQ", "NSE:SUPREMEIND-EQ", "NSE:SUZLON-EQ", "NSE:SYNGENE-EQ", "NSE:TATACONSUM-EQ", "NSE:TITAGARH-EQ", "NSE:TVSMOTOR-EQ", "NSE:TCS-EQ", "NSE:TATAELXSI-EQ", "NSE:TMPV-EQ", "NSE:TATAPOWER-EQ", "NSE:TATASTEEL-EQ", "NSE:TATATECH-EQ", "NSE:TECHM-EQ", "NSE:FEDERALBNK-EQ", "NSE:INDHOTEL-EQ", "NSE:PHOENIXLTD-EQ", "NSE:TITAN-EQ", "NSE:TORNTPHARM-EQ", "NSE:TORNTPOWER-EQ", "NSE:TRENT-EQ", "NSE:TIINDIA-EQ", "NSE:UNOMINDA-EQ", "NSE:UPL-EQ", "NSE:ULTRACEMCO-EQ", "NSE:UNIONBANK-EQ", "NSE:UNITDSPR-EQ", "NSE:VBL-EQ", "NSE:VEDL-EQ", "NSE:IDEA-EQ", "NSE:VOLTAS-EQ", "NSE:WIPRO-EQ", "NSE:YESBANK-EQ", "NSE:ZYDUSLIFE-EQ"];
+const TESTING_MODE = false;
 
 const app = express();
 
@@ -700,7 +700,7 @@ const startlogic = async (isFirstRun = false) => {
   try {
     logContractInfo();
 
-    // const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
+    const symbols = loadSymbols(INPUT_EXCEL, SYMBOL_COLUMN);
     const niftyBias = await getNiftyBias();
     console.log(`🧭 Nifty Bias: ${niftyBias.bias} | ${niftyBias.reason}`);
 
@@ -991,7 +991,7 @@ async function main() {
     // console.log("✅ Authentication complete. You can now run runauth() daily.");
     // process.exit(0);
 
-    // // ── Option 2: Daily startup — refresh access token, then scan ──────────
+    // ── Option 2: Daily startup — refresh access token, then scan ──────────
     await runauth();
     startPatternScheduler();
 

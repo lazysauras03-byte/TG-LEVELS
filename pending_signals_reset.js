@@ -9,8 +9,8 @@ const fs = require("fs");
 const path = require("path");
 
 const PENDING_FILE = path.join(__dirname, "data", "telegram_signals.json");
-const RESET_HOUR = 17;
-const RESET_MIN = 59;
+const RESET_HOUR = 16;
+const RESET_MIN = 33;
 
 function isWeekday() {
   const d = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
