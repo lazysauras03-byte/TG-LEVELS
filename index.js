@@ -54,7 +54,7 @@ let isExecuting = false;
 const emaManager = new EMAManager(fyers);
 const bcvcManager = new BCVCManager(fyers);
 const srAnalyzer = new SRAnalyzer();
-const SEND_FIRST_RUN_NOTIFICATIONS = false;
+const SEND_FIRST_RUN_NOTIFICATIONS = true;
 const symbols = ["NSE:SOLARINDS-EQ"];
 
 const app = express();
@@ -1318,11 +1318,11 @@ const stopPatternScheduler = () => {
 };
 
 // Start the scheduler
-startPatternScheduler();
+// startPatternScheduler();
 // runauth();
 // startlogic(true)
 // authenticate()
-// runBacktest();
+runBacktest();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3100;
 
 app.listen(PORT, async () => {
