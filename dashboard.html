@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0a0e1a" />
+  <title>EMA9 Signal Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    html,
+    body,
+    #root {
+      height: 100%;
+      background: #0a0e1a
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      color: #e2e8f0;
+      overflow: hidden
+    }
+
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #0d1221
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #2a3555;
+      border-radius: 2px
+    }
+
+    @keyframes spin {
+      from {
+        transform: rotate(0deg)
+      }
+
+      to {
+        transform: rotate(360deg)
+      }
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .4
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script>
+    "use strict";
+    // ─── Destructure React hooks ────────────────────────────────────────────────
+    const { useState, useEffect, useCallback, useRef, useMemo } = React;
+
+    // ─── API utils ───────────────────────────────────────────────────────────────
+    const BASE = "";  // always relative — works on localhost AND ngrok
+    async function apiFetch(url) {
+      const res = await fetch(BASE + url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    }
+    async function fetchChartData(symbol, resolution, timeframe, date) {
+      let url = "/api/chart?symbol=" + encodeURIComponent(symbol) + "&resolution=" + resolution + "&timeframe=" + timeframe;
+      if (date) url += "&date=" + date;
+      return apiFetch(url);
+    }
+    async function fetchChartRangeData(symbol, resolution, fromDate, toDate) {
+      let url = "/api/chart-range?symbol=" + encodeURIComponent(symbol) + "&resolution=" + resolution;
+      if (fromDate) url += "&fromDate=" + fromDate;
+      if (toDate) url += "&toDate=" + toDate;
+      return apiFetch(url);
+    }
+    function createWebSocket() {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return new WebSocket(proto + "//" + window.location.host);
+    }
+
+    // ─── Routing (tiny hash-router — no build needed) ───────────────────────────
+    function useRoute() {
+      const parse = () => {
+        const hash = window.location.hash.replace(/^#/, "") || "/chart";
+        const [path, qs] = hash.split("?");
+        const params = Object.fromEntries(new URLSearchParams(qs || ""));
+        const symMatch = path.match(/^\/chart\/(.+)$/);
+        return { path, symbol: symMatch ? decodeURIComponent(symMatch[1]) : null, params };
+      };
+      const [route, setRoute] = useState(parse);
+      useEffect(() => {
+        const h = () => setRoute(parse());
+        window.addEventListener("hashchange", h);
+        return () => window.removeEventListener("hashchange", h);
+      }, []);
+      return route;
+    }
+    function navigate(symbol, params) {
+      const qs = params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "";
+      const sym = symbol ? "/" + encodeURIComponent(symbol) : "";
+      window.location.hash = "/chart" + sym + qs;
+    }
+
+    // ─── Hooks ───────────────────────────────────────────────────────────────────
+    function useChartData(symbol, resolution, timeframe, date, fromDate, toDate) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const abortRef = useRef(null);
+      const isRange = !!(fromDate && toDate);
+
+      const load = useCallback(async () => {
+        if (!symbol) return;
+        if (abortRef.current) abortRef.current.abort();
+        abortRef.current = new AbortController();
+        setLoading(true); setError(null);
+        try {
+          const result = isRange
+            ? await fetchChartRangeData(symbol, resolution, fromDate, toDate)
+            : await fetchChartData(symbol, resolution, timeframe, date);
+          setData(result);
+        } catch (e) {
+          if (e.name !== "AbortError") setError(e.message);
+        } finally { setLoading(false); }
+      }, [symbol, resolution, timeframe, date, fromDate, toDate, isRange]);
+
+      useEffect(() => { load(); }, [load]);
+      return { data, loading, error, reload: load };
+    }
+
+    function useWebSocket(onMessage) {
+      const wsRef = useRef(null);
+      const reconnRef = useRef(null);
+      const [connected, setConnected] = useState(false);
+
+      const connect = useCallback(() => {
+        try {
+          const ws = createWebSocket();
+          wsRef.current = ws;
+          ws.onopen = () => { setConnected(true); if (reconnRef.current) { clearTimeout(reconnRef.current); reconnRef.current = null; } };
+          ws.onmessage = (e) => { try { onMessage && onMessage(JSON.parse(e.data)); } catch { } };
+          ws.onclose = () => { setConnected(false); reconnRef.current = setTimeout(connect, 3000); };
+          ws.onerror = () => ws.close();
+        } catch { reconnRef.current = setTimeout(connect, 5000); }
+      }, [onMessage]);
+
+      useEffect(() => {
+        connect();
+        return () => { wsRef.current?.close(); if (reconnRef.current) clearTimeout(reconnRef.current); };
+      }, [connect]);
+
+      return { connected };
+    }
+
+    // ─── TradingChart ─────────────────────────────────────────────────────────────
+    const SIGNAL_STYLES = {
+      FIRST_HIGH: { color: "#f59e0b", shape: "circle", position: "aboveBar", text: "FH", size: 2 },
+      FIRST_LOW: { color: "#f59e0b", shape: "circle", position: "belowBar", text: "FL", size: 2 },
+      NEW_HIGH: { color: "#22c55e", shape: "circle", position: "aboveBar", text: "NH", size: 1.5 },
+      NEW_LOW: { color: "#ef4444", shape: "circle", position: "belowBar", text: "NL", size: 1.5 },
+      LAST_HIGH: { color: "#f59e0b", shape: "circle", position: "aboveBar", text: "LH", size: 2 },
+      LAST_LOW: { color: "#f59e0b", shape: "circle", position: "belowBar", text: "LL", size: 2 },
+    };
+    const IST_OFFSET = 19800;
+
+    function snapToCandle(ts, sorted) {
+      if (!sorted?.length) return ts;
+      let lo = 0, hi = sorted.length - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < ts) lo = mid + 1; else hi = mid; }
+      if (lo > 0 && Math.abs(sorted[lo - 1] - ts) <= Math.abs(sorted[lo] - ts)) return sorted[lo - 1];
+      return sorted[lo];
+    }
+    const TYPE_LABEL_MAP = { FIRST_HIGH: "FH", FIRST_LOW: "FL", NEW_HIGH: "NH", NEW_LOW: "NL", LAST_HIGH: "LH", LAST_LOW: "LL" };
+    function tsToISTDate(ts) {
+      const d = new Date((ts + IST_OFFSET) * 1000);
+      return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
+    }
+    function buildMarkers(signals, sortedTimes) {
+      if (!signals?.length) return [];
+      const sorted = [...signals].sort((a, b) => a.ts - b.ts);
+      const uniqueDays = new Set(sorted.map(s => tsToISTDate(s.ts)));
+      const isMultiDay = uniqueDays.size > 1;
+      const dedupMap = new Map();
+      for (const sig of sorted) {
+        const style = SIGNAL_STYLES[sig.type];
+        if (!style) continue;
+        const t = snapToCandle(sig.ts, sortedTimes);
+        const key = sig.type + "::" + t;
+        if (!dedupMap.has(key)) dedupMap.set(key, { time: t, position: style.position, color: style.color, shape: style.shape, size: style.size, type: sig.type, dayStr: tsToISTDate(sig.ts) });
+      }
+      const markerList = Array.from(dedupMap.values()).sort((a, b) => a.time - b.time);
+      const dayCounters = {};
+      let globalCounter = 0;
+      return markerList.map(m => {
+        if (!dayCounters[m.dayStr]) dayCounters[m.dayStr] = 0;
+        let num;
+        if (!isMultiDay) { globalCounter++; num = globalCounter; }
+        else { dayCounters[m.dayStr]++; num = dayCounters[m.dayStr]; }
+        return { time: m.time, position: m.position, color: m.color, shape: m.shape, text: (TYPE_LABEL_MAP[m.type] || m.type) + " " + num, size: m.size };
+      });
+    }
+
+    function TradingChart({ data, showEMA9High, showEMA9Low, showEMA9Close, onCrosshairMove }) {
+      const containerRef = useRef(null);
+      const chartRef = useRef(null);
+      const seriesRef = useRef({});
+      const timesRef = useRef([]);
+
+      useEffect(() => {
+        if (!containerRef.current) return;
+        const chart = LightweightCharts.createChart(containerRef.current, {
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight,
+          layout: { background: { color: "#0a0e1a" }, textColor: "#8899bb", fontSize: 11, fontFamily: "'JetBrains Mono',monospace" },
+          grid: { vertLines: { color: "#0f1929" }, horzLines: { color: "#0f1929" } },
+          crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+            vertLine: { color: "#3b82f6", width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: "#1e3a8a" },
+            horzLine: { color: "#3b82f6", width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: "#1e3a8a" },
+          },
+          rightPriceScale: { borderColor: "#1e2d4a", scaleMargins: { top: 0.08, bottom: 0.25 } },
+          timeScale: {
+            borderColor: "#1e2d4a", timeVisible: true, secondsVisible: false, rightOffset: 12, barSpacing: 8,
+            tickMarkFormatter: (t) => { const d = new Date((t + IST_OFFSET) * 1000); return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); },
+          },
+          localization: {
+            timeFormatter: (t) => { const d = new Date((t + IST_OFFSET) * 1000); return String(d.getUTCDate()).padStart(2, "0") + "/" + String(d.getUTCMonth() + 1).padStart(2, "0") + " " + String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0") + " IST"; },
+          },
+          handleScroll: { mouseWheel: true, pressedMouseMove: true },
+          handleScale: { mouseWheel: true, pinch: true },
+        });
+        chartRef.current = chart;
+
+        const candleSeries = chart.addCandlestickSeries({ upColor: "#22c55e", downColor: "#ef4444", borderUpColor: "#16a34a", borderDownColor: "#dc2626", wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
+        const volumeSeries = chart.addHistogramSeries({ color: "#26a69a", priceFormat: { type: "volume" }, priceScaleId: "vol" });
+        chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, borderVisible: false });
+        const ema9H = chart.addLineSeries({ color: "#3b82f6", lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true, title: "EMA9H" });
+        const ema9L = chart.addLineSeries({ color: "#f97316", lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true, title: "EMA9L" });
+        const ema9C = chart.addLineSeries({ color: "#a855f7", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false, lastValueVisible: true, title: "EMA9C" });
+
+        seriesRef.current = { candleSeries, volumeSeries, ema9H, ema9L, ema9C };
+        chart.subscribeCrosshairMove(p => onCrosshairMove && onCrosshairMove(p));
+
+        const ro = new ResizeObserver(() => {
+          if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth, height: containerRef.current.clientHeight });
+        });
+        ro.observe(containerRef.current);
+        return () => { ro.disconnect(); chart.remove(); };
+      }, []);
+
+      useEffect(() => { seriesRef.current.ema9H?.applyOptions({ visible: showEMA9High }); }, [showEMA9High]);
+      useEffect(() => { seriesRef.current.ema9L?.applyOptions({ visible: showEMA9Low }); }, [showEMA9Low]);
+      useEffect(() => { seriesRef.current.ema9C?.applyOptions({ visible: showEMA9Close }); }, [showEMA9Close]);
+
+      useEffect(() => {
+        if (!data?.candles?.length || !seriesRef.current.candleSeries) return;
+        const { candles, signals } = data;
+        const cd = candles.map(c => ({ time: c.ts, open: c.open, high: c.high, low: c.low, close: c.close }));
+        const vd = candles.map(c => ({ time: c.ts, value: c.volume || 0, color: c.close >= c.open ? "rgba(34,197,94,.35)" : "rgba(239,68,68,.35)" }));
+        timesRef.current = cd.map(c => c.time).sort((a, b) => a - b);
+        seriesRef.current.candleSeries.setData(cd);
+        seriesRef.current.volumeSeries.setData(vd);
+        seriesRef.current.ema9H.setData(candles.filter(c => c.ema9High != null).map(c => ({ time: c.ts, value: c.ema9High })));
+        seriesRef.current.ema9L.setData(candles.filter(c => c.ema9Low != null).map(c => ({ time: c.ts, value: c.ema9Low })));
+        seriesRef.current.ema9C.setData(candles.filter(c => c.ema9Close != null).map(c => ({ time: c.ts, value: c.ema9Close })));
+        seriesRef.current.candleSeries.setMarkers(buildMarkers(signals || [], timesRef.current));
+        chartRef.current?.timeScale().fitContent();
+      }, [data]);
+
+      return React.createElement("div", { ref: containerRef, style: { width: "100%", height: "100%" } });
+    }
+
+    // ─── SignalLegend ─────────────────────────────────────────────────────────────
+    const TYPE_META = {
+      FIRST_HIGH: { label: "First Candle High", color: "#f59e0b", bg: "#1c1200", dot: "●" },
+      FIRST_LOW: { label: "First Candle Low", color: "#f59e0b", bg: "#1c1200", dot: "●" },
+      NEW_HIGH: { label: "New High", color: "#22c55e", bg: "#052e16", dot: "●" },
+      NEW_LOW: { label: "New Low", color: "#ef4444", bg: "#2d0808", dot: "●" },
+      LAST_HIGH: { label: "Last Candle High", color: "#f59e0b", bg: "#1c1200", dot: "○" },
+      LAST_LOW: { label: "Last Candle Low", color: "#f59e0b", bg: "#1c1200", dot: "○" },
+    };
+    function fmtTime(ts) { return new Date(ts * 1000).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }); }
+
+    const TYPE_ABBR = { FIRST_HIGH: "FH", FIRST_LOW: "FL", NEW_HIGH: "NH", NEW_LOW: "NL", LAST_HIGH: "LH", LAST_LOW: "LL" };
+    function SignalLegend({ signals }) {
+      const byType = useMemo(() => {
+        const m = {};
+        for (const s of (signals || [])) { if (!m[s.type]) m[s.type] = []; m[s.type].push(s); }
+        return m;
+      }, [signals]);
+      const order = ["FIRST_HIGH", "FIRST_LOW", "NEW_HIGH", "NEW_LOW", "LAST_HIGH", "LAST_LOW"];
+      const present = order.filter(t => byType[t]?.length > 0);
+      if (!present.length) return React.createElement("div", { style: { padding: "12px 16px", color: "#3b5280", fontSize: 12, textAlign: "center" } }, "No signals yet today");
+      return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, padding: "8px 0" } },
+        present.map(type => {
+          const meta = TYPE_META[type];
+          const abbr = TYPE_ABBR[type];
+          const list = byType[type];
+          const latest = list[list.length - 1];
+          return React.createElement("div", { key: type, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", borderRadius: 6, background: meta.bg, border: "1px solid " + meta.color + "22" } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+              React.createElement("span", { style: { color: meta.color, fontSize: 14, lineHeight: 1 } }, meta.dot),
+              React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 11, color: "#94a3b8", fontFamily: "'JetBrains Mono',monospace" } }, meta.label),
+                React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 3, marginTop: 3 } },
+                  list.map((sig, i) => React.createElement("span", { key: i, style: { fontSize: 9, fontFamily: "'JetBrains Mono',monospace", color: meta.color, background: meta.color + "18", border: "1px solid " + meta.color + "33", borderRadius: 3, padding: "1px 4px" } },
+                    abbr + (i + 1) + " · " + fmtTime(sig.ts)
+                  ))
+                )
+              )
+            ),
+            React.createElement("div", { style: { textAlign: "right", flexShrink: 0, marginLeft: 8 } },
+              React.createElement("div", { style: { fontSize: 12, fontFamily: "'JetBrains Mono',monospace", color: meta.color, fontWeight: 600 } }, "₹" + latest.price.toFixed(2)),
+              list.length > 1 && React.createElement("div", { style: { fontSize: 10, color: "#3b5280" } }, "×" + list.length)
+            )
+          );
+        })
+      );
+    }
+
+    // ─── StatusBar ────────────────────────────────────────────────────────────────
+    function StatusBar({ status, connected, lastUpdate, onForceRefresh }) {
+      const isMarket = status?.marketOpen;
+      const s = (color, children, ...rest) => React.createElement("span", { style: { color }, ...(rest[0] || {}) }, children);
+      return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "0 16px", height: 32, background: "#060b14", borderBottom: "1px solid #0f1929", fontSize: 11, fontFamily: "'JetBrains Mono',monospace", flexShrink: 0 } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } },
+          React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: connected ? "#22c55e" : "#ef4444", boxShadow: connected ? "0 0 6px #22c55e88" : "0 0 6px #ef444488", display: "inline-block" } }),
+          s(connected ? "#22c55e" : "#ef4444", connected ? "LIVE" : "DISCONNECTED")
+        ),
+        s("#1e2d4a", "│"),
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } },
+          React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: isMarket ? "#22c55e" : "#64748b", display: "inline-block", animation: isMarket ? "pulse 2s infinite" : "none" } }),
+          s(isMarket ? "#94a3b8" : "#4b6899", isMarket ? "MARKET OPEN" : "MARKET CLOSED")
+        ),
+        status?.lastScan && React.createElement(React.Fragment, null, s("#1e2d4a", "│"), s("#3b5280", "Last: ", {}, React.createElement("span", { style: { color: "#64748b" } }, status.lastScan))),
+        status?.nextScan && React.createElement(React.Fragment, null, s("#1e2d4a", "│"), s("#3b5280", "Next: ", {}, React.createElement("span", { style: { color: "#64748b" } }, status.nextScan))),
+        status?.cycle > 0 && React.createElement(React.Fragment, null, s("#1e2d4a", "│"), s("#3b5280", "Cycle: ", {}, React.createElement("span", { style: { color: "#64748b" } }, "#" + status.cycle))),
+        React.createElement("div", { style: { flex: 1 } }),
+        lastUpdate && s("#3b5280", "Updated: ", {}, React.createElement("span", { style: { color: "#64748b" } }, lastUpdate)),
+        React.createElement("button", { onClick: onForceRefresh, style: { background: "transparent", border: "1px solid #1e2d4a", color: "#4b6899", padding: "2px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "'JetBrains Mono',monospace" } }, "↻ REFRESH")
+      );
+    }
+
+    // ─── SymbolSearch ─────────────────────────────────────────────────────────────
+    function SymbolSearch({ symbols, selected, onSelect }) {
+      const [query, setQuery] = useState("");
+      const [open, setOpen] = useState(false);
+      const [hi, setHi] = useState(0);
+      const inputRef = useRef(null);
+
+      const disp = s => s.replace("NSE:", "").replace("NFO:", "").replace("-EQ", "").replace("FUT", "");
+      const filtered = useMemo(() => {
+        if (!query.trim()) return symbols.slice(0, 50);
+        const q = query.toUpperCase();
+        return symbols.filter(s => s.includes(q) || s.replace("NSE:", "").replace("-EQ", "").includes(q)).slice(0, 50);
+      }, [query, symbols]);
+
+      useEffect(() => { setHi(0); }, [filtered]);
+
+      function handleKey(e) {
+        if (!open) { setOpen(true); return; }
+        if (e.key === "ArrowDown") { e.preventDefault(); setHi(h => Math.min(h + 1, filtered.length - 1)); }
+        if (e.key === "ArrowUp") { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); }
+        if (e.key === "Enter" && filtered[hi]) pick(filtered[hi]);
+        if (e.key === "Escape") setOpen(false);
+      }
+      function pick(sym) { onSelect(sym); setQuery(""); setOpen(false); }
+
+      return React.createElement("div", { style: { position: "relative", width: "100%" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "#0d1221", border: "1px solid #1e2d4a", borderRadius: 8, padding: "0 12px", height: 40 } },
+          React.createElement("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "#4b6899", strokeWidth: 2 },
+            React.createElement("circle", { cx: 11, cy: 11, r: 8 }), React.createElement("path", { d: "m21 21-4.35-4.35" })
+          ),
+          React.createElement("input", { ref: inputRef, value: query, onChange: e => { setQuery(e.target.value); setOpen(true) }, onFocus: () => setOpen(true), onBlur: () => setTimeout(() => setOpen(false), 150), onKeyDown: handleKey, placeholder: selected ? disp(selected) : "Search symbol…", style: { background: "transparent", border: "none", outline: "none", color: "#e2e8f0", fontSize: 13, fontFamily: "'JetBrains Mono',monospace", width: "100%", letterSpacing: .3 } }),
+          selected && React.createElement("span", { style: { fontSize: 10, color: "#22c55e", background: "#052e16", padding: "2px 6px", borderRadius: 4, whiteSpace: "nowrap", fontFamily: "'JetBrains Mono',monospace" } }, disp(selected))
+        ),
+        open && filtered.length > 0 && React.createElement("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 100, background: "#0d1221", border: "1px solid #1e2d4a", borderRadius: 8, maxHeight: 280, overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.6)" } },
+          filtered.map((sym, i) => React.createElement("div", { key: sym, onMouseDown: () => pick(sym), style: { padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", background: i === hi ? "#131d35" : "transparent", borderBottom: "1px solid #0f1929" } },
+            React.createElement("span", { style: { fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "#e2e8f0", letterSpacing: .3 } }, disp(sym)),
+            React.createElement("span", { style: { fontSize: 10, color: "#3b5280" } }, sym.split(":")[0])
+          ))
+        )
+      );
+    }
+
+    // ─── TimeframeSelector ────────────────────────────────────────────────────────
+    const RESOLUTIONS = [
+      { label: "1m", resolution: "1", timeframe: "1d" },
+      { label: "3m", resolution: "3", timeframe: "1d" },
+      { label: "5m", resolution: "5", timeframe: "5d" },
+      { label: "15m", resolution: "15", timeframe: "5d" },
+      { label: "1h", resolution: "60", timeframe: "1m" },
+      { label: "1D", resolution: "D", timeframe: "1m" },
+    ];
+    function TimeframeSelector({ active, onChange }) {
+      return React.createElement("div", { style: { display: "flex", gap: 2, background: "#060b14", border: "1px solid #0f1929", borderRadius: 6, padding: 2 } },
+        RESOLUTIONS.map(r => {
+          const isA = active === r.resolution;
+          return React.createElement("button", { key: r.resolution, onClick: () => onChange(r.resolution, r.timeframe), style: { padding: "4px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 11, fontFamily: "'JetBrains Mono',monospace", background: isA ? "#1e3a8a" : "transparent", color: isA ? "#93c5fd" : "#4b6899", fontWeight: isA ? 600 : 400 } }, r.label);
+        })
+      );
+    }
+
+    // ─── PriceHeader ──────────────────────────────────────────────────────────────
+    function PriceHeader({ symbol, data, crosshairData }) {
+      const [disp, setDisp] = useState(null);
+      useEffect(() => {
+        if (crosshairData?.seriesData?.size > 0) {
+          const e = Array.from(crosshairData.seriesData.values());
+          if (e[0]?.open != null) { setDisp(e[0]); return; }
+        }
+        if (data?.candles?.length > 0) setDisp(data.candles[data.candles.length - 1]);
+      }, [crosshairData, data]);
+
+      const c = disp;
+      const chg = c ? (c.close - c.open) : null;
+      const pct = c && c.open ? ((chg / c.open) * 100) : null;
+      const isUp = chg >= 0;
+      const fmt = v => v == null ? "—" : Number(v).toFixed(2);
+      const clean = (symbol || "").replace("NSE:", "").replace("NFO:", "").replace("-EQ", "");
+
+      return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 20, padding: "0 4px", fontFamily: "'JetBrains Mono',monospace" } },
+        React.createElement("div", { style: { display: "flex", flexDirection: "column" } },
+          React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: "#e2e8f0", letterSpacing: .5 } }, clean || "—"),
+          React.createElement("span", { style: { fontSize: 9, color: "#3b5280", letterSpacing: 1 } }, "NSE · EQ")
+        ),
+        c && React.createElement(React.Fragment, null,
+          React.createElement("div", { style: { display: "flex", flexDirection: "column" } },
+            React.createElement("span", { style: { fontSize: 18, fontWeight: 700, color: isUp ? "#22c55e" : "#ef4444", letterSpacing: .3 } }, "₹" + fmt(c.close)),
+            pct != null && React.createElement("span", { style: { fontSize: 10, color: isUp ? "#16a34a" : "#dc2626" } }, (isUp ? "+" : "") + fmt(chg) + " (" + (isUp ? "+" : "") + pct.toFixed(2) + "%)")
+          ),
+          React.createElement("div", { style: { display: "flex", gap: 12, fontSize: 11, color: "#4b6899" } },
+            [["O", c.open], ["H", c.high], ["L", c.low], ["C", c.close]].map(([l, v]) => React.createElement("span", { key: l }, React.createElement("span", { style: { color: "#2a3e5e", marginRight: 2 } }, l), React.createElement("span", { style: { color: "#8899bb" } }, fmt(v))))
+          ),
+          (c.ema9High || c.ema9Low) && React.createElement("div", { style: { display: "flex", gap: 12, fontSize: 10, color: "#4b6899" } },
+            c.ema9High && React.createElement("span", null, React.createElement("span", { style: { color: "#1d4ed8", marginRight: 2 } }, "EMA9H"), React.createElement("span", { style: { color: "#3b82f6" } }, fmt(c.ema9High))),
+            c.ema9Low && React.createElement("span", null, React.createElement("span", { style: { color: "#c2410c", marginRight: 2 } }, "EMA9L"), React.createElement("span", { style: { color: "#f97316" } }, fmt(c.ema9Low)))
+          )
+        )
+      );
+    }
+
+    // ─── EMAToggles ───────────────────────────────────────────────────────────────
+    const TOGGLES = [
+      { key: "showEMA9High", label: "EMA9H", color: "#3b82f6" },
+      { key: "showEMA9Low", label: "EMA9L", color: "#f97316" },
+      { key: "showEMA9Close", label: "EMA9C", color: "#a855f7" },
+    ];
+    function EMAToggles({ state, onChange }) {
+      return React.createElement("div", { style: { display: "flex", gap: 6 } },
+        TOGGLES.map(({ key, label, color }) => {
+          const active = state[key];
+          return React.createElement("button", { key, onClick: () => onChange(key, !active), style: { display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 4, cursor: "pointer", border: "1px solid " + (active ? color + "66" : "#1e2d4a"), background: active ? color + "15" : "transparent", color: active ? color : "#3b5280", fontSize: 11, fontFamily: "'JetBrains Mono',monospace" } },
+            React.createElement("span", { style: { width: 12, height: 2, display: "inline-block", background: active ? color : "#2a3555", borderRadius: 1 } }),
+            label
+          );
+        })
+      );
+    }
+
+    // ─── ChartOverlay (floating bottom-left legend, TradingView style) ──────────
+    function ChartOverlay({ signals, emaState, onChange }) {
+      const [collapsed, setCollapsed] = useState(false);
+      const byType = useMemo(() => {
+        const m = {};
+        for (const s of (signals || [])) { if (!m[s.type]) m[s.type] = []; m[s.type].push(s); }
+        return m;
+      }, [signals]);
+      const order = ["FIRST_HIGH", "FIRST_LOW", "NEW_HIGH", "NEW_LOW", "LAST_HIGH", "LAST_LOW"];
+      const present = order.filter(t => byType[t]?.length > 0);
+      const TOGGLES_CFG = [
+        { key: "showEMA9High", label: "EMA9H", color: "#3b82f6" },
+        { key: "showEMA9Low", label: "EMA9L", color: "#f97316" },
+        { key: "showEMA9Close", label: "EMA9C", color: "#a855f7" },
+      ];
+      return React.createElement("div", {
+        style: {
+          position: "absolute", bottom: 40, left: 12, zIndex: 20,
+          background: "rgba(6,11,20,0.82)", backdropFilter: "blur(6px)",
+          border: "1px solid #1e2d4a", borderRadius: 8,
+          fontFamily: "'JetBrains Mono',monospace", fontSize: 10,
+          minWidth: 148, maxWidth: 190, userSelect: "none",
+          boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+        }
+      },
+        // Header row
+        React.createElement("div", { onClick: () => setCollapsed(c => !c), style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 10px", cursor: "pointer", borderBottom: collapsed ? "none" : "1px solid #0f1929" } },
+          React.createElement("span", { style: { color: "#4b6899", fontSize: 9, letterSpacing: 1, textTransform: "uppercase" } }, "Signals & EMA"),
+          React.createElement("span", { style: { color: "#2a3e5e", fontSize: 10 } }, collapsed ? "▲" : "▼")
+        ),
+        !collapsed && React.createElement(React.Fragment, null,
+          // Signal rows
+          present.length === 0
+            ? React.createElement("div", { style: { padding: "8px 10px", color: "#3b5280", fontSize: 9 } }, "No signals yet")
+            : present.map(type => {
+              const meta = TYPE_META[type];
+              const abbr = TYPE_ABBR[type];
+              const list = byType[type];
+              const latest = list[list.length - 1];
+              return React.createElement("div", { key: type, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 10px", borderBottom: "1px solid #0a1020" } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } },
+                  React.createElement("span", { style: { color: meta.color, fontSize: 12, lineHeight: 1 } }, meta.dot),
+                  React.createElement("div", null,
+                    React.createElement("div", { style: { color: "#8899bb", fontSize: 9 } }, meta.label),
+                    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 2, marginTop: 2 } },
+                      list.map((sig, i) => React.createElement("span", { key: i, style: { fontSize: 8, color: meta.color, background: meta.color + "18", border: "1px solid " + meta.color + "33", borderRadius: 2, padding: "0px 3px" } },
+                        abbr + (i + 1) + "·" + fmtTime(sig.ts)
+                      ))
+                    )
+                  )
+                ),
+                React.createElement("span", { style: { color: meta.color, fontWeight: 600, fontSize: 10, marginLeft: 4 } }, "₹" + latest.price.toFixed(2))
+              );
+            }),
+          // Divider
+          React.createElement("div", { style: { height: 1, background: "#0f1929", margin: "2px 0" } }),
+          // EMA toggles inline
+          React.createElement("div", { style: { display: "flex", gap: 4, padding: "5px 10px", flexWrap: "wrap" } },
+            TOGGLES_CFG.map(({ key, label, color }) => {
+              const active = emaState[key];
+              return React.createElement("button", { key, onClick: () => onChange(key, !active), style: { display: "flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 3, cursor: "pointer", border: "1px solid " + (active ? color + "66" : "#1e2d4a"), background: active ? color + "15" : "transparent", color: active ? color : "#3b5280", fontSize: 9 } },
+                React.createElement("span", { style: { width: 10, height: 2, display: "inline-block", background: active ? color : "#2a3555", borderRadius: 1 } }),
+                label
+              );
+            })
+          )
+        )
+      );
+    }
+
+    // ─── ChartPage ────────────────────────────────────────────────────────────────
+    const DEFAULT_SYMBOL = "NSE:TORNTPHARM-EQ";
+    function todayIST() { return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); }
+    function subtractDays(dateStr, n) { const d = new Date(dateStr + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); }
+
+    function ChartPage() {
+      const route = useRoute();
+      const activeSymbol = route.symbol || DEFAULT_SYMBOL;
+      const today = todayIST();
+
+      const [symbols, setSymbols] = useState([]);
+      const [status, setStatus] = useState(null);
+      const [lastUpdate, setLastUpdate] = useState(null);
+      const [crosshair, setCrosshair] = useState(null);
+      const [resolution, setResolution] = useState("3");
+      const [timeframe, setTimeframe] = useState("1m");
+      const [sidebarOpen, setSidebarOpen] = useState(true);
+
+      // date / range state
+      const [fromDate, setFromDate] = useState(route.params.from || null);
+      const [toDate, setToDate] = useState(route.params.to || null);
+      const [selectedDate, setSelectedDate] = useState(route.params.date || today);
+
+      const isRange = !!(fromDate && toDate);
+
+      const [emaState, setEmaState] = useState({ showEMA9High: true, showEMA9Low: true, showEMA9Close: false });
+
+      const { data, loading, error, reload } = useChartData(
+        activeSymbol, resolution, timeframe,
+        isRange ? null : selectedDate,
+        isRange ? fromDate : null,
+        isRange ? toDate : null,
+      );
+
+      useEffect(() => {
+        apiFetch("/api/symbols").then(r => setSymbols(r.symbols || [])).catch(() => { });
+        apiFetch("/api/status").then(s => {
+          setStatus(s);
+          if (s?.scanDate && s.scanDate !== today && !route.params.date && !route.params.from) setSelectedDate(s.scanDate);
+        }).catch(() => { });
+      }, []);
+
+      useEffect(() => {
+        const id = setInterval(() => apiFetch("/api/status").then(setStatus).catch(() => { }), 30000);
+        return () => clearInterval(id);
+      }, []);
+
+      const handleWs = useCallback((msg) => {
+        if (msg.type === "scan_complete") {
+          setStatus(p => ({ ...p, ...msg.data }));
+          setLastUpdate(new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }));
+          const activeDate = isRange ? toDate : selectedDate;
+          if (activeDate === today) reload();
+        }
+        if (msg.type === "new_signals" && msg.data?.symbol === activeSymbol) {
+          const activeDate = isRange ? toDate : selectedDate;
+          if (!msg.data?.date || msg.data.date === activeDate) reload();
+        }
+      }, [activeSymbol, reload, selectedDate, toDate, isRange, today]);
+
+      const { connected } = useWebSocket(handleWs);
+
+      function handleSymbolSelect(sym) {
+        const p = isRange ? { from: fromDate, to: toDate } : { date: selectedDate };
+        navigate(sym, p);
+        // also update local symbol state by re-reading route
+      }
+      function handleTfChange(res, tf) { setResolution(res); setTimeframe(tf); }
+
+      function applyRange(months) {
+        const to = today, from = subtractDays(today, months * 30);
+        setFromDate(from); setToDate(to);
+        navigate(activeSymbol, { from, to });
+      }
+      function clearRange() {
+        setFromDate(null); setToDate(null); setSelectedDate(today);
+        navigate(activeSymbol, { date: today });
+      }
+      function handleFromChange(e) {
+        const v = e.target.value, to = toDate || today;
+        setFromDate(v); setToDate(to);
+        navigate(activeSymbol, { from: v, to });
+      }
+      function handleToChange(e) {
+        const v = e.target.value, from = fromDate || subtractDays(v, 30);
+        setToDate(v); setFromDate(from);
+        navigate(activeSymbol, { from, to: v });
+      }
+      function handleDateChange(e) {
+        const d = e.target.value; setSelectedDate(d);
+        navigate(activeSymbol, { date: d });
+      }
+      function copyShare() {
+        const p = isRange ? { from: fromDate, to: toDate } : { date: selectedDate };
+        navigator.clipboard.writeText(window.location.origin + "/#/chart/" + encodeURIComponent(activeSymbol) + "?" + new URLSearchParams(p));
+      }
+
+      const clean = activeSymbol.replace("NSE:", "").replace("NFO:", "").replace("-EQ", "");
+      const dateLabel = isRange ? fromDate + " → " + toDate : selectedDate;
+
+      // ── Layout ──────────────────────────────────────────────────────────────────
+      const topBar = React.createElement("div", { style: { display: "flex", alignItems: "center", height: 52, padding: "0 12px", background: "#060b14", borderBottom: "1px solid #0f1929", flexShrink: 0, gap: 0 } },
+
+        // Logo
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginRight: 14, paddingRight: 14, borderRight: "1px solid #0f1929", flexShrink: 0 } },
+          React.createElement("div", { style: { width: 26, height: 26, borderRadius: 6, background: "linear-gradient(135deg,#1e3a8a,#3b82f6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" } }, "E9"),
+          React.createElement("div", null,
+            React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#e2e8f0" } }, "EMA9 Signals"),
+            React.createElement("div", { style: { fontSize: 9, color: "#2a3e5e", letterSpacing: 1 } }, "DASHBOARD")
+          )
+        ),
+
+        // Symbol search
+        React.createElement("div", { style: { width: 210, marginRight: 12, flexShrink: 0 } },
+          React.createElement(SymbolSearch, { symbols, selected: activeSymbol, onSelect: handleSymbolSelect })
+        ),
+
+        // Price header
+        React.createElement("div", { style: { flex: 1, minWidth: 0, overflow: "hidden" } },
+          React.createElement(PriceHeader, { symbol: activeSymbol, data, crosshairData: crosshair })
+        ),
+
+        // Date range controls
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, marginLeft: 8, flexShrink: 0 } },
+          [1, 3].map(m => {
+            const btnFrom = subtractDays(today, m * 30);
+            const isA = isRange && fromDate === btnFrom && toDate === today;
+            return React.createElement("button", { key: m, onClick: () => applyRange(m), style: { padding: "3px 9px", borderRadius: 4, cursor: "pointer", border: "1px solid " + (isA ? "#3b82f6" : "#1e2d4a"), background: isA ? "#1e3a8a33" : "transparent", color: isA ? "#60a5fa" : "#4b6899", fontSize: 10, fontFamily: "'JetBrains Mono',monospace", fontWeight: isA ? 700 : 400 } }, m + "M");
+          }),
+          React.createElement("div", { style: { width: 1, height: 18, background: "#1e2d4a" } }),
+          React.createElement("span", { style: { fontSize: 10, color: "#3b5280", fontFamily: "'JetBrains Mono',monospace" } }, "FROM"),
+          React.createElement("input", { type: "date", value: fromDate || "", max: toDate || today, onChange: handleFromChange, style: { background: "#0d1221", border: "1px solid " + (isRange ? "#3b82f644" : "#1e2d4a"), color: isRange ? "#93c5fd" : "#3b5280", padding: "3px 6px", borderRadius: 5, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", outline: "none", cursor: "pointer", width: 114 } }),
+          React.createElement("span", { style: { fontSize: 10, color: "#3b5280", fontFamily: "'JetBrains Mono',monospace" } }, "TO"),
+          React.createElement("input", { type: "date", value: toDate || today, max: today, min: fromDate || undefined, onChange: handleToChange, style: { background: "#0d1221", border: "1px solid " + (isRange ? "#3b82f644" : "#22c55e44"), color: (!toDate || toDate === today) ? "#22c55e" : "#93c5fd", padding: "3px 6px", borderRadius: 5, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", outline: "none", cursor: "pointer", width: 114 } }),
+          isRange
+            ? React.createElement("button", { onClick: clearRange, style: { padding: "2px 8px", borderRadius: 4, border: "1px solid #3b82f644", background: "transparent", color: "#3b82f6", cursor: "pointer", fontSize: 10, fontFamily: "'JetBrains Mono',monospace" } }, "✕")
+            : React.createElement(React.Fragment, null,
+              React.createElement("div", { style: { width: 1, height: 18, background: "#1e2d4a" } }),
+              React.createElement("span", { style: { fontSize: 10, color: "#3b5280", fontFamily: "'JetBrains Mono',monospace" } }, "DATE"),
+              React.createElement("input", { type: "date", value: selectedDate, max: today, onChange: handleDateChange, style: { background: "#0d1221", border: "1px solid " + (selectedDate === today ? "#22c55e44" : "#f59e0b66"), color: selectedDate === today ? "#22c55e" : "#f59e0b", padding: "3px 6px", borderRadius: 5, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", outline: "none", cursor: "pointer", width: 114 } }),
+              selectedDate !== today && React.createElement("span", { style: { fontSize: 10, color: "#f59e0b", padding: "2px 5px", borderRadius: 4, background: "#1c120044" } }, "PAST")
+            )
+        ),
+
+        // Timeframe
+        React.createElement("div", { style: { marginLeft: 10, flexShrink: 0 } },
+          React.createElement(TimeframeSelector, { active: resolution, onChange: handleTfChange })
+        ),
+
+        // Sidebar toggle
+        React.createElement("button", { onClick: () => setSidebarOpen(v => !v), style: { marginLeft: 10, padding: "5px 10px", borderRadius: 5, border: "1px solid #1e2d4a", background: sidebarOpen ? "#1e3a8a22" : "transparent", color: sidebarOpen ? "#3b82f6" : "#4b6899", cursor: "pointer", fontSize: 12, flexShrink: 0 } }, sidebarOpen ? "▶" : "◀")
+      );
+
+      const mainArea = React.createElement("div", { style: { display: "flex", flex: 1, overflow: "hidden" } },
+
+        // Chart
+        React.createElement("div", { style: { flex: 1, position: "relative", minWidth: 0 } },
+          loading && React.createElement("div", { style: { position: "absolute", inset: 0, background: "#0a0e1acc", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 } },
+            React.createElement("div", { style: { textAlign: "center" } },
+              React.createElement("div", { style: { width: 32, height: 32, margin: "0 auto 12px", border: "2px solid #1e2d4a", borderTopColor: "#3b82f6", borderRadius: "50%", animation: "spin .8s linear infinite" } }),
+              React.createElement("div", { style: { fontSize: 12, color: "#4b6899", fontFamily: "'JetBrains Mono',monospace" } }, "Loading " + clean + " · " + dateLabel + "…")
+            )
+          ),
+          error && !loading && React.createElement("div", { style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 } },
+            React.createElement("div", { style: { background: "#0d1221", border: "1px solid #ef444444", borderRadius: 8, padding: "20px 32px", textAlign: "center" } },
+              React.createElement("div", { style: { fontSize: 28, marginBottom: 8 } }, "⚠"),
+              React.createElement("div", { style: { fontSize: 12, color: "#ef4444", fontFamily: "'JetBrains Mono',monospace" } }, error),
+              React.createElement("button", { onClick: reload, style: { marginTop: 12, padding: "6px 16px", borderRadius: 5, border: "1px solid #ef444444", background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: 11 } }, "Retry")
+            )
+          ),
+          React.createElement(TradingChart, { data, showEMA9High: emaState.showEMA9High, showEMA9Low: emaState.showEMA9Low, showEMA9Close: emaState.showEMA9Close, onCrosshairMove: setCrosshair }),
+          React.createElement(ChartOverlay, { signals: data?.signals, emaState, onChange: (k, v) => setEmaState(p => ({ ...p, [k]: v })) })
+        ),
+
+        // Sidebar
+        sidebarOpen && React.createElement("div", { style: { width: 240, background: "#060b14", borderLeft: "1px solid #0f1929", display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
+          React.createElement("div", { style: { padding: "10px 14px", borderBottom: "1px solid #0f1929", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 } },
+            React.createElement("span", { style: { fontSize: 11, color: "#4b6899", textTransform: "uppercase", letterSpacing: 1 } }, "Signals"),
+            React.createElement("div", { style: { textAlign: "right" } },
+              React.createElement("div", { style: { fontSize: 10, color: "#22c55e", fontFamily: "'JetBrains Mono',monospace" } }, (data?.signals?.filter(s => s.type === "NEW_HIGH" || s.type === "NEW_LOW").length || 0) + " NH/NL · " + (data?.signals?.length || 0) + " total"),
+              React.createElement("div", { style: { fontSize: 9, color: "#3b5280" } }, dateLabel)
+            )
+          ),
+          React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: "4px 6px" } },
+            React.createElement(SignalLegend, { signals: data?.signals })
+          ),
+          // EMA toggles moved to chart overlay
+          // Numbering guide
+          React.createElement("div", { style: { borderTop: "1px solid #0f1929", padding: "10px 14px", fontSize: 10, fontFamily: "'JetBrains Mono',monospace", flexShrink: 0 } },
+            React.createElement("div", { style: { marginBottom: 8, color: "#4b6899", textTransform: "uppercase", letterSpacing: 1 } }, "Numbering"),
+            [
+              { dot: "●", color: "#f59e0b", abbr: "FH", label: "First Candle High" },
+              { dot: "●", color: "#f59e0b", abbr: "FL", label: "First Candle Low" },
+              { dot: "●", color: "#22c55e", abbr: "NH", label: "New High" },
+              { dot: "●", color: "#ef4444", abbr: "NL", label: "New Low" },
+              { dot: "○", color: "#f59e0b", abbr: "LH", label: "Last Candle High" },
+              { dot: "○", color: "#f59e0b", abbr: "LL", label: "Last Candle Low" },
+            ].map(({ dot, color, abbr, label }) => React.createElement("div", { key: abbr, style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 5 } },
+              React.createElement("span", { style: { color, fontSize: 13 } }, dot),
+              React.createElement("span", { style: { color, fontWeight: 700, minWidth: 22, fontFamily: "'JetBrains Mono',monospace" } }, abbr),
+              React.createElement("span", { style: { color: "#4b6899" } }, abbr + "1, " + abbr + "2… — " + label)
+            )),
+            React.createElement("div", { style: { marginTop: 8, padding: "5px 8px", borderRadius: 5, background: "#0d1221", border: "1px solid #1e2d4a", color: "#4b6899", lineHeight: 1.7, fontSize: 9 } },
+              React.createElement("span", { style: { color: "#22c55e" } }, "Today:"), " global 1→N",
+              React.createElement("br"),
+              React.createElement("span", { style: { color: "#93c5fd" } }, "Multi-day:"), " resets each day"
+            )
+          ),
+          // Share
+          React.createElement("div", { style: { borderTop: "1px solid #0f1929", padding: "8px 14px", flexShrink: 0 } },
+            React.createElement("button", { onClick: copyShare, style: { width: "100%", padding: "5px 0", borderRadius: 5, border: "1px solid #1e2d4a", background: "transparent", color: "#4b6899", cursor: "pointer", fontSize: 11, fontFamily: "'JetBrains Mono',monospace" } }, "⎘ COPY SHARE URL")
+          )
+        )
+      );
+
+      return React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100vh", background: "#0a0e1a", color: "#e2e8f0", fontFamily: "'Inter',sans-serif" } },
+        topBar,
+        React.createElement(StatusBar, { status, connected, lastUpdate, onForceRefresh: reload }),
+        mainArea
+      );
+    }
+
+    // ─── Mount ────────────────────────────────────────────────────────────────────
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ChartPage));
+
+    // Ensure /chart, /chart/*, / all load the same page via hash navigation
+    if (!window.location.hash || window.location.hash === "#") {
+      window.location.hash = "/chart";
+    }
+  </script>
+</body>
+
+</html>
