@@ -24,7 +24,7 @@ const server = http.createServer(app);
 // noServer=true so we control the upgrade handshake with auth
 const wss = new WebSocket.Server({ noServer: true });
 
-const PORT = process.env.PORT || 3200;
+const PORT = process.env.PORT || 3299;
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "10");
 const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || "2000");
 const SCAN_INTERVAL_MS = 3 * 60 * 1000 + 10 * 1000;
@@ -209,9 +209,13 @@ async function runCycle(symbols) {
     }
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     console.info(`✅ Cycle #${runCount} done in ${elapsed}s | ${total} new signals`);
-    // Print shareable URL after every cycle so it's always visible in the terminal
-    const urlBase = ngrokUrl || `http://localhost:${PORT}`;
-    console.info(`🌐 Dashboard → ${urlBase}/chart`);
+    // Always print both local + shareable ngrok URL after every scan
+    console.info(`🖥️  Local     →  http://localhost:${PORT}/chart`);
+    if (ngrokUrl) {
+      console.info(`${"─".repeat(50)}`);
+      console.info(`🌐 TEAM LINK →  ${ngrokUrl}/chart`);
+      console.info(`${"─".repeat(50)}`);
+    }
     broadcast("scan_complete", { cycle: runCount, elapsed, newSignals: total });
   } finally { isRunning = false; }
 }
@@ -500,6 +504,9 @@ async function start() {
     try {
       const listener = await ngrok.forward({ addr: PORT, authtoken: ngrokToken });
       ngrokUrl = listener.url(); // assigned to module-level var
+      console.info(`${"═".repeat(55)}`);
+      console.info(`🌐 TEAM LINK  →  ${ngrokUrl}/chart`);
+      console.info(`   (share this link with your teammates)`);
     } catch (ngrokErr) {
       console.warn(`⚠️  ngrok failed: ${ngrokErr.message}`);
     }

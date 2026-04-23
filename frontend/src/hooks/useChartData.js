@@ -2,6 +2,10 @@
 // import { useState, useEffect, useCallback, useRef } from "react";
 // import { fetchChartData } from "../utils/api";
 
+// /**
+//  * Single-date chart data hook.
+//  * Uses /api/chart with the given symbol + resolution + timeframe + date.
+//  */
 // export function useChartData(symbol, resolution, timeframe, date) {
 //   const [data, setData] = useState(null);
 //   const [loading, setLoading] = useState(false);
@@ -22,27 +26,20 @@
 //     } finally {
 //       setLoading(false);
 //     }
-//   }, [symbol, resolution, timeframe, date]);
+//   }, [symbol, resolution, timeframe, date]); // eslint-disable-line
 
 //   useEffect(() => { load(); }, [load]);
 
 //   return { data, loading, error, reload: load };
 // }
 
-
 // hooks/useChartData.js
-
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchChartData, fetchChartRangeData } from "../utils/api";
 
 /**
- * Unified chart data hook.
- *
- * Mode 1 — single date:   pass date, leave fromDate/toDate null
- * Mode 2 — date range:    pass fromDate + toDate, leave date null
- *
- * When both fromDate and toDate are provided the hook uses /api/chart-range.
- * Otherwise it falls back to /api/chart with the single date.
+ * Mode 1 — single date (todayActive=true):  date set, fromDate/toDate null → /api/chart
+ * Mode 2 — 1-month range (todayActive=false): fromDate+toDate set, date null → /api/chart-range
  */
 export function useChartData(symbol, resolution, timeframe, date, fromDate, toDate) {
   const [data, setData] = useState(null);
