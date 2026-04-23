@@ -278,11 +278,9 @@ function processSymbol(symbol, rawCandles, targetDate) {
           logger.debug(`📊 ${symbol} [${timeStr}] ✅ NEW_HIGH confirmed @ ${st.tempPrice}`);
           signals.push({ symbol, type: "NEW_HIGH", price: st.tempPrice, ts: st.tempTs });
 
-          if (crossesHigh) {
-            // BOTH crosses on same candle — also mark NH for this candle's high
-            // then immediately start tracking low
-            signals.push({ symbol, type: "NEW_HIGH", price: high, ts });
-          }
+          // NOTE: Do NOT emit a second NH for this candle's high even if crossesHigh is true.
+          // A candle cannot generate back-to-back NH — the low-cross confirms the NH, then
+          // we switch to TRACKING_LOW from this candle's low.
 
           // Start tracking low from this candle
           st.tempPrice = low; st.tempTs = ts;
@@ -314,10 +312,9 @@ function processSymbol(symbol, rawCandles, targetDate) {
           logger.debug(`📊 ${symbol} [${timeStr}] ✅ NEW_LOW confirmed @ ${st.tempPrice}`);
           signals.push({ symbol, type: "NEW_LOW", price: st.tempPrice, ts: st.tempTs });
 
-          if (crossesLow) {
-            // BOTH crosses on same candle — also mark NL for this candle's low
-            signals.push({ symbol, type: "NEW_LOW", price: low, ts });
-          }
+          // NOTE: Do NOT emit a second NL for this candle's low even if crossesLow is true.
+          // A candle cannot generate back-to-back NL — the high-cross confirms the NL, then
+          // we switch to TRACKING_HIGH from this candle's high.
 
           // Start tracking high from this candle
           st.tempPrice = high; st.tempTs = ts;

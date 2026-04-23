@@ -25,7 +25,7 @@ function tsToISTDate(ts) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
-export default function TradingChart({ data, showEMA9High, showEMA9Low, showEMA9Close, onCrosshairMove }) {
+export default function TradingChart({ data, showEMA9High, showEMA9Low, showEMA9Close, onCrosshairMove, todayMode }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef({});
@@ -148,11 +148,11 @@ export default function TradingChart({ data, showEMA9High, showEMA9Low, showEMA9
     seriesRef.current.ema9LowSeries.setData(ema9LData);
     seriesRef.current.ema9CloseSeries.setData(ema9CData);
 
-    const markers = buildMarkers(signals || [], candleTimesRef.current);
+    const markers = buildMarkers(signals || [], candleTimesRef.current, todayMode);
     seriesRef.current.candleSeries.setMarkers(markers);
 
     chartRef.current?.timeScale().fitContent();
-  }, [data]);
+  }, [data, todayMode]);
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }
@@ -171,33 +171,22 @@ function snapToCandle(ts, sortedTimes) {
   return sortedTimes[lo];
 }
 
-function buildMarkers(signals, sortedCandleTimes) {
+function buildMarkers(signals, sortedCandleTimes, todayMode = false) {
   if (!signals || signals.length === 0) return [];
 
-  // Sort signals chronologically
   const sorted = [...signals].sort((a, b) => a.ts - b.ts);
-
-  // Determine if we're in multi-day mode (signals span more than one IST day)
   const uniqueDays = new Set(sorted.map(s => tsToISTDate(s.ts)));
   const isMultiDay = uniqueDays.size > 1;
 
-  // In multi-day mode: hide FH/FL/LH/LL — only show continuous NH/NL chain (Image 3 style)
-  // In single-day (today) mode: show all signal types
+  // Multi-day range (not todayMode): only NH/NL, continuous numbering
   const VISIBLE_TYPES_MULTIDAY = new Set(["NEW_HIGH", "NEW_LOW"]);
 
-  // Counter map per day for numbering
-  const dayCounters = {};
-  let globalCounter = 0;
-
-  // Dedup by type + snapped time
   const dedupMap = new Map();
 
   for (const sig of sorted) {
     const style = SIGNAL_STYLES[sig.type];
     if (!style) continue;
-
-    // In multi-day mode, skip FH/FL/LH/LL
-    if (isMultiDay && !VISIBLE_TYPES_MULTIDAY.has(sig.type)) continue;
+    if (isMultiDay && !todayMode && !VISIBLE_TYPES_MULTIDAY.has(sig.type)) continue;
 
     const snappedTime = snapToCandle(sig.ts, sortedCandleTimes);
     const key = `${sig.type}::${snappedTime}`;
@@ -215,21 +204,13 @@ function buildMarkers(signals, sortedCandleTimes) {
     }
   }
 
-  // Assign sequential numbers, sorted by time
   const markerList = Array.from(dedupMap.values()).sort((a, b) => a.time - b.time);
 
+  let globalCounter = 0;
   return markerList.map(m => {
-    const dayStr = m.dayStr;
-    if (!dayCounters[dayStr]) dayCounters[dayStr] = 0;
-
-    let num;
-    if (!isMultiDay) {
-      globalCounter++;
-      num = globalCounter;
-    } else {
-      dayCounters[dayStr]++;
-      num = dayCounters[dayStr];
-    }
+    globalCounter++;
+    // todayMode: rolling 1→20 then reset
+    const num = todayMode ? ((globalCounter - 1) % 20) + 1 : globalCounter;
 
     return {
       time: m.time,
