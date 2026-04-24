@@ -15,9 +15,11 @@ const { attachEMAFormatted, resampleCandles } = require("./ema");
 const { getStoredTokens } = require("./src/generate");
 const { fyers, setToken } = require("./utils/fyersClient");
 
-// ── Optional ngrok tunnel ─────────────────────────────────────────────────
-let ngrok = null;
-try { ngrok = require("@ngrok/ngrok"); } catch (_) { /* not installed — local only */ }
+// ── Optional tunnel (cloudflared — free, no rate limit) ──────────────────
+// Install once: npm install -g cloudflared   OR   winget install Cloudflare.cloudflared
+// Falls back silently if not available.
+const { execFile, spawn } = require("child_process");
+let cloudflaredProcess = null;
 
 const app = express();
 const server = http.createServer(app);
@@ -60,7 +62,7 @@ function getSignals(symbol, date) {
 // ── State ──────────────────────────────────────────────────────────────────
 let allSymbols = [], lastResetDate = null, isRunning = false;
 let runCount = 0, schedulerTimeout = null, lastScanTime = null, nextScanTimeStr = null;
-let ngrokUrl = null; // set after tunnel starts; used in runCycle URL print
+let tunnelUrl = null; // set after cloudflared tunnel starts
 
 app.use(cors());
 app.use(express.json());
@@ -211,10 +213,14 @@ async function runCycle(symbols) {
     console.info(`✅ Cycle #${runCount} done in ${elapsed}s | ${total} new signals`);
     // Always print both local + shareable ngrok URL after every scan
     console.info(`🖥️  Local     →  http://localhost:${PORT}/chart`);
-    if (ngrokUrl) {
+    if (tunnelUrl) {
       console.info(`${"─".repeat(50)}`);
-      console.info(`🌐 TEAM LINK →  ${ngrokUrl}/chart`);
+      console.info(`🌐 TEAM LINK →  ${tunnelUrl}/chart`);
+      console.info(`   Share this with teammates — no login needed`);
       console.info(`${"─".repeat(50)}`);
+    } else {
+      console.info(`💡 Tip: Install cloudflared for a free shareable link`);
+      console.info(`   npm install -g cloudflared`);
     }
     broadcast("scan_complete", { cycle: runCount, elapsed, newSignals: total });
   } finally { isRunning = false; }
@@ -498,19 +504,46 @@ async function start() {
   console.info(`📡 WebSocket  →  ws://localhost:${PORT}`);
   console.info(`📅 Scan date  →  ${getActiveScanDate()}`);
 
-  // ── Start ngrok tunnel ────────────────────────────────────────────────────
-  const ngrokToken = process.env.NGROK_AUTHTOKEN;
-  if (ngrok && ngrokToken) {
+  // ── Start cloudflared tunnel (free, no token, no rate limit) ───────────
+  // Requires cloudflared installed: winget install Cloudflare.cloudflared (Windows)
+  // or: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+  await new Promise(resolve => {
     try {
-      const listener = await ngrok.forward({ addr: PORT, authtoken: ngrokToken });
-      ngrokUrl = listener.url(); // assigned to module-level var
-      console.info(`${"═".repeat(55)}`);
-      console.info(`🌐 TEAM LINK  →  ${ngrokUrl}/chart`);
-      console.info(`   (share this link with your teammates)`);
-    } catch (ngrokErr) {
-      console.warn(`⚠️  ngrok failed: ${ngrokErr.message}`);
+      cloudflaredProcess = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${PORT}`], {
+        stdio: ["ignore", "ignore", "pipe"],
+        shell: process.platform === "win32"
+      });
+      let urlFound = false;
+      cloudflaredProcess.stderr.on("data", (data) => {
+        const text = data.toString();
+        const match = text.match(/https:\/\/[a-z0-9\-]+\.trycloudflare\.com/);
+        if (match && !urlFound) {
+          urlFound = true;
+          tunnelUrl = match[0];
+          console.info(`${"═".repeat(55)}`);
+          console.info(`🌐 TEAM LINK  →  ${tunnelUrl}/chart`);
+          console.info(`   Share this with teammates — free, no login needed`);
+          console.info(`${"═".repeat(55)}`);
+          resolve();
+        }
+      });
+      cloudflaredProcess.on("error", (err) => {
+        if (err.code === "ENOENT") {
+          console.warn(`⚠️  cloudflared not found. Install it for a free shareable link:`);
+          console.warn(`   Windows: winget install Cloudflare.cloudflared`);
+          console.warn(`   Mac:     brew install cloudflare/cloudflare/cloudflared`);
+        } else {
+          console.warn(`⚠️  cloudflared error: ${err.message}`);
+        }
+        resolve();
+      });
+      // Timeout: if URL not found in 15s, continue anyway
+      setTimeout(() => { if (!urlFound) { console.warn("⚠️  cloudflared URL not detected in 15s — running local only"); resolve(); } }, 15000);
+    } catch (e) {
+      console.warn(`⚠️  Could not start cloudflared: ${e.message}`);
+      resolve();
     }
-  }
+  });
   console.info(`${"═".repeat(55)}\n`);
 
   console.info("🎯 Running initial scan...");

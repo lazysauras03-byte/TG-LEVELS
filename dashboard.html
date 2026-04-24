@@ -199,7 +199,7 @@
       const d = new Date((ts + IST_OFFSET) * 1000);
       return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
     }
-    // todayMode = true: 3M data fetched but only today's bubbles shown (all types), rolling-20 counter
+    // todayMode = true: 1M data fetched but only today's bubbles shown (all types), rolling-20 counter
     // isMultiDay (no todayMode): continuous NH/NL only, no FH/FL/LH/LL
     // single-day: all types, global 1->N counter
     function buildMarkers(signals, sortedTimes, todayMode) {
@@ -221,7 +221,7 @@
       let globalCounter = 0;
       return markerList.map(m => {
         globalCounter++;
-        const num = todayMode ? ((globalCounter - 1) % 20) + 1 : globalCounter;
+        const num = ((globalCounter - 1) % 20);
         return { time: m.time, position: m.position, color: m.color, shape: m.shape, text: (TYPE_LABEL_MAP[m.type] || m.type) + " " + num, size: m.size };
       });
     }
@@ -358,9 +358,6 @@
           React.createElement("span", { style: { width: 6, height: 6, borderRadius: "50%", background: isMarket ? "#22c55e" : "#64748b", display: "inline-block", animation: isMarket ? "pulse 2s infinite" : "none" } }),
           s(isMarket ? "#94a3b8" : "#4b6899", isMarket ? "MARKET OPEN" : "MARKET CLOSED")
         ),
-        status?.lastScan && React.createElement(React.Fragment, null, s("#1e2d4a", "│"), s("#3b5280", "Last: ", {}, React.createElement("span", { style: { color: "#64748b" } }, status.lastScan))),
-        status?.nextScan && React.createElement(React.Fragment, null, s("#1e2d4a", "│"), s("#3b5280", "Next: ", {}, React.createElement("span", { style: { color: "#64748b" } }, status.nextScan))),
-        status?.cycle > 0 && React.createElement(React.Fragment, null, s("#1e2d4a", "│"), s("#3b5280", "Cycle: ", {}, React.createElement("span", { style: { color: "#64748b" } }, "#" + status.cycle))),
         React.createElement("div", { style: { flex: 1 } }),
         lastUpdate && s("#3b5280", "Updated: ", {}, React.createElement("span", { style: { color: "#64748b" } }, lastUpdate)),
         React.createElement("button", { onClick: onForceRefresh, style: { background: "transparent", border: "1px solid #1e2d4a", color: "#4b6899", padding: "2px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "'JetBrains Mono',monospace" } }, "↻ REFRESH")
@@ -567,7 +564,7 @@
 
       const [emaState, setEmaState] = useState({ showEMA9High: true, showEMA9Low: true, showEMA9Close: false });
       const [todayMode, setTodayMode] = useState(false);
-      // todayData: 3M range data but filtered to today's signals only
+      // todayData: 1M range data but filtered to today's signals only
       const [todayData, setTodayData] = useState(null);
       const [todayLoading, setTodayLoading] = useState(false);
 
@@ -614,12 +611,12 @@
       function handleTfChange(res, tf) { setResolution(res); setTimeframe(tf); }
 
       async function activateTodayMode() {
-        // Fetch 3M range data, but filter signals to today only.
-        // Candles show full 3M, bubbles only on today.
+        // Fetch 1M range data, but filter signals to today only.
+        // Candles show full 1M, bubbles only on today.
         setTodayLoading(true);
         try {
-          const from3m = subtractDays(today, 90);
-          const rangeResult = await fetchChartRangeData(activeSymbol, resolution, from3m, today);
+          const from1m = subtractDays(today, 30);
+          const rangeResult = await fetchChartRangeData(activeSymbol, resolution, from1m, today);
           if (rangeResult) {
             // Filter signals to today only, but keep all candles
             const todaySigs = (rangeResult.signals || []).filter(s => tsToISTDate(s.ts) === today);
@@ -633,8 +630,9 @@
             setTodayData({ ...rangeResult, signals: lhllFiltered });
           }
           setTodayMode(true);
-          // Exit range mode so chart uses todayData
-          setFromDate(null); setToDate(null); setSelectedDate(today);
+          // Set range to 1M so if TODAY is unclicked, 1M is ready
+          const fm = subtractDays(today, 30);
+          setFromDate(fm); setToDate(today);
         } catch (e) { console.error("Today mode fetch failed:", e); }
         finally { setTodayLoading(false); }
       }
@@ -672,7 +670,7 @@
       const chartData = todayMode ? todayData : data;
       const chartLoading = todayMode ? todayLoading : loading;
       const clean = activeSymbol.replace("NSE:", "").replace("NFO:", "").replace("-EQ", "");
-      const dateLabel = isRange ? fromDate + " → " + toDate : todayMode ? "TODAY (" + today + ") [3M EMA]" : selectedDate;
+      const dateLabel = isRange ? fromDate + " → " + toDate : todayMode ? "TODAY (" + today + ") [1M]" : selectedDate;
 
       // ── Layout ──────────────────────────────────────────────────────────────────
       const topBar = React.createElement("div", { style: { display: "flex", alignItems: "center", height: 52, padding: "0 12px", background: "#060b14", borderBottom: "1px solid #0f1929", flexShrink: 0, gap: 0 } },
@@ -696,12 +694,22 @@
           React.createElement(PriceHeader, { symbol: activeSymbol, data, crosshairData: crosshair })
         ),
 
-        // Date range controls
+        // Date range controls — TODAY button only
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, marginLeft: 8, flexShrink: 0 } },
-          // TODAY button — fetches 3M data, shows only today's bubbles (all types), rolling-20 numbering
           React.createElement("button", {
-            onClick: () => { if (todayMode) { setTodayMode(false); setTodayData(null); } else activateTodayMode(); },
-            title: "Fetch 3M data for accurate EMA, show bubbles for today only. Numbering resets every 20.",
+            onClick: () => {
+              if (todayMode) {
+                setTodayMode(false);
+                setTodayData(null);
+                // Show full 1M on unclick
+                const from1m = subtractDays(today, 30);
+                setFromDate(from1m); setToDate(today);
+                navigate(activeSymbol, { from: from1m, to: today });
+              } else {
+                activateTodayMode();
+              }
+            },
+            title: "Show only today bubbles on 1-month chart. Unclick to show all bubbles.",
             style: {
               padding: "3px 9px", borderRadius: 4, cursor: todayLoading ? "wait" : "pointer",
               border: "1px solid " + (todayMode ? "#22c55e" : "#1e2d4a"),
@@ -710,28 +718,7 @@
               fontSize: 10, fontFamily: "'JetBrains Mono',monospace", fontWeight: todayMode ? 700 : 400,
               opacity: todayLoading ? 0.6 : 1,
             }
-          }, todayLoading ? "…" : todayMode ? "✓ TODAY" : "TODAY"),
-
-          React.createElement("div", { style: { width: 1, height: 18, background: "#1e2d4a" } }),
-
-          [1, 3].map(m => {
-            const btnFrom = subtractDays(today, m * 30);
-            const isA = !todayMode && isRange && fromDate === btnFrom && toDate === today;
-            return React.createElement("button", { key: m, onClick: () => applyRange(m), style: { padding: "3px 9px", borderRadius: 4, cursor: "pointer", border: "1px solid " + (isA ? "#3b82f6" : "#1e2d4a"), background: isA ? "#1e3a8a33" : "transparent", color: isA ? "#60a5fa" : "#4b6899", fontSize: 10, fontFamily: "'JetBrains Mono',monospace", fontWeight: isA ? 700 : 400 } }, m + "M");
-          }),
-          React.createElement("div", { style: { width: 1, height: 18, background: "#1e2d4a" } }),
-          React.createElement("span", { style: { fontSize: 10, color: "#3b5280", fontFamily: "'JetBrains Mono',monospace" } }, "FROM"),
-          React.createElement("input", { type: "date", value: fromDate || "", max: toDate || today, onChange: handleFromChange, style: { background: "#0d1221", border: "1px solid " + (isRange && !todayMode ? "#3b82f644" : "#1e2d4a"), color: isRange && !todayMode ? "#93c5fd" : "#3b5280", padding: "3px 6px", borderRadius: 5, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", outline: "none", cursor: "pointer", width: 114 } }),
-          React.createElement("span", { style: { fontSize: 10, color: "#3b5280", fontFamily: "'JetBrains Mono',monospace" } }, "TO"),
-          React.createElement("input", { type: "date", value: toDate || today, max: today, min: fromDate || undefined, onChange: handleToChange, style: { background: "#0d1221", border: "1px solid " + (isRange && !todayMode ? "#3b82f644" : "#22c55e44"), color: (!toDate || toDate === today) ? "#22c55e" : "#93c5fd", padding: "3px 6px", borderRadius: 5, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", outline: "none", cursor: "pointer", width: 114 } }),
-          isRange && !todayMode
-            ? React.createElement("button", { onClick: clearRange, style: { padding: "2px 8px", borderRadius: 4, border: "1px solid #3b82f644", background: "transparent", color: "#3b82f6", cursor: "pointer", fontSize: 10, fontFamily: "'JetBrains Mono',monospace" } }, "✕")
-            : !todayMode && React.createElement(React.Fragment, null,
-              React.createElement("div", { style: { width: 1, height: 18, background: "#1e2d4a" } }),
-              React.createElement("span", { style: { fontSize: 10, color: "#3b5280", fontFamily: "'JetBrains Mono',monospace" } }, "DATE"),
-              React.createElement("input", { type: "date", value: selectedDate, max: today, onChange: handleDateChange, style: { background: "#0d1221", border: "1px solid " + (selectedDate === today ? "#22c55e44" : "#f59e0b66"), color: selectedDate === today ? "#22c55e" : "#f59e0b", padding: "3px 6px", borderRadius: 5, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", outline: "none", cursor: "pointer", width: 114 } }),
-              selectedDate !== today && React.createElement("span", { style: { fontSize: 10, color: "#f59e0b", padding: "2px 5px", borderRadius: 4, background: "#1c120044" } }, "PAST")
-            )
+          }, todayLoading ? "…" : todayMode ? "✓ TODAY" : "TODAY")
         ),
 
         // Timeframe
@@ -750,7 +737,7 @@
           chartLoading && React.createElement("div", { style: { position: "absolute", inset: 0, background: "#0a0e1acc", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 } },
             React.createElement("div", { style: { textAlign: "center" } },
               React.createElement("div", { style: { width: 32, height: 32, margin: "0 auto 12px", border: "2px solid #1e2d4a", borderTopColor: "#3b82f6", borderRadius: "50%", animation: "spin .8s linear infinite" } }),
-              React.createElement("div", { style: { fontSize: 12, color: "#4b6899", fontFamily: "'JetBrains Mono',monospace" } }, "Loading " + clean + " · " + dateLabel + (todayMode ? " — warming EMA on 3M…" : "…"))
+              React.createElement("div", { style: { fontSize: 12, color: "#4b6899", fontFamily: "'JetBrains Mono',monospace" } }, "Loading " + clean + " · " + dateLabel + (todayMode ? " — loading 1M data…" : "…"))
             )
           ),
           error && !chartLoading && !todayMode && React.createElement("div", { style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 } },
@@ -780,21 +767,7 @@
           React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: "4px 6px" } },
             React.createElement(SignalLegend, { signals: chartData?.signals })
           ),
-          // EMA Lines legend
-          React.createElement("div", { style: { borderTop: "1px solid #0f1929", padding: "8px 14px", flexShrink: 0 } },
-            React.createElement("div", { style: { fontSize: 9, color: "#4b6899", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 } }, "EMA Lines"),
-            React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-              [
-                { color: "#3b82f6", dash: false, label: "EMA9H", desc: "EMA 9 of Highs" },
-                { color: "#f97316", dash: false, label: "EMA9L", desc: "EMA 9 of Lows" },
-                { color: "#a855f7", dash: true, label: "EMA9C", desc: "EMA 9 of Close" },
-              ].map(({ color, dash, label, desc }) => React.createElement("div", { key: label, style: { display: "flex", alignItems: "center", gap: 8 } },
-                React.createElement("span", { style: { width: 20, height: 2, display: "inline-block", background: dash ? "transparent" : color, borderTop: dash ? "2px dashed " + color : "none", flexShrink: 0 } }),
-                React.createElement("span", { style: { color, fontSize: 9, fontFamily: "'JetBrains Mono',monospace", minWidth: 38 } }, label),
-                React.createElement("span", { style: { color: "#3b5280", fontSize: 8 } }, desc)
-              ))
-            )
-          ),
+
           // Share
           React.createElement("div", { style: { borderTop: "1px solid #0f1929", padding: "8px 14px", flexShrink: 0 } },
             React.createElement("button", { onClick: copyShare, style: { width: "100%", padding: "5px 0", borderRadius: 5, border: "1px solid #1e2d4a", background: "transparent", color: "#4b6899", cursor: "pointer", fontSize: 11, fontFamily: "'JetBrains Mono',monospace" } }, "⎘ COPY SHARE URL")
