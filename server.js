@@ -306,6 +306,11 @@ app.get("/api/chart", async (req, res) => {
       }
     }
 
+    // signalsOnly=1 — lightweight response for background refresh, skips candle data
+    if (req.query.signalsOnly === "1") {
+      return res.json({ symbol, resolution, date: targetDate, signals });
+    }
+
     res.json({
       symbol, resolution, date: targetDate,
       candles: withEma,
@@ -529,9 +534,16 @@ async function start() {
       });
       cloudflaredProcess.on("error", (err) => {
         if (err.code === "ENOENT") {
-          console.warn(`⚠️  cloudflared not found. Install it for a free shareable link:`);
+          console.warn(`⚠️  cloudflared not found. Install for a FREE permanent shareable link:`);
           console.warn(`   Windows: winget install Cloudflare.cloudflared`);
           console.warn(`   Mac:     brew install cloudflare/cloudflare/cloudflared`);
+          console.warn(`   Linux:   https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`);
+          console.warn(`   NOTE: Quick tunnel (trycloudflare.com) changes on every restart.`);
+          console.warn(`   For a PERMANENT link, create a free Cloudflare account and run:`);
+          console.warn(`     cloudflared tunnel login`);
+          console.warn(`     cloudflared tunnel create my-chart`);
+          console.warn(`     cloudflared tunnel route dns my-chart chart.yourdomain.com`);
+          console.warn(`     cloudflared tunnel run my-chart`);
         } else {
           console.warn(`⚠️  cloudflared error: ${err.message}`);
         }

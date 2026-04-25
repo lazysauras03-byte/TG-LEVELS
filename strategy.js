@@ -1,37 +1,74 @@
-// strategy.js
+// strategy.js — EMA9 NH/NL Tracker (exact port of Pine Script v2)
+//
+// CONDITIONS IN PLAIN WORDS:
+//
+// touchHigh = candle high >= EMA9High
+// touchLow  = candle low  <= EMA9Low
+// touchBoth = touchHigh AND touchLow
+//
+// STATE 0 (WAITING):
+//   touchHigh only       → state=1,  prevState=1,  bestHigh = this high
+//   touchLow only        → state=-1, prevState=-1, bestLow  = this low
+//   touchBoth            → use prevState to decide:
+//                            prevState=1  → state=1,  bestHigh = this high
+//                            prevState=-1 → state=-1, bestLow  = this low
+//                            prevState=0  → do nothing, stay 0
+//   neither              → stay 0
+//
+// STATE 1 (TRACK HIGH) — two independent if-blocks, BOTH run on same candle:
+//   Block A: touchHigh AND NOT touchLow → update bestHigh if high > bestHigh (or na)
+//   Block B: touchLow (any — even if touchHigh also true):
+//              → emit NH at bestBar
+//              → lastNH = bestPrice
+//              → state=0, bestPrice=na, bestBar=na
+//
+// STATE -1 (TRACK LOW) — two independent if-blocks, BOTH run on same candle:
+//   Block A: touchLow AND NOT touchHigh → update bestLow if low < bestLow (or na)
+//   Block B: touchHigh (any — even if touchLow also true):
+//              → emit NL at bestBar
+//              → lastNL = bestPrice
+//              → state=0, bestPrice=na, bestBar=na
+//
+// BC CONDITION (runs every bar, independent of state):
+//   high > lastNH → emit BC_HIGH at this candle
+//   low  < lastNL → emit BC_LOW  at this candle
+//   Both can fire on same candle
+//
+// KEY POINTS:
+//   1. After NH → goes to WAITING (state 0). Does NOT jump to state -1.
+//   2. After NL → goes to WAITING (state 0). Does NOT jump to state 1.
+//   3. touchBoth in WAITING uses prevState (memory of last direction).
+//      If prevState is still 0 (never moved) → do nothing.
+//   4. Block A and Block B in state 1 and -1 are independent.
+//      On a touchBoth candle while in state 1:
+//        Block A does nothing (requires !touchLow)
+//        Block B fires (touchLow is true) → confirm NH
+//   5. prevState is only updated when entering state 1 or state -1.
+//      It is never reset to 0, so it always remembers the last real direction.
+
 const { attachEMA } = require("./ema");
 const logger = require("./utils/logger");
 const moment = require("moment-timezone");
 
 const IST = "Asia/Kolkata";
 
-const STATE = {
-  INIT: "INIT",
-  TRACKING_HIGH: "TRACKING_HIGH",
-  TRACKING_LOW: "TRACKING_LOW",
-};
-
-const symbolStates = new Map();
-
 function getInitialState() {
-  return { state: STATE.INIT, firstPrinted: false, tempPrice: null, tempTs: null, lastProcessedTs: null };
+  return {
+    state: 0,   // 0=WAIT, 1=TRACK HIGH, -1=TRACK LOW
+    prevState: 0,   // remembers last direction for touchBoth in WAITING
+    bestPrice: null,
+    bestTs: null,
+    lastNH: null, // price of last confirmed NH (for BC check)
+    lastNL: null, // price of last confirmed NL (for BC check)
+    firstPrinted: false,
+  };
 }
 
+const symbolStates = new Map();
 function resetSymbol(symbol) { symbolStates.set(symbol, getInitialState()); }
-function resetAll() { symbolStates.clear(); logger.info("🔄 All states reset."); }
+function resetAll() { symbolStates.clear(); logger.info("All states reset."); }
 function getState(symbol) { return symbolStates.get(symbol) || null; }
 
-/**
- * processSymbol — stateless replay for a given date.
- *
- * BOTH-CROSS RULE (updated):
- *   If a candle HIGH > ema9High AND LOW < ema9Low (big candle touching both EMAs):
- *   — Confirm the currently pending NH/NL immediately
- *   — Reset state; then on the VERY NEXT candle:
- *       * If next candle HIGH > ema9High → TRACKING_HIGH
- *       * If next candle LOW  < ema9Low  → TRACKING_LOW
- *   (the big candle itself does NOT create a bubble — only next candle starts tracking)
- */
 function processSymbol(symbol, rawCandles, targetDate) {
   if (!rawCandles || rawCandles.length === 0) return [];
   const target = targetDate || moment().tz(IST).format("YYYY-MM-DD");
@@ -39,13 +76,11 @@ function processSymbol(symbol, rawCandles, targetDate) {
   try {
     const candles = attachEMA(rawCandles);
     const st = getInitialState();
-    let afterBothCross = false;
     const signals = [];
 
     const dayCandles = candles.filter(c =>
       moment.unix(c.ts).tz(IST).format("YYYY-MM-DD") === target
     );
-
     if (dayCandles.length === 0) return [];
 
     for (let i = 0; i < dayCandles.length; i++) {
@@ -54,19 +89,14 @@ function processSymbol(symbol, rawCandles, targetDate) {
       const isLast = i === dayCandles.length - 1;
       const timeStr = moment.unix(ts).tz(IST).format("HH:mm");
 
-      // ── STEP 1: First candle ─────────────────────────────────────────────
+      // ── FIRST CANDLE: record FH/FL for sidebar ───────────────────────────
       if (!st.firstPrinted) {
         signals.push({ symbol, type: "FIRST_HIGH", price: high, ts });
         signals.push({ symbol, type: "FIRST_LOW", price: low, ts });
         st.firstPrinted = true;
-        if (isLast) {
-          signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-          signals.push({ symbol, type: "LAST_LOW", price: low, ts });
-        }
-        continue;
       }
 
-      // ── STEP 2: EMA not warm yet ─────────────────────────────────────────
+      // ── EMA not ready: skip state logic ─────────────────────────────────
       if (ema9High == null || ema9Low == null) {
         if (isLast) {
           signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
@@ -75,149 +105,114 @@ function processSymbol(symbol, rawCandles, targetDate) {
         continue;
       }
 
-      const crossesHigh = high > ema9High;
-      const crossesLow = low < ema9Low;
-      const bothCross = crossesHigh && crossesLow;
+      // ── Candle conditions (mirrors Pine Script exactly) ──────────────────
+      const touchHigh = high >= ema9High;
+      const touchLow = low <= ema9Low;
+      const touchBoth = touchHigh && touchLow;
 
-      // ── STEP 3: Candle immediately after a both-cross ────────────────────
-      if (afterBothCross) {
-        afterBothCross = false;
-        if (bothCross) {
-          // Another both-cross — confirm pending if any, wait again
-          if (st.state === STATE.TRACKING_HIGH) {
-            signals.push({ symbol, type: "NEW_HIGH", price: st.tempPrice, ts: st.tempTs });
-          } else if (st.state === STATE.TRACKING_LOW) {
-            signals.push({ symbol, type: "NEW_LOW", price: st.tempPrice, ts: st.tempTs });
+      // ── STATE 0: WAITING ─────────────────────────────────────────────────
+      if (st.state === 0) {
+        if (touchHigh && !touchLow) {
+          st.state = 1; st.prevState = 1;
+          st.bestPrice = high; st.bestTs = ts;
+          logger.debug(`${symbol} [${timeStr}] WAIT → state 1, bestHigh=${high}`);
+
+        } else if (touchLow && !touchHigh) {
+          st.state = -1; st.prevState = -1;
+          st.bestPrice = low; st.bestTs = ts;
+          logger.debug(`${symbol} [${timeStr}] WAIT → state -1, bestLow=${low}`);
+
+        } else if (touchBoth) {
+          if (st.prevState === 1) {
+            st.state = 1;
+            st.bestPrice = high; st.bestTs = ts;
+            logger.debug(`${symbol} [${timeStr}] WAIT touchBoth prevState=1 → state 1, bestHigh=${high}`);
+          } else if (st.prevState === -1) {
+            st.state = -1;
+            st.bestPrice = low; st.bestTs = ts;
+            logger.debug(`${symbol} [${timeStr}] WAIT touchBoth prevState=-1 → state -1, bestLow=${low}`);
           }
-          st.state = STATE.INIT;
-          st.tempPrice = null; st.tempTs = null;
-          afterBothCross = true;
-        } else if (crossesHigh) {
-          st.tempPrice = high; st.tempTs = ts;
-          st.state = STATE.TRACKING_HIGH;
-          logger.debug(`📊 ${symbol} [${timeStr}] post-both-cross → TRACKING_HIGH @ ${high}`);
-        } else if (crossesLow) {
-          st.tempPrice = low; st.tempTs = ts;
-          st.state = STATE.TRACKING_LOW;
-          logger.debug(`📊 ${symbol} [${timeStr}] post-both-cross → TRACKING_LOW @ ${low}`);
-        } else {
-          st.state = STATE.INIT;
-          st.tempPrice = null; st.tempTs = null;
+          // prevState === 0 → do nothing, stay WAITING
         }
-        if (isLast) {
-          signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-          signals.push({ symbol, type: "LAST_LOW", price: low, ts });
-        }
-        continue;
+        // neither → stay WAITING
       }
 
-      // ── STEP 4: INIT ─────────────────────────────────────────────────────
-      if (st.state === STATE.INIT) {
-        if (bothCross) {
-          afterBothCross = true;
-        } else if (crossesHigh) {
-          st.tempPrice = high; st.tempTs = ts;
-          st.state = STATE.TRACKING_HIGH;
-        } else if (crossesLow) {
-          st.tempPrice = low; st.tempTs = ts;
-          st.state = STATE.TRACKING_LOW;
+      // ── STATE 1: TRACK HIGH ──────────────────────────────────────────────
+      // Block A and Block B are independent — both checked on same candle
+      if (st.state === 1) {
+
+        // Block A: touchHigh only → update bestHigh
+        if (touchHigh && !touchLow) {
+          if (st.bestPrice === null || high > st.bestPrice) {
+            st.bestPrice = high; st.bestTs = ts;
+            logger.debug(`${symbol} [${timeStr}] state 1 update bestHigh=${high}`);
+          }
         }
-        if (isLast) {
-          signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-          signals.push({ symbol, type: "LAST_LOW", price: low, ts });
+
+        // Block B: touchLow (any) → confirm NH, go to WAITING
+        if (touchLow) {
+          if (st.bestPrice !== null) {
+            logger.debug(`${symbol} [${timeStr}] CONFIRM NH @ ${st.bestPrice} (bar ${moment.unix(st.bestTs).tz(IST).format("HH:mm")})`);
+            signals.push({ symbol, type: "NEW_HIGH", price: st.bestPrice, ts: st.bestTs });
+            st.lastNH = st.bestPrice;
+          }
+          st.state = 0;
+          st.bestPrice = null; st.bestTs = null;
+          logger.debug(`${symbol} [${timeStr}] → state 0 (WAITING)`);
         }
-        continue;
       }
 
-      // ── STEP 5: TRACKING_HIGH ────────────────────────────────────────────
-      if (st.state === STATE.TRACKING_HIGH) {
-        if (bothCross) {
-          logger.debug(`📊 ${symbol} [${timeStr}] ✅ NEW_HIGH confirmed by both-cross @ ${st.tempPrice}`);
-          signals.push({ symbol, type: "NEW_HIGH", price: st.tempPrice, ts: st.tempTs });
-          st.state = STATE.INIT;
-          st.tempPrice = null; st.tempTs = null;
-          afterBothCross = true;
-          if (isLast) {
-            signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-            signals.push({ symbol, type: "LAST_LOW", price: low, ts });
+      // ── STATE -1: TRACK LOW ──────────────────────────────────────────────
+      // Block A and Block B are independent — both checked on same candle
+      if (st.state === -1) {
+
+        // Block A: touchLow only → update bestLow
+        if (touchLow && !touchHigh) {
+          if (st.bestPrice === null || low < st.bestPrice) {
+            st.bestPrice = low; st.bestTs = ts;
+            logger.debug(`${symbol} [${timeStr}] state -1 update bestLow=${low}`);
           }
-          continue;
         }
 
-        if (crossesHigh && high >= st.tempPrice) {
-          st.tempPrice = high; st.tempTs = ts;
-        }
-
-        if (crossesLow) {
-          logger.debug(`📊 ${symbol} [${timeStr}] ✅ NEW_HIGH confirmed @ ${st.tempPrice}`);
-          signals.push({ symbol, type: "NEW_HIGH", price: st.tempPrice, ts: st.tempTs });
-          st.tempPrice = low; st.tempTs = ts;
-          st.state = STATE.TRACKING_LOW;
-          if (isLast) {
-            signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-            signals.push({ symbol, type: "LAST_LOW", price: low, ts });
+        // Block B: touchHigh (any) → confirm NL, go to WAITING
+        if (touchHigh) {
+          if (st.bestPrice !== null) {
+            logger.debug(`${symbol} [${timeStr}] CONFIRM NL @ ${st.bestPrice} (bar ${moment.unix(st.bestTs).tz(IST).format("HH:mm")})`);
+            signals.push({ symbol, type: "NEW_LOW", price: st.bestPrice, ts: st.bestTs });
+            st.lastNL = st.bestPrice;
           }
-          continue;
+          st.state = 0;
+          st.bestPrice = null; st.bestTs = null;
+          logger.debug(`${symbol} [${timeStr}] → state 0 (WAITING)`);
         }
-
-        if (isLast) {
-          signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-          signals.push({ symbol, type: "LAST_LOW", price: low, ts });
-        }
-        continue;
       }
 
-      // ── STEP 6: TRACKING_LOW ─────────────────────────────────────────────
-      if (st.state === STATE.TRACKING_LOW) {
-        if (bothCross) {
-          logger.debug(`📊 ${symbol} [${timeStr}] ✅ NEW_LOW confirmed by both-cross @ ${st.tempPrice}`);
-          signals.push({ symbol, type: "NEW_LOW", price: st.tempPrice, ts: st.tempTs });
-          st.state = STATE.INIT;
-          st.tempPrice = null; st.tempTs = null;
-          afterBothCross = true;
-          if (isLast) {
-            signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-            signals.push({ symbol, type: "LAST_LOW", price: low, ts });
-          }
-          continue;
-        }
+      // ── BC CONDITION: runs every bar, independent of state ───────────────
+      if (st.lastNH !== null && high > st.lastNH) {
+        signals.push({ symbol, type: "BC_HIGH", price: high, ts });
+        logger.debug(`${symbol} [${timeStr}] BC_HIGH: high ${high} > lastNH ${st.lastNH}`);
+      }
+      if (st.lastNL !== null && low < st.lastNL) {
+        signals.push({ symbol, type: "BC_LOW", price: low, ts });
+        logger.debug(`${symbol} [${timeStr}] BC_LOW: low ${low} < lastNL ${st.lastNL}`);
+      }
 
-        if (crossesLow && low <= st.tempPrice) {
-          st.tempPrice = low; st.tempTs = ts;
-        }
-
-        if (crossesHigh) {
-          logger.debug(`📊 ${symbol} [${timeStr}] ✅ NEW_LOW confirmed @ ${st.tempPrice}`);
-          signals.push({ symbol, type: "NEW_LOW", price: st.tempPrice, ts: st.tempTs });
-          st.tempPrice = high; st.tempTs = ts;
-          st.state = STATE.TRACKING_HIGH;
-          if (isLast) {
-            signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-            signals.push({ symbol, type: "LAST_LOW", price: low, ts });
-          }
-          continue;
-        }
-
-        if (isLast) {
-          signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
-          signals.push({ symbol, type: "LAST_LOW", price: low, ts });
-        }
-        continue;
+      // ── LAST CANDLE: emit LH/LL for chart rightmost marker ───────────────
+      if (isLast) {
+        signals.push({ symbol, type: "LAST_HIGH", price: high, ts });
+        signals.push({ symbol, type: "LAST_LOW", price: low, ts });
       }
     }
 
-    const sigTypes = signals
-      .map(s => s.type)
+    const tracked = signals.map(s => s.type)
       .filter(t => !["LAST_HIGH", "LAST_LOW", "FIRST_HIGH", "FIRST_LOW"].includes(t));
-    if (sigTypes.length > 0) {
-      logger.debug(`📊 ${symbol} signals: ${sigTypes.join(" → ")}`);
-    }
+    if (tracked.length > 0) logger.debug(`${symbol} → ${tracked.join(" → ")}`);
 
     return signals;
   } catch (err) {
-    logger.error(`❌ Strategy error [${symbol}]: ${err.message}`);
+    logger.error(`Strategy error [${symbol}]: ${err.message}`);
     return [];
   }
 }
 
-module.exports = { processSymbol, resetSymbol, resetAll, getState, STATE };
+module.exports = { processSymbol, resetSymbol, resetAll, getState };

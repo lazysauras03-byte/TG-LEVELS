@@ -143,6 +143,10 @@
             ? await fetchChartRangeData(symbol, resolution, fromDate, toDate)
             : await fetchChartData(symbol, resolution, timeframe, date);
           setData(result);
+          // Update lastUpdate timestamp on every data load
+          window.__setLastUpdate && window.__setLastUpdate(
+            new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })
+          );
         } catch (e) {
           if (e.name !== "AbortError") setError(e.message);
         } finally { setLoading(false); }
@@ -203,26 +207,69 @@
     // isMultiDay (no todayMode): continuous NH/NL only, no FH/FL/LH/LL
     // single-day: all types, global 1->N counter
     function buildMarkers(signals, sortedTimes, todayMode) {
-      if (!signals?.length) return [];
+      if (!signals?.length || !sortedTimes?.length) return [];
       const sorted = [...signals].sort((a, b) => a.ts - b.ts);
       const uniqueDays = new Set(sorted.map(s => tsToISTDate(s.ts)));
       const isMultiDay = uniqueDays.size > 1;
+      // In multiday (unclicked today): show ONLY NH/NL. No FH/FL/LH/LL per day.
+      // LH/LL: only on the last candle of the entire visible range.
+      // FH/FL: only in single-day or todayMode.
       const MULTIDAY_VISIBLE = new Set(["NEW_HIGH", "NEW_LOW"]);
+
+      // The last candle time in visible data
+      const lastCandleTime = sortedTimes[sortedTimes.length - 1];
+
       const dedupMap = new Map();
       for (const sig of sorted) {
         const style = SIGNAL_STYLES[sig.type];
         if (!style) continue;
+
+        let t;
+        if (sig.type === "LAST_HIGH" || sig.type === "LAST_LOW") {
+          // LH/LL always snapped to the actual last candle of the visible range
+          t = lastCandleTime;
+          // In multiday: only show LH/LL once (on the last candle of the whole range)
+          // Keep only the very last occurrence of each
+          const key = sig.type + "::LAST";
+          dedupMap.set(key, { time: t, position: style.position, color: style.color, shape: style.shape, size: style.size, type: sig.type });
+          continue;
+        }
+
+        // Never show FH/FL as chart bubbles — they appear in sidebar list only
+        if (sig.type === "FIRST_HIGH" || sig.type === "FIRST_LOW") continue;
         if (isMultiDay && !todayMode && !MULTIDAY_VISIBLE.has(sig.type)) continue;
-        const t = snapToCandle(sig.ts, sortedTimes);
+        t = snapToCandle(sig.ts, sortedTimes);
         const key = sig.type + "::" + t;
-        if (!dedupMap.has(key)) dedupMap.set(key, { time: t, position: style.position, color: style.color, shape: style.shape, size: style.size, type: sig.type, dayStr: tsToISTDate(sig.ts) });
+        if (!dedupMap.has(key)) dedupMap.set(key, { time: t, position: style.position, color: style.color, shape: style.shape, size: style.size, type: sig.type });
       }
-      const markerList = Array.from(dedupMap.values()).sort((a, b) => a.time - b.time);
-      let globalCounter = 0;
+
+      // Sort: by time, then HIGH before LOW on same candle (FH/NH above, FL/NL below)
+      const HIGH_TYPES = new Set(["FIRST_HIGH", "NEW_HIGH", "LAST_HIGH"]);
+      const LOW_TYPES = new Set(["FIRST_LOW", "NEW_LOW", "LAST_LOW"]);
+      const markerList = Array.from(dedupMap.values()).sort((a, b) => {
+        if (a.time !== b.time) return a.time - b.time;
+        // On same candle: HIGH before LOW
+        const aH = HIGH_TYPES.has(a.type) ? 0 : 1;
+        const bH = HIGH_TYPES.has(b.type) ? 0 : 1;
+        return aH - bH;
+      });
+
+      // Single shared crisscross counter for NH and NL only
+      // NH 0, NL 1, NH 2, NL 3 ... resets at 20
+      // LH/LL: no number
+      let globalN = 0;
       return markerList.map(m => {
-        globalCounter++;
-        const num = ((globalCounter - 1) % 20);
-        return { time: m.time, position: m.position, color: m.color, shape: m.shape, text: (TYPE_LABEL_MAP[m.type] || m.type) + " " + num, size: m.size };
+        const label = TYPE_LABEL_MAP[m.type] || m.type;
+        let text;
+        if (m.type === "LAST_HIGH" || m.type === "LAST_LOW") {
+          text = label; // no number
+        } else if (m.type === "NEW_HIGH" || m.type === "NEW_LOW") {
+          text = label + " " + (globalN % 20);
+          globalN++;
+        } else {
+          text = label; // FH/FL if they ever appear — no number
+        }
+        return { time: m.time, position: m.position, color: m.color, shape: m.shape, text, size: m.size };
       });
     }
 
@@ -278,9 +325,12 @@
       useEffect(() => { seriesRef.current.ema9L?.applyOptions({ visible: showEMA9Low }); }, [showEMA9Low]);
       useEffect(() => { seriesRef.current.ema9C?.applyOptions({ visible: showEMA9Close }); }, [showEMA9Close]);
 
+      // Candle data effect — only when candles change (full load)
+      const prevCandleKey = useRef(null);
       useEffect(() => {
         if (!data?.candles?.length || !seriesRef.current.candleSeries) return;
         const { candles, signals } = data;
+        const newKey = candles[candles.length - 1]?.ts + ":" + candles.length;
         const cd = candles.map(c => ({ time: c.ts, open: c.open, high: c.high, low: c.low, close: c.close }));
         const vd = candles.map(c => ({ time: c.ts, value: c.volume || 0, color: c.close >= c.open ? "rgba(34,197,94,.35)" : "rgba(239,68,68,.35)" }));
         timesRef.current = cd.map(c => c.time).sort((a, b) => a - b);
@@ -290,8 +340,25 @@
         seriesRef.current.ema9L.setData(candles.filter(c => c.ema9Low != null).map(c => ({ time: c.ts, value: c.ema9Low })));
         seriesRef.current.ema9C.setData(candles.filter(c => c.ema9Close != null).map(c => ({ time: c.ts, value: c.ema9Close })));
         seriesRef.current.candleSeries.setMarkers(buildMarkers(signals || [], timesRef.current, todayMode));
-        chartRef.current?.timeScale().fitContent();
+        // Scroll to last candle after data load
+        if (newKey !== prevCandleKey.current) {
+          prevCandleKey.current = newKey;
+          chartRef.current?.timeScale().scrollToPosition(0, false);
+        }
       }, [data]);
+
+      // Signals-only effect — updates markers without reloading candles (from refreshSignalsOnly)
+      const prevSignalKey = useRef(null);
+      useEffect(() => {
+        if (!data?.signals || !seriesRef.current.candleSeries || !timesRef.current.length) return;
+        const sigKey = data.signals.length + ":" + (data.signals[data.signals.length - 1]?.ts || 0);
+        if (sigKey === prevSignalKey.current) return;
+        prevSignalKey.current = sigKey;
+        seriesRef.current.candleSeries.setMarkers(buildMarkers(data.signals, timesRef.current, todayMode));
+        // Move LH/LL markers to the actual last candle of the current data
+        // (already handled by strategy, but scroll to show it)
+        chartRef.current?.timeScale().scrollToPosition(0, false);
+      }, [data?.signals, todayMode]);
 
       return React.createElement("div", { ref: containerRef, style: { width: "100%", height: "100%" } });
     }
@@ -394,8 +461,8 @@
           React.createElement("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "#4b6899", strokeWidth: 2 },
             React.createElement("circle", { cx: 11, cy: 11, r: 8 }), React.createElement("path", { d: "m21 21-4.35-4.35" })
           ),
-          React.createElement("input", { ref: inputRef, value: query, onChange: e => { setQuery(e.target.value); setOpen(true) }, onFocus: () => setOpen(true), onBlur: () => setTimeout(() => setOpen(false), 150), onKeyDown: handleKey, placeholder: selected ? disp(selected) : "Search symbol…", style: { background: "transparent", border: "none", outline: "none", color: "#e2e8f0", fontSize: 13, fontFamily: "'JetBrains Mono',monospace", width: "100%", letterSpacing: .3 } }),
-          selected && React.createElement("span", { style: { fontSize: 10, color: "#22c55e", background: "#052e16", padding: "2px 6px", borderRadius: 4, whiteSpace: "nowrap", fontFamily: "'JetBrains Mono',monospace" } }, disp(selected))
+          React.createElement("input", { ref: inputRef, value: query, onChange: e => { setQuery(e.target.value); setOpen(true) }, onFocus: () => setOpen(true), onBlur: () => setTimeout(() => setOpen(false), 150), onKeyDown: handleKey, placeholder: "Search symbol…", style: { background: "transparent", border: "none", outline: "none", color: "#e2e8f0", fontSize: 13, fontFamily: "'JetBrains Mono',monospace", width: "100%", letterSpacing: .3 } }),
+          null /* symbol badge removed — shown in price header instead */
         ),
         open && filtered.length > 0 && React.createElement("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 100, background: "#0d1221", border: "1px solid #1e2d4a", borderRadius: 8, maxHeight: 280, overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,.6)" } },
           filtered.map((sym, i) => React.createElement("div", { key: sym, onMouseDown: () => pick(sym), style: { padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", background: i === hi ? "#131d35" : "transparent", borderBottom: "1px solid #0f1929" } },
@@ -444,7 +511,7 @@
 
       return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 20, padding: "0 4px", fontFamily: "'JetBrains Mono',monospace" } },
         React.createElement("div", { style: { display: "flex", flexDirection: "column" } },
-          React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: "#e2e8f0", letterSpacing: .5 } }, clean || "—"),
+          React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: "#22c55e", letterSpacing: .5 } }, clean || "—"),
           React.createElement("span", { style: { fontSize: 9, color: "#3b5280", letterSpacing: 1 } }, "NSE · EQ")
         ),
         c && React.createElement(React.Fragment, null,
@@ -538,7 +605,7 @@
     }
 
     // ─── ChartPage ────────────────────────────────────────────────────────────────
-    const DEFAULT_SYMBOL = "NSE:TORNTPHARM-EQ";
+    const DEFAULT_SYMBOL = localStorage.getItem("lastSymbol") || "NSE:NIFTY50-INDEX";
     function todayIST() { return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); }
     function subtractDays(dateStr, n) { const d = new Date(dateStr + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); }
 
@@ -550,9 +617,12 @@
       const [symbols, setSymbols] = useState([]);
       const [status, setStatus] = useState(null);
       const [lastUpdate, setLastUpdate] = useState(null);
+      // Expose setLastUpdate globally so useChartData hook can set it on load
+      useEffect(() => { window.__setLastUpdate = setLastUpdate; return () => { delete window.__setLastUpdate; }; }, [setLastUpdate]);
       const [crosshair, setCrosshair] = useState(null);
-      const [resolution, setResolution] = useState("3");
-      const [timeframe, setTimeframe] = useState("1m");
+      // Persist resolution across reloads
+      const [resolution, setResolution] = useState(() => localStorage.getItem("lastResolution") || "3");
+      const [timeframe, setTimeframe] = useState(() => localStorage.getItem("lastTimeframe") || "1m");
       const [sidebarOpen, setSidebarOpen] = useState(true);
 
       // date / range state
@@ -579,6 +649,8 @@
         apiFetch("/api/symbols").then(r => setSymbols(r.symbols || [])).catch(() => { });
         apiFetch("/api/status").then(s => {
           setStatus(s);
+          // Set lastUpdate from server's lastScan time on initial load
+          if (s?.lastScan) setLastUpdate(s.lastScan);
           if (s?.scanDate && s.scanDate !== today && !route.params.date && !route.params.from) setSelectedDate(s.scanDate);
         }).catch(() => { });
       }, []);
@@ -588,54 +660,110 @@
         return () => clearInterval(id);
       }, []);
 
+      // Smart background signal refresh — does NOT disrupt user's current view.
+      // On scan_complete: silently fetch new signals only, merge into existing data.
+      const refreshSignalsOnly = useCallback(async () => {
+        if (!activeSymbol) return;
+        try {
+          if (todayMode) {
+            // In todayMode: re-fetch today's filtered signals only
+            const from1m = subtractDays(today, 30);
+            const url = `/api/chart-range?symbol=${encodeURIComponent(activeSymbol)}&resolution=${resolution}&fromDate=${from1m}&toDate=${today}&signalsOnly=1`;
+            const fresh = await apiFetch(url);
+            if (fresh?.signals) {
+              const todaySigs = fresh.signals.filter(s => tsToISTDate(s.ts) === today);
+              const base = todaySigs.filter(s => s.type !== "LAST_HIGH" && s.type !== "LAST_LOW");
+              const lastHighs = todaySigs.filter(s => s.type === "LAST_HIGH");
+              const lastLows = todaySigs.filter(s => s.type === "LAST_LOW");
+              if (lastHighs.length) base.push(lastHighs[lastHighs.length - 1]);
+              if (lastLows.length) base.push(lastLows[lastLows.length - 1]);
+              setTodayData(prev => prev ? { ...prev, signals: base } : prev);
+            }
+          } else {
+            const activeDate = isRange ? toDate : selectedDate;
+            const url = isRange
+              ? `/api/chart-range?symbol=${encodeURIComponent(activeSymbol)}&resolution=${resolution}&fromDate=${fromDate}&toDate=${toDate}&signalsOnly=1`
+              : `/api/chart?symbol=${encodeURIComponent(activeSymbol)}&resolution=${resolution}&timeframe=${timeframe}&date=${activeDate}&signalsOnly=1`;
+            const fresh = await apiFetch(url);
+            if (fresh?.signals) {
+              setData(prev => prev ? { ...prev, signals: fresh.signals } : prev);
+            }
+          }
+        } catch (e) { /* silent — don't disrupt user */ }
+      }, [activeSymbol, resolution, timeframe, selectedDate, fromDate, toDate, isRange, todayMode, today]);
+
       const handleWs = useCallback((msg) => {
         if (msg.type === "scan_complete") {
           setStatus(p => ({ ...p, ...msg.data }));
           setLastUpdate(new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }));
+          // Only refresh signals for today's live data — don't touch historical views
           const activeDate = isRange ? toDate : selectedDate;
-          if (activeDate === today) reload();
+          if (activeDate === today) {
+            refreshSignalsOnly(); // smart: only updates signals, keeps candles+view intact
+          }
         }
         if (msg.type === "new_signals" && msg.data?.symbol === activeSymbol) {
           const activeDate = isRange ? toDate : selectedDate;
-          if (!msg.data?.date || msg.data.date === activeDate) reload();
+          if (!msg.data?.date || msg.data.date === activeDate) {
+            refreshSignalsOnly(); // smart update — no page reload, no view disruption
+          }
         }
-      }, [activeSymbol, reload, selectedDate, toDate, isRange, today]);
+      }, [activeSymbol, refreshSignalsOnly, selectedDate, toDate, isRange, today]);
 
       const { connected } = useWebSocket(handleWs);
 
       function handleSymbolSelect(sym) {
+        localStorage.setItem("lastSymbol", sym);
         const p = isRange ? { from: fromDate, to: toDate } : { date: selectedDate };
         navigate(sym, p);
-        // also update local symbol state by re-reading route
       }
-      function handleTfChange(res, tf) { setResolution(res); setTimeframe(tf); }
+      function handleTfChange(res, tf) {
+        localStorage.setItem("lastResolution", res);
+        localStorage.setItem("lastTimeframe", tf);
+        setResolution(res);
+        setTimeframe(tf);
+        // If in todayMode, re-fetch with new resolution immediately
+        if (todayMode) {
+          // Use timeout to let state update first
+          setTimeout(() => activateTodayModeWith(res, tf), 0);
+        }
+      }
 
-      async function activateTodayMode() {
-        // Fetch 1M range data, but filter signals to today only.
-        // Candles show full 1M, bubbles only on today.
+      // activateTodayModeWith — can accept explicit res/tf or use current state
+      async function activateTodayModeWith(useRes, useTf) {
+        const res = useRes || resolution;
+        const tf = useTf || timeframe;
         setTodayLoading(true);
         try {
           const from1m = subtractDays(today, 30);
-          const rangeResult = await fetchChartRangeData(activeSymbol, resolution, from1m, today);
+          const rangeResult = await fetchChartRangeData(activeSymbol, res, from1m, today);
           if (rangeResult) {
-            // Filter signals to today only, but keep all candles
+            // Filter signals to today only
             const todaySigs = (rangeResult.signals || []).filter(s => tsToISTDate(s.ts) === today);
-            // Also ensure LH/LL = only the very latest occurrence (latest candle of today)
-            const lhllFiltered = todaySigs.filter(s => s.type !== "LAST_HIGH" && s.type !== "LAST_LOW");
-            // Find the latest LH and LL for today
-            const todayLastHighs = todaySigs.filter(s => s.type === "LAST_HIGH");
-            const todayLastLows = todaySigs.filter(s => s.type === "LAST_LOW");
-            if (todayLastHighs.length) lhllFiltered.push(todayLastHighs[todayLastHighs.length - 1]);
-            if (todayLastLows.length) lhllFiltered.push(todayLastLows[todayLastLows.length - 1]);
-            setTodayData({ ...rangeResult, signals: lhllFiltered });
+            // Keep only the last LH/LL (latest candle of today)
+            const base = todaySigs.filter(s => s.type !== "LAST_HIGH" && s.type !== "LAST_LOW");
+            const lastHighs = todaySigs.filter(s => s.type === "LAST_HIGH");
+            const lastLows = todaySigs.filter(s => s.type === "LAST_LOW");
+            if (lastHighs.length) base.push(lastHighs[lastHighs.length - 1]);
+            if (lastLows.length) base.push(lastLows[lastLows.length - 1]);
+            setTodayData({ ...rangeResult, signals: base });
           }
           setTodayMode(true);
-          // Set range to 1M so if TODAY is unclicked, 1M is ready
           const fm = subtractDays(today, 30);
           setFromDate(fm); setToDate(today);
         } catch (e) { console.error("Today mode fetch failed:", e); }
         finally { setTodayLoading(false); }
       }
+      async function activateTodayMode() { return activateTodayModeWith(); }
+
+      // Auto-activate today mode on initial load
+      const didAutoToday = useRef(false);
+      useEffect(() => {
+        if (!didAutoToday.current) {
+          didAutoToday.current = true;
+          activateTodayModeWith();
+        }
+      }, []);  // eslint-disable-line
 
       function applyRange(months) {
         setTodayMode(false);
@@ -679,8 +807,8 @@
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginRight: 14, paddingRight: 14, borderRight: "1px solid #0f1929", flexShrink: 0 } },
           React.createElement("div", { style: { width: 26, height: 26, borderRadius: 6, background: "linear-gradient(135deg,#1e3a8a,#3b82f6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" } }, "E9"),
           React.createElement("div", null,
-            React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#e2e8f0" } }, "EMA9 Signals"),
-            React.createElement("div", { style: { fontSize: 9, color: "#2a3e5e", letterSpacing: 1 } }, "DASHBOARD")
+            React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "#ffffff" } }, "EMA9 Signals"),
+            React.createElement("div", { style: { fontSize: 9, color: "#4b6899", letterSpacing: 1 } }, "DASHBOARD")
           )
         ),
 
