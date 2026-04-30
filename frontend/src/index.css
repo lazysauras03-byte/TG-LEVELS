@@ -1,0 +1,84 @@
+/* ─── TGG Design System ───────────────────────────────────────────── */
+:root {
+  --bg: #0a0b0f;
+  --bg2: #111318;
+  --bg3: #181b22;
+  --border: #1e2230;
+  --border2: #252a38;
+  --text: #e8eaf0;
+  --text2: #7a8099;
+  --text3: #4a5068;
+  --green: #00d97e;
+  --green2: #00a85e;
+  --green-dim: rgba(0, 217, 126, 0.12);
+  --red: #ff4560;
+  --red2: #cc2040;
+  --red-dim: rgba(255, 69, 96, 0.12);
+  --blue: #3d84ff;
+  --blue-dim: rgba(61, 132, 255, 0.12);
+  --yellow: #ffc135;
+  --yellow-dim: rgba(255, 193, 53, 0.12);
+  --accent: #7c5cfc;
+  --accent-dim: rgba(124, 92, 252, 0.15);
+  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Syne", sans-serif;
+  --radius: 8px;
+  --radius2: 12px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg2);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 3px;
+}
+
+button {
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideRight {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
