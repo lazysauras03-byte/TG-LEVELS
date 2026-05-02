@@ -7,10 +7,16 @@ const TYPE_CONFIG = {
   BC_LOW: { label: "BC ↓", bg: "var(--yellow-dim)", color: "var(--yellow)", icon: "⚡" },
 };
 
+function toISTDate(tsMs) {
+  if (!tsMs) return "";
+  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
+}
+
 function formatTime(ts) {
   if (!ts) return "—";
-  const d = new Date(ts);
-  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return new Date(ts).toLocaleTimeString("en-IN", {
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata",
+  });
 }
 
 function formatPrice(p) {
@@ -18,24 +24,36 @@ function formatPrice(p) {
   return Number(p).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
-export default function SignalTable({ signals = [], candles = [] }) {
-  // Deduplicate BC signals (BC_HIGH + BC_LOW on same bar → one row)
+// Get today's IST date string from the latest candle that is actually from today
+function getTodayIST() {
+  return new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
+}
+
+export default function SignalTable({ signals = [], candles = [], todayMode = false }) {
   const rows = useMemo(() => {
+    let src = [...signals];
+
+    // Filter to today only if todayMode — use actual current IST date, not last candle
+    if (todayMode) {
+      const todayIST = getTodayIST();
+      src = src.filter((s) => toISTDate(s.time) === todayIST);
+    }
+
+    // Merge BC_HIGH + BC_LOW on same bar into single BC row
     const merged = [];
     const bcBars = new Set();
 
-    // Reverse so newest first
-    const reversed = [...signals].reverse();
+    // Sort newest first before merging
+    src.sort((a, b) => b.time - a.time);
 
-    reversed.forEach((sig) => {
+    src.forEach((sig) => {
       if (sig.type === "BC_HIGH" || sig.type === "BC_LOW") {
         const key = sig.barIndex;
         if (!bcBars.has(key)) {
           bcBars.add(key);
-          // Find paired BC
-          const pair = signals.find(
-            (s) =>
-              s.barIndex === sig.barIndex &&
+          // find the paired BC on same bar
+          const pair = src.find(
+            (s) => s.barIndex === sig.barIndex &&
               s.type !== sig.type &&
               (s.type === "BC_HIGH" || s.type === "BC_LOW")
           );
@@ -54,26 +72,37 @@ export default function SignalTable({ signals = [], candles = [] }) {
       }
     });
 
-    return merged.slice(0, 50);
-  }, [signals]);
+    // Final sort: newest first (descending time)
+    merged.sort((a, b) => b.time - a.time);
+
+    return merged; // NO slice cap — show all signals for the period
+  }, [signals, candles, todayMode]);
 
   if (rows.length === 0) {
     return (
       <div style={{ padding: "20px", color: "var(--text3)", textAlign: "center", fontSize: 12 }}>
-        No signals yet. Waiting for data…
+        {todayMode ? "No signals today yet." : "No signals yet. Waiting for data…"}
       </div>
     );
   }
 
   return (
-    <div style={{ overflowY: "auto", maxHeight: "100%", fontSize: 12 }}>
+    <div style={{ overflowY: "auto", height: "100%", fontSize: 12 }}>
+      {/* Header row — count reflects current filter */}
+      <div style={{
+        padding: "6px 12px", fontSize: 10, color: "var(--text3)",
+        borderBottom: "1px solid var(--border)",
+        fontFamily: "var(--font-mono)", letterSpacing: "0.05em",
+      }}>
+        {rows.length} signal{rows.length !== 1 ? "s" : ""} · latest first
+      </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--text3)" }}>
-            <th style={th}>Type</th>
-            <th style={th}>Time</th>
-            <th style={th}>Price</th>
-            <th style={th}>Bar#</th>
+            <th style={th}>TYPE</th>
+            <th style={th}>TIME (IST)</th>
+            <th style={th}>PRICE</th>
+            <th style={th}>BAR#</th>
           </tr>
         </thead>
         <tbody>
@@ -88,24 +117,15 @@ export default function SignalTable({ signals = [], candles = [] }) {
 
             return (
               <tr
-                key={i}
+                key={`${row.type}-${row.time}-${i}`}
                 style={{
                   borderBottom: "1px solid var(--border)",
-                  animation: "fadeIn 0.2s ease",
                   background: i === 0 ? cfg.bg : "transparent",
                   transition: "background 0.3s",
                 }}
               >
                 <td style={td}>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      color: cfg.color,
-                      fontWeight: 700,
-                    }}
-                  >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: cfg.color, fontWeight: 700 }}>
                     {cfg.icon} {cfg.label}
                   </span>
                 </td>
@@ -133,8 +153,7 @@ const th = {
   position: "sticky",
   top: 0,
   background: "var(--bg2)",
+  zIndex: 1,
 };
 
-const td = {
-  padding: "7px 12px",
-};
+const td = { padding: "7px 12px" };

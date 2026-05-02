@@ -1,22 +1,81 @@
 import React, { useEffect, useRef, useCallback } from "react";
 import { createChart, CrosshairMode, LineStyle } from "lightweight-charts";
 
-const STATE_LABELS = {
-  0: { label: "WAIT", color: "#7a8099" },
-  1: { label: "TRACK HIGH ↑", color: "#00d97e" },
-  "-1": { label: "TRACK LOW ↓", color: "#ff4560" },
-  2: { label: "TRAIL LOW (post NH)", color: "#ffc135" },
-  "-2": { label: "TRAIL HIGH (post NL)", color: "#3d84ff" },
-};
+// Convert unix-ms → IST date string  e.g. "30/04/2026"
+function toISTDate(tsMs) {
+  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
+}
 
-export default function CandleChart({ candles, emaHighs, emaLows, signals, currentState }) {
+// Build marker array from signals filtered by todayMode
+function buildMarkers(signals, candles, todayModeOn) {
+  let src = signals || [];
+  if (todayModeOn && candles.length > 0) {
+    const latestIST = toISTDate(candles.at(-1).time);
+    src = src.filter((s) => toISTDate(s.time) === latestIST);
+  }
+  const seen = new Set();
+  const markers = [];
+  src.forEach((sig) => {
+    const t = Math.floor(sig.time / 1000);
+    const key = `${sig.type}-${t}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    switch (sig.type) {
+      case "NH":
+        markers.push({ time: t, position: "aboveBar", color: "#00d97e", shape: "arrowDown", text: "NH", size: 1 });
+        break;
+      case "NL":
+        markers.push({ time: t, position: "belowBar", color: "#ff4560", shape: "arrowUp", text: "NL", size: 1 });
+        break;
+      case "BC_HIGH":
+        markers.push({ time: t, position: "aboveBar", color: "#ffc135", shape: "arrowDown", text: "BC", size: 1 });
+        break;
+      case "BC_LOW":
+        markers.push({ time: t, position: "belowBar", color: "#ffc135", shape: "arrowUp", text: "BC", size: 1 });
+        break;
+      default: break;
+    }
+  });
+  markers.sort((a, b) => a.time - b.time);
+  return markers;
+}
+
+export default function CandleChart({
+  candles, emaHighs, emaLows, signals, currentState,
+  todayMode,
+  onCrosshairMove,
+}) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
-  const candleSeriesRef = useRef(null);
-  const emaHighSeriesRef = useRef(null);
-  const emaLowSeriesRef = useRef(null);
+  const candleRef = useRef(null);
+  const emaHiRef = useRef(null);
+  const emaLoRef = useRef(null);
 
-  // ── Build chart once ────────────────────────────────────────────
+  const isFirstLoadRef = useRef(true);
+  const prevCountRef = useRef(0);
+  const todayModeRef = useRef(todayMode);
+  const candlesRef = useRef(candles);   // always-current refs for reset handler
+  const signalsRef = useRef(signals);
+
+  // ── Reset view — TradingView style ────────────────────────────────────────
+  // Fits all data if full-month; fits today if todayMode is on.
+  const resetView = useCallback(() => {
+    if (!chartRef.current || !candlesRef.current?.length) return;
+    const ts = chartRef.current.timeScale();
+    if (todayModeRef.current) {
+      const latestIST = toISTDate(candlesRef.current.at(-1).time);
+      const todayC = candlesRef.current.filter((c) => toISTDate(c.time) === latestIST);
+      if (todayC.length > 0) {
+        const from = Math.floor(todayC[0].time / 1000) - 120;
+        const to = Math.floor(todayC.at(-1).time / 1000) + 900;
+        try { ts.setVisibleRange({ from, to }); } catch { ts.fitContent(); }
+        return;
+      }
+    }
+    ts.fitContent();
+  }, []);
+
+  // ── Build chart once ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -44,6 +103,28 @@ export default function CandleChart({ candles, emaHighs, emaLows, signals, curre
         borderColor: "#1e2230",
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (unixSec) => {
+          const d = new Date((unixSec + 19800) * 1000);
+          const hh = String(d.getUTCHours()).padStart(2, "0");
+          const mm = String(d.getUTCMinutes()).padStart(2, "0");
+          if (hh === "09" && mm === "15") {
+            const day = String(d.getUTCDate()).padStart(2, "0");
+            const mon = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+            return `${day} ${mon}`;
+          }
+          return `${hh}:${mm}`;
+        },
+      },
+      localization: {
+        timeFormatter: (unixSec) => {
+          const d = new Date((unixSec + 19800) * 1000);
+          const day = String(d.getUTCDate()).padStart(2, "0");
+          const mon = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+          const yr = String(d.getUTCFullYear()).slice(2);
+          const hh = String(d.getUTCHours()).padStart(2, "0");
+          const mm = String(d.getUTCMinutes()).padStart(2, "0");
+          return `${day} ${mon} '${yr} ${hh}:${mm} IST`;
+        },
       },
       handleScroll: true,
       handleScale: true,
@@ -51,174 +132,150 @@ export default function CandleChart({ candles, emaHighs, emaLows, signals, curre
       height: containerRef.current.clientHeight,
     });
 
-    // Candlestick series
     const candleSeries = chart.addCandlestickSeries({
-      upColor: "#00d97e",
-      downColor: "#ff4560",
-      borderUpColor: "#00d97e",
-      borderDownColor: "#ff4560",
-      wickUpColor: "#00d97e",
-      wickDownColor: "#ff4560",
+      upColor: "#00d97e", downColor: "#ff4560",
+      borderUpColor: "#00d97e", borderDownColor: "#ff4560",
+      wickUpColor: "#00d97e", wickDownColor: "#ff4560",
     });
 
-    // EMA High (green)
-    const emaHighSeries = chart.addLineSeries({
-      color: "rgba(0, 217, 126, 0.6)",
-      lineWidth: 1.5,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      title: "EMA9H",
+    const emaHiSeries = chart.addLineSeries({
+      color: "rgba(0,217,126,0.6)", lineWidth: 1.5, lineStyle: LineStyle.Solid,
+      priceLineVisible: false, lastValueVisible: true, title: "EMA9H",
     });
 
-    // EMA Low (red)
-    const emaLowSeries = chart.addLineSeries({
-      color: "rgba(255, 69, 96, 0.6)",
-      lineWidth: 1.5,
-      lineStyle: LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      title: "EMA9L",
+    const emaLoSeries = chart.addLineSeries({
+      color: "rgba(255,69,96,0.6)", lineWidth: 1.5, lineStyle: LineStyle.Solid,
+      priceLineVisible: false, lastValueVisible: true, title: "EMA9L",
     });
 
     chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    emaHighSeriesRef.current = emaHighSeries;
-    emaLowSeriesRef.current = emaLowSeries;
+    candleRef.current = candleSeries;
+    emaHiRef.current = emaHiSeries;
+    emaLoRef.current = emaLoSeries;
+
+    // Crosshair → OHLC in navbar
+    chart.subscribeCrosshairMove((param) => {
+      if (!onCrosshairMove) return;
+      if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
+        onCrosshairMove(null); return;
+      }
+      const bar = param.seriesData.get(candleSeries);
+      if (!bar) { onCrosshairMove(null); return; }
+      onCrosshairMove({ ...bar, unixSec: param.time });
+    });
+
+    // ── Right-click → reset view (TradingView behaviour) ─────────────────
+    const el = containerRef.current;
+    const onContextMenu = (e) => {
+      e.preventDefault();
+      resetView();
+    };
+    el.addEventListener("contextmenu", onContextMenu);
+
+    // ── Double-click → reset view ─────────────────────────────────────────
+    const onDblClick = () => resetView();
+    el.addEventListener("dblclick", onDblClick);
 
     // Resize observer
     const ro = new ResizeObserver(() => {
-      if (containerRef.current) {
+      if (containerRef.current)
         chart.applyOptions({
           width: containerRef.current.clientWidth,
           height: containerRef.current.clientHeight,
         });
-      }
     });
-    ro.observe(containerRef.current);
+    ro.observe(el);
 
     return () => {
+      el.removeEventListener("contextmenu", onContextMenu);
+      el.removeEventListener("dblclick", onDblClick);
       ro.disconnect();
       chart.remove();
     };
-  }, []);
+  }, []); // eslint-disable-line
 
-  // ── Update data when props change ───────────────────────────────
+  // Keep refs in sync
+  useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
+  useEffect(() => { candlesRef.current = candles; }, [candles]);
+  useEffect(() => { signalsRef.current = signals; }, [signals]);
+
+  // ── TODAY toggle → update markers + zoom ─────────────────────────────────
   useEffect(() => {
-    if (!candleSeriesRef.current || !candles || candles.length === 0) return;
+    if (!candleRef.current || !candles?.length) return;
+    candleRef.current.setMarkers(buildMarkers(signals, candles, todayMode));
+    resetView();
+  }, [todayMode]); // eslint-disable-line
 
-    const candleData = candles.map((c) => ({
-      time: Math.floor(c.time / 1000),
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
+  // ── Data update (new candles / refresh / symbol change) ───────────────────
+  useEffect(() => {
+    if (!candleRef.current || !candles?.length) return;
 
-    const emaHighData = candles.map((c, i) => ({
-      time: Math.floor(c.time / 1000),
-      value: emaHighs[i],
-    })).filter((d) => d.value != null && !isNaN(d.value));
+    const ts = chartRef.current.timeScale();
+    const isFirst = isFirstLoadRef.current;
+    const isNewCandle = !isFirst && candles.length === prevCountRef.current + 1;
 
-    const emaLowData = candles.map((c, i) => ({
-      time: Math.floor(c.time / 1000),
-      value: emaLows[i],
-    })).filter((d) => d.value != null && !isNaN(d.value));
-
-    candleSeriesRef.current.setData(candleData);
-    emaHighSeriesRef.current.setData(emaHighData);
-    emaLowSeriesRef.current.setData(emaLowData);
-
-    // ── Markers for NH / NL / BC ─────────────────────────────────
-    const markers = [];
-
-    if (signals && signals.length > 0) {
-      // Group by (time, barIndex) to avoid duplicates
-      const added = new Set();
-
-      signals.forEach((sig) => {
-        const t = Math.floor(sig.time / 1000);
-        const key = `${sig.type}-${t}`;
-        if (added.has(key)) return;
-        added.add(key);
-
-        switch (sig.type) {
-          case "NH":
-            markers.push({
-              time: t,
-              position: "aboveBar",
-              color: "#00d97e",
-              shape: "arrowDown",
-              text: "NH",
-              size: 1,
-            });
-            break;
-          case "NL":
-            markers.push({
-              time: t,
-              position: "belowBar",
-              color: "#ff4560",
-              shape: "arrowUp",
-              text: "NL",
-              size: 1,
-            });
-            break;
-          case "BC_HIGH":
-            markers.push({
-              time: t,
-              position: "aboveBar",
-              color: "#ffc135",
-              shape: "arrowDown",
-              text: "BC",
-              size: 1,
-            });
-            break;
-          case "BC_LOW":
-            markers.push({
-              time: t,
-              position: "belowBar",
-              color: "#ffc135",
-              shape: "arrowUp",
-              text: "BC",
-              size: 1,
-            });
-            break;
-          default:
-            break;
-        }
-      });
-
-      // Sort by time (required by lightweight-charts)
-      markers.sort((a, b) => a.time - b.time);
+    if (isNewCandle) {
+      // Streaming update — don't disturb scroll
+      const latest = { time: Math.floor(candles.at(-1).time / 1000), ...candles.at(-1) };
+      const lc = { time: latest.time, open: latest.open, high: latest.high, low: latest.low, close: latest.close };
+      candleRef.current.update(lc);
+      const i = candles.length - 1;
+      if (emaHighs[i] != null && !isNaN(emaHighs[i]))
+        emaHiRef.current.update({ time: lc.time, value: emaHighs[i] });
+      if (emaLows[i] != null && !isNaN(emaLows[i]))
+        emaLoRef.current.update({ time: lc.time, value: emaLows[i] });
+      prevCountRef.current = candles.length;
+      return;
     }
 
-    candleSeriesRef.current.setMarkers(markers);
-    chartRef.current.timeScale().fitContent();
-  }, [candles, emaHighs, emaLows, signals]);
+    // Full reload — save scroll position so manual refreshes don't jump
+    const savedRange = isFirst ? null : ts.getVisibleLogicalRange();
 
-  const stateInfo = STATE_LABELS[String(currentState)] || STATE_LABELS[0];
+    const allData = candles.map((c) => ({
+      time: Math.floor(c.time / 1000),
+      open: c.open, high: c.high, low: c.low, close: c.close,
+    }));
+
+    candleRef.current.setData(allData);
+    emaHiRef.current.setData(
+      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaHighs[i] }))
+        .filter((d) => d.value != null && !isNaN(d.value))
+    );
+    emaLoRef.current.setData(
+      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaLows[i] }))
+        .filter((d) => d.value != null && !isNaN(d.value))
+    );
+
+    candleRef.current.setMarkers(buildMarkers(signals, candles, todayModeRef.current));
+
+    prevCountRef.current = candles.length;
+
+    if (isFirst) {
+      isFirstLoadRef.current = false;
+      resetView(); // first load → fit to today or full month
+    } else if (savedRange) {
+      // Manual refresh → restore where user was scrolled
+      setTimeout(() => {
+        try { chartRef.current?.timeScale().setVisibleLogicalRange(savedRange); }
+        catch { chartRef.current?.timeScale().fitContent(); }
+      }, 0);
+    } else {
+      resetView();
+    }
+
+  }, [candles, emaHighs, emaLows, signals]); // eslint-disable-line
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
-      {/* State badge overlay */}
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          background: "rgba(10,11,15,0.85)",
-          border: `1px solid ${stateInfo.color}33`,
-          borderRadius: 6,
-          padding: "4px 10px",
-          fontFamily: "var(--font-mono)",
-          fontSize: 11,
-          color: stateInfo.color,
-          backdropFilter: "blur(4px)",
-          pointerEvents: "none",
-        }}
-      >
-        STATE: {stateInfo.label}
+      {/* Reset hint — subtle, bottom-left, doesn't clutter the chart */}
+      <div style={{
+        position: "absolute", bottom: 36, left: 12,
+        color: "#3a4060", fontSize: 10,
+        fontFamily: "var(--font-mono)",
+        pointerEvents: "none", userSelect: "none",
+      }}>
+        Right-click or double-click to reset view
       </div>
     </div>
   );

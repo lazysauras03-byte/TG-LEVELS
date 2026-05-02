@@ -38,8 +38,10 @@ export function useSocket() {
   }, []);
 
   // ── Refresh ─────────────────────────────────────────
+  // NOTE: We do NOT call setLoading(true) here because that would
+  // conditionally blank the chart in App.js (loading && candles.length===0).
+  // Instead we let the chart stay visible while new data loads in background.
   const refresh = useCallback(async (symbol, resolution) => {
-    setLoading(true);
     setError(null);
     try {
       const params = {};
@@ -49,8 +51,6 @@ export function useSocket() {
       setChartData(res.data);
     } catch (e) {
       setError(e.response?.data?.error || e.message);
-    } finally {
-      setLoading(false);
     }
   }, []);
 

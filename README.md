@@ -9,7 +9,7 @@ TGG/
 │   │   ├── server.js         ← Express server + Socket.io + routes
 │   │   ├── signalEngine.js   ← EMA9 NH/NL/BC logic (exact Pine Script port)
 │   │   └── fyers.js          ← Fyers API v3 integration
-│   ├── .env                  ← Your keys (never commit)
+│   ├── .env                  ← keys 
 │   └── package.json
 │
 └── frontend/         ← React 18 dashboard
@@ -23,7 +23,7 @@ TGG/
     │   │   └── AuthPanel.js     ← Fyers auth flow
     │   └── hooks/
     │       └── useSocket.js     ← WebSocket + API data hook
-    ├── .env
+    ├── .env                     ← keys 
     └── package.json
 ```
 

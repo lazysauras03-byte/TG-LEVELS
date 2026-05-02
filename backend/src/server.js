@@ -13,10 +13,7 @@ const server = http.createServer(app);
 
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-  },
+  cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -39,8 +36,9 @@ let autoRefreshTimer = null;
 
 const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
 const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
-const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "100");
-const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "180000"); // 3min default
+// 1m candles for 1 month ≈ 8580, 3m ≈ 2860, set high so all timeframes get full month
+const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
+const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "180000");
 
 // ─── Core fetch & process ─────────────────────────────────────────────────────
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
@@ -51,11 +49,12 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   lastFetch = Date.now();
 
   // Broadcast to all connected clients
-  io.emit("chart_update", buildPayload(candles, result, symbol, resolution));
+  // isAutoRefresh=true so frontend knows to preserve scroll position
+  io.emit("chart_update", buildPayload(candles, result, symbol, resolution, true));
   return { candles, result };
 }
 
-function buildPayload(candles, result, symbol, resolution) {
+function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false) {
   return {
     symbol,
     resolution,
@@ -67,18 +66,17 @@ function buildPayload(candles, result, symbol, resolution) {
     bestPrice: result.bestPrice,
     bestBar: result.bestBar,
     lastUpdate: new Date().toISOString(),
+    // Convert balance to IST display (stored in .env as a number)
     balance: parseFloat(process.env.CURRENT_BALANCE || 0),
+    isAutoRefresh,
   };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-
-// Health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
 
-// Auth status
 app.get("/api/auth/status", async (req, res) => {
   try {
     const valid = await validateToken();
@@ -88,7 +86,6 @@ app.get("/api/auth/status", async (req, res) => {
   }
 });
 
-// Auth URL
 app.get("/api/auth/url", (req, res) => {
   try {
     res.json({ url: getAuthURL() });
@@ -97,24 +94,22 @@ app.get("/api/auth/url", (req, res) => {
   }
 });
 
-// Exchange auth code for token
 app.post("/api/auth/token", async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: "auth_code required" });
   try {
-    const token = await generateToken(code);
+    await generateToken(code);
     res.json({ success: true, message: "Token saved successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Get chart data (on-demand fetch)
+// Get chart data
 app.get("/api/chart", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
 
-  // Use cache if fresh (< 60s)
   if (
     cachedResult &&
     cachedCandles.length > 0 &&
@@ -133,19 +128,20 @@ app.get("/api/chart", async (req, res) => {
   }
 });
 
-// Force refresh
+// Force refresh (user action — isAutoRefresh=false → frontend will NOT preserve scroll)
 app.post("/api/chart/refresh", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
-    res.json({ success: true, ...buildPayload(candles, result, symbol, resolution) });
+    // Mark as user-triggered refresh: frontend will reset chart position
+    const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
+    res.json(payload);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Get signals only
 app.get("/api/signals", async (req, res) => {
   if (!cachedResult) {
     return res.status(404).json({ error: "No data yet. Call /api/chart first." });
@@ -174,7 +170,6 @@ function startAutoRefresh() {
 io.on("connection", (socket) => {
   console.log(`[WS] Client connected: ${socket.id}`);
 
-  // Send cached data immediately on connect
   if (cachedResult && cachedCandles.length > 0) {
     socket.emit("chart_update", buildPayload(cachedCandles, cachedResult, SYMBOL, RESOLUTION));
   }

@@ -12,7 +12,6 @@ const TOKEN_FILE = path.join(ROOT, "fyers_access_token.txt");
 const REFRESH_FILE = path.join(ROOT, "fyers_refresh_token.txt");
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
-
 function loadToken() {
   if (!fs.existsSync(TOKEN_FILE)) return null;
   return fs.readFileSync(TOKEN_FILE, "utf8").trim();
@@ -23,8 +22,7 @@ function saveToken(token) {
   fs.writeFileSync(path.join(ROOT, ".fyers_token"), token.trim(), "utf8");
 }
 
-// ── Build an authenticated fyersModel instance ────────────────────────────────
-
+// ── Build authenticated fyersModel instance ───────────────────────────────────
 function getFyersClient() {
   const token = loadToken();
   if (!token) throw new Error("No access token. Run: node src/generate.js");
@@ -40,7 +38,6 @@ function getFyersClient() {
 }
 
 // ── Auth URL ──────────────────────────────────────────────────────────────────
-
 function getAuthURL() {
   const appId = process.env.APP_ID;
   if (!appId) throw new Error("APP_ID not set in .env");
@@ -54,7 +51,6 @@ function getAuthURL() {
 }
 
 // ── Generate token from auth_code ─────────────────────────────────────────────
-
 async function generateToken(authCode) {
   const appId = process.env.APP_ID;
   const secretKey = process.env.ST_KEY;
@@ -80,7 +76,6 @@ async function generateToken(authCode) {
 }
 
 // ── Validate token ────────────────────────────────────────────────────────────
-
 async function validateToken() {
   const token = loadToken();
   if (!token) return false;
@@ -93,13 +88,14 @@ async function validateToken() {
   }
 }
 
-// ── Fetch historical candles ──────────────────────────────────────────────────
-
-async function fetchCandles(symbol, resolution, count = 100) {
+// ── Fetch historical candles — 1 month of data ───────────────────────────────
+async function fetchCandles(symbol, resolution, count = 10000) {
   const fyers = getFyersClient();
 
+  // Go back 45 calendar days to guarantee ~30 trading days
+  // (accounts for weekends + holidays in Indian market)
   const now = Math.floor(Date.now() / 1000);
-  const rangeFrom = now - 7 * 24 * 60 * 60;
+  const rangeFrom = now - 45 * 24 * 60 * 60;
 
   const res = await fyers.getHistory({
     symbol,
@@ -115,8 +111,9 @@ async function fetchCandles(symbol, resolution, count = 100) {
   }
 
   const raw = res.candles || [];
-  return raw.slice(-count).map((c) => ({
-    time: c[0] * 1000,
+  // Return ALL candles in the range — no artificial slice cap
+  return raw.map((c) => ({
+    time: c[0] * 1000, // milliseconds; Fyers timestamps are already IST
     open: c[1],
     high: c[2],
     low: c[3],
