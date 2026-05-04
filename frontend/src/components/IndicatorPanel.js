@@ -1,3 +1,4 @@
+// IndicatorPanel.js
 import React, { useState } from "react";
 import { INDICATOR_REGISTRY } from "../indicators/indicatorRegistry";
 import "./IndicatorPanel.css";
@@ -5,9 +6,13 @@ import "./IndicatorPanel.css";
 /**
  * IndicatorPanel
  *
+ * Reads INDICATOR_REGISTRY for the list of indicators.
+ * Adding a new indicator = only edit indicatorRegistry.js.
+ * No changes needed here.
+ *
  * Props:
- *   indicators  — { [id]: boolean }  current enabled state
- *   onChange    — (id, enabled) => void   called when a toggle changes
+ *   indicators  — { [id]: boolean }   current enabled/disabled state
+ *   onChange    — (id, enabled) => void
  */
 export default function IndicatorPanel({ indicators, onChange }) {
   const [open, setOpen] = useState(false);
@@ -16,13 +21,20 @@ export default function IndicatorPanel({ indicators, onChange }) {
 
   return (
     <div className="ind-panel">
+
       {/* Trigger button */}
       <button
         className={`ind-trigger ${open ? "ind-trigger--open" : ""}`}
         onClick={() => setOpen((p) => !p)}
         title="Indicators"
       >
-        <svg className="ind-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <svg
+          className="ind-trigger-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        >
           <line x1="4" y1="6" x2="20" y2="6" />
           <line x1="4" y1="12" x2="20" y2="12" />
           <line x1="4" y1="18" x2="14" y2="18" />
@@ -56,7 +68,10 @@ export default function IndicatorPanel({ indicators, onChange }) {
             {INDICATOR_REGISTRY.map((ind) => {
               const enabled = !!indicators[ind.id];
               return (
-                <label key={ind.id} className={`ind-row ${enabled ? "ind-row--on" : ""}`}>
+                <label
+                  key={ind.id}
+                  className={`ind-row ${enabled ? "ind-row--on" : ""}`}
+                >
                   <span className="ind-row-left">
                     <span
                       className="ind-color-dot"

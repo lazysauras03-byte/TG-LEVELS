@@ -1,12 +1,18 @@
+// CandleChart.js
 import React, { useEffect, useRef, useCallback } from "react";
 import { createChart, CrosshairMode, LineStyle } from "lightweight-charts";
+import {
+  createWavesIndicator,
+  updateWavesIndicator,
+  removeWavesIndicator,
+} from "../indicators/WavesIndicator";
 
-// Convert unix-ms → IST date string  e.g. "30/04/2026"
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function toISTDate(tsMs) {
   return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
-// Build marker array from signals filtered by todayMode
 function buildMarkers(signals, candles, todayModeOn) {
   let src = signals || [];
   if (todayModeOn && candles.length > 0) {
@@ -40,12 +46,20 @@ function buildMarkers(signals, candles, todayModeOn) {
   return markers;
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function CandleChart({
-  candles, emaHighs, emaLows, signals, currentState,
+  candles,
+  emaHighs,
+  emaLows,
+  signals,
+  currentState,
   todayMode,
   onCrosshairMove,
-  // Bubble Indicator: NH / NL / BC markers — controlled by IndicatorPanel
   showBubble = true,
+  showWaves = false,
+  onWaveData,           // (pivots, segments) => void
+  onResetViewReady,     // (resetFn) => void — called once so parent can trigger right-anchor
+  intentionalReload,    // boolean — true when parent triggered symbol/timeframe/refresh change
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -55,36 +69,57 @@ export default function CandleChart({
 
   const isFirstLoadRef = useRef(true);
   const prevCountRef = useRef(0);
+  // true  = user has scrolled away from the right edge → don't auto-scroll on tick
+  // false = user is pinned to right (default) → follow new candles
+  const userScrolledRef = useRef(false);
+  // tracks the last intentional reload key so we can distinguish tick vs reload
+  const prevReloadKeyRef = useRef("");
 
-  // Always-current refs — used inside effects that have empty/minimal deps
-  // so they never read stale closure values
   const todayModeRef = useRef(todayMode);
   const candlesRef = useRef(candles);
   const signalsRef = useRef(signals);
+  const emaHighsRef = useRef(emaHighs);
+  const emaLowsRef = useRef(emaLows);
   const showBubbleRef = useRef(showBubble);
+  const showWavesRef = useRef(showWaves);
+  const onWaveDataRef = useRef(onWaveData);
+  const intentionalReloadRef = useRef(intentionalReload);
 
-  // Keep every ref in sync with the latest prop value
-  useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
-  useEffect(() => { candlesRef.current = candles; }, [candles]);
-  useEffect(() => { signalsRef.current = signals; }, [signals]);
-  useEffect(() => { showBubbleRef.current = showBubble; }, [showBubble]);
-
-  // ── Reset view — TradingView style ────────────────────────────────────────
   const resetView = useCallback(() => {
     if (!chartRef.current || !candlesRef.current?.length) return;
     const ts = chartRef.current.timeScale();
-    if (todayModeRef.current) {
-      const latestIST = toISTDate(candlesRef.current.at(-1).time);
-      const todayC = candlesRef.current.filter((c) => toISTDate(c.time) === latestIST);
-      if (todayC.length > 0) {
-        const from = Math.floor(todayC[0].time / 1000) - 120;
-        const to = Math.floor(todayC.at(-1).time / 1000) + 900;
-        try { ts.setVisibleRange({ from, to }); } catch { ts.fitContent(); }
-        return;
-      }
+    try {
+      const total = candlesRef.current.length;
+      const barsToShow = todayModeRef.current
+        ? (() => {
+          const latestIST = toISTDate(candlesRef.current.at(-1).time);
+          const todayCount = candlesRef.current.filter((c) => toISTDate(c.time) === latestIST).length;
+          return Math.max(todayCount, 20);
+        })()
+        : 120;
+      const rightOffset = 5;
+      const to = total - 1 + rightOffset;
+      const from = to - barsToShow - rightOffset;
+      ts.setVisibleLogicalRange({ from, to });
+    } catch {
+      try { ts.scrollToRealTime(); } catch { ts.fitContent(); }
     }
-    ts.fitContent();
   }, []);
+
+  useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
+  useEffect(() => { candlesRef.current = candles; }, [candles]);
+  useEffect(() => { signalsRef.current = signals; }, [signals]);
+  useEffect(() => { emaHighsRef.current = emaHighs; }, [emaHighs]);
+  useEffect(() => { emaLowsRef.current = emaLows; }, [emaLows]);
+  useEffect(() => { showBubbleRef.current = showBubble; }, [showBubble]);
+  useEffect(() => { showWavesRef.current = showWaves; }, [showWaves]);
+  useEffect(() => { onWaveDataRef.current = onWaveData; }, [onWaveData]);
+  useEffect(() => { intentionalReloadRef.current = intentionalReload; }, [intentionalReload]);
+
+  // Expose resetView to parent so it can call it on intentional symbol/timeframe changes
+  useEffect(() => {
+    if (onResetViewReady) onResetViewReady(resetView);
+  }, [onResetViewReady, resetView]);
 
   // ── Build chart once ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -164,7 +199,23 @@ export default function CandleChart({
     emaHiRef.current = emaHiSeries;
     emaLoRef.current = emaLoSeries;
 
-    // Crosshair → OHLC in navbar
+    // Pass wave data callback into WavesIndicator
+    createWavesIndicator(chart, containerRef.current, (pivots, segments) => {
+      if (onWaveDataRef.current) onWaveDataRef.current(pivots, segments);
+    });
+
+    // Track whether the user has scrolled away from the right edge.
+    // lightweight-charts fires visibleLogicalRangeChanged on every pan/zoom.
+    // We compare the right edge of the visible range against total bar count:
+    // if the user can see the last candle (right edge >= total-2), they're "pinned".
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range) return;
+      const total = candlesRef.current?.length ?? 0;
+      // "pinned" = right edge is within 8 bars of the last candle
+      const pinnedThreshold = 8;
+      userScrolledRef.current = range.to < total - 1 - pinnedThreshold;
+    });
+
     chart.subscribeCrosshairMove((param) => {
       if (!onCrosshairMove) return;
       if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
@@ -175,16 +226,10 @@ export default function CandleChart({
       onCrosshairMove({ ...bar, unixSec: param.time });
     });
 
-    // Right-click → reset view
     const el = containerRef.current;
     const onContextMenu = (e) => { e.preventDefault(); resetView(); };
     el.addEventListener("contextmenu", onContextMenu);
 
-    // Double-click → reset view
-    const onDblClick = () => resetView();
-    el.addEventListener("dblclick", onDblClick);
-
-    // Resize observer
     const ro = new ResizeObserver(() => {
       if (containerRef.current)
         chart.applyOptions({
@@ -196,120 +241,147 @@ export default function CandleChart({
 
     return () => {
       el.removeEventListener("contextmenu", onContextMenu);
-      el.removeEventListener("dblclick", onDblClick);
       ro.disconnect();
+      removeWavesIndicator();
       chart.remove();
     };
   }, []); // eslint-disable-line
 
-  // ── TODAY toggle → update markers + zoom ─────────────────────────────────
+  // ── TODAY toggle ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!candleRef.current || !candles?.length) return;
-    // Always read showBubbleRef so this works regardless of toggle state
-    const markers = showBubbleRef.current
-      ? buildMarkers(signals, candles, todayMode)
-      : [];
-    candleRef.current.setMarkers(markers);
+    candleRef.current.setMarkers(
+      showBubbleRef.current ? buildMarkers(signals, candles, todayMode) : []
+    );
     resetView();
   }, [todayMode]); // eslint-disable-line
 
-  // ── Data update (new candles / refresh / symbol / timeframe change) ───────
+  // ── Data update ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!candleRef.current || !candles?.length) return;
 
     const ts = chartRef.current.timeScale();
     const isFirst = isFirstLoadRef.current;
+
+    // A "tick" = one new candle appended, nothing else changed.
+    // Everything else (symbol change, timeframe change, refresh) = full reload.
     const isNewCandle = !isFirst && candles.length === prevCountRef.current + 1;
 
+    // ── Streaming tick: preserve user's viewport exactly ─────────────────
     if (isNewCandle) {
-      // Streaming tick — don't disturb scroll
       const latest = candles.at(-1);
       const lc = {
         time: Math.floor(latest.time / 1000),
-        open: latest.open,
-        high: latest.high,
-        low: latest.low,
-        close: latest.close,
+        open: latest.open, high: latest.high, low: latest.low, close: latest.close,
       };
       candleRef.current.update(lc);
+
       const i = candles.length - 1;
       if (emaHighs[i] != null && !isNaN(emaHighs[i]))
         emaHiRef.current.update({ time: lc.time, value: emaHighs[i] });
       if (emaLows[i] != null && !isNaN(emaLows[i]))
         emaLoRef.current.update({ time: lc.time, value: emaLows[i] });
+
+      if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
       prevCountRef.current = candles.length;
+
+      // Only follow the new candle if user is still pinned to the right edge.
+      // If they've scrolled back to study history → don't touch their viewport.
+      if (!userScrolledRef.current) {
+        try {
+          const range = ts.getVisibleLogicalRange();
+          if (range) {
+            // Shift the window one bar to the right to follow the new candle
+            ts.setVisibleLogicalRange({ from: range.from + 1, to: range.to + 1 });
+          }
+        } catch { /* ignore */ }
+      }
       return;
     }
 
-    // Full reload (symbol change, timeframe change, manual refresh, first load)
+    // ── Full reload (first load / symbol / timeframe / manual refresh) ────
+    // Save current viewport so we can restore it after setData() resets it,
+    // but only if this is NOT the first load and NOT an intentional reload
+    // triggered by the user changing symbol/timeframe (those should right-anchor).
     const savedRange = isFirst ? null : ts.getVisibleLogicalRange();
 
-    const allData = candles.map((c) => ({
-      time: Math.floor(c.time / 1000),
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-
-    candleRef.current.setData(allData);
+    candleRef.current.setData(
+      candles.map((c) => ({
+        time: Math.floor(c.time / 1000),
+        open: c.open, high: c.high, low: c.low, close: c.close,
+      }))
+    );
     emaHiRef.current.setData(
-      candles
-        .map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaHighs[i] }))
+      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaHighs[i] }))
         .filter((d) => d.value != null && !isNaN(d.value))
     );
     emaLoRef.current.setData(
-      candles
-        .map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaLows[i] }))
+      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaLows[i] }))
         .filter((d) => d.value != null && !isNaN(d.value))
     );
 
-    // Use the REF here — not the closure prop — so the current toggle state
-    // is always respected even when this effect fires on timeframe/symbol change
     candleRef.current.setMarkers(
-      showBubbleRef.current
-        ? buildMarkers(signals, candles, todayModeRef.current)
-        : []
+      showBubbleRef.current ? buildMarkers(signals, candles, todayModeRef.current) : []
     );
+
+    if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
+    else removeWavesIndicator();
 
     prevCountRef.current = candles.length;
 
     if (isFirst) {
+      // Very first load → right-anchor
       isFirstLoadRef.current = false;
+      userScrolledRef.current = false;
+      resetView();
+    } else if (intentionalReloadRef.current) {
+      // User deliberately changed symbol / timeframe / hit Refresh → right-anchor
+      intentionalReloadRef.current = false;   // consume the flag
+      userScrolledRef.current = false;
       resetView();
     } else if (savedRange) {
+      // Background auto-refresh (same symbol+timeframe, socket pushed new data) →
+      // restore exactly what the user was looking at
       setTimeout(() => {
-        try { chartRef.current?.timeScale().setVisibleLogicalRange(savedRange); }
-        catch { chartRef.current?.timeScale().fitContent(); }
+        try {
+          chartRef.current?.timeScale().setVisibleLogicalRange(savedRange);
+        } catch {
+          resetView();
+        }
       }, 0);
     } else {
       resetView();
     }
-
   }, [candles, emaHighs, emaLows, signals]); // eslint-disable-line
 
-  // ── Bubble indicator toggle — instant show/hide without reloading data ────
-  // This fires whenever the toggle changes. Because we always read from refs
-  // in the data-update effect above, toggling here is the ONLY thing that
-  // controls marker visibility.
+  // ── Bubble toggle ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!candleRef.current || !candlesRef.current?.length) return;
-    const markers = showBubble
-      ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
-      : [];
-    candleRef.current.setMarkers(markers);
+    candleRef.current.setMarkers(
+      showBubble ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current) : []
+    );
   }, [showBubble]); // eslint-disable-line
+
+  // ── Waves toggle ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (showWaves) {
+      if (candlesRef.current?.length)
+        updateWavesIndicator(candlesRef.current, emaHighsRef.current, emaLowsRef.current);
+    } else {
+      removeWavesIndicator();
+    }
+  }, [showWaves]); // eslint-disable-line
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
       <div style={{
         position: "absolute", bottom: 36, left: 12,
-        color: "#3a4060", fontSize: 10,
-        fontFamily: "var(--font-mono)",
+        color: "#3a4060", fontSize: 10, fontFamily: "var(--font-mono)",
         pointerEvents: "none", userSelect: "none",
       }}>
-        Right-click or double-click to reset view
+        Right-click to reset view
       </div>
     </div>
   );

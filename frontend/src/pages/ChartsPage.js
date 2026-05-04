@@ -1,14 +1,18 @@
-import React, { useState, useCallback, useEffect } from "react";
+// ChartsPage.js
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import StatusBar from "../components/StatusBar";
 import CandleChart from "../components/CandleChart";
 import SignalTable from "../components/SignalTable";
 import StatsPanel from "../components/StatsPanel";
+import WaveSignalTable from "../components/WaveSignalTable";
+import WaveStatsPanel from "../components/WaveStatsPanel";
 import IndicatorPanel from "../components/IndicatorPanel";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import "./ChartsPage.css";
 
+// ─── localStorage helpers ─────────────────────────────────────────────────────
 function loadPref(key, fallback) {
   try {
     const v = localStorage.getItem("tgg_" + key);
@@ -19,23 +23,28 @@ function savePref(key, value) {
   try { localStorage.setItem("tgg_" + key, JSON.stringify(value)); } catch { }
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function ChartsPage() {
   const navigate = useNavigate();
   const { chartData, connected, loading, error, refresh } = useSocket();
 
   const [symbol, setSymbol] = useState(() => loadPref("symbol", "NSE:NIFTY50-INDEX"));
   const [resolution, setResolution] = useState(() => loadPref("resolution", 3));
-  const [activeTab, setActiveTab] = useState(() => loadPref("activeTab", "signals"));
   const [todayMode, setTodayMode] = useState(() => loadPref("todayMode", true));
   const [sidebarOpen, setSidebarOpen] = useState(() => loadPref("sidebarOpen", true));
 
+  // Per-indicator active tab: { bubble: "signals"|"stats", waves: "signals"|"stats" }
+  const [activeTabs, setActiveTabs] = useState(() =>
+    loadPref("activeTabs", { bubble: "signals", waves: "signals" })
+  );
+
   useEffect(() => savePref("symbol", symbol), [symbol]);
   useEffect(() => savePref("resolution", resolution), [resolution]);
-  useEffect(() => savePref("activeTab", activeTab), [activeTab]);
   useEffect(() => savePref("todayMode", todayMode), [todayMode]);
   useEffect(() => savePref("sidebarOpen", sidebarOpen), [sidebarOpen]);
+  useEffect(() => savePref("activeTabs", activeTabs), [activeTabs]);
 
-  // ── Indicator state ──────────────────────────────────────────────────────
+  // ── Indicator state ───────────────────────────────────────────────────────
   const [indicators, setIndicators] = useState(() =>
     loadPref("indicators", buildDefaultIndicators())
   );
@@ -45,29 +54,62 @@ export default function ChartsPage() {
     setIndicators((prev) => ({ ...prev, [id]: enabled }));
   }
 
-  // Derived: is the bubble indicator currently ON?
   const bubbleOn = indicators.bubble !== false;
+  const wavesOn = indicators.waves === true;
+  const anySidebarIndicator = bubbleOn || wavesOn;
 
-  // When indicator is turned OFF → force-close sidebar so signals/stats disappear.
-  // No auto-reopen when turned back ON — user controls that.
+  // When no sidebar indicator is on → collapse sidebar
   useEffect(() => {
-    if (!bubbleOn) {
-      setSidebarOpen(false);
-    }
-  }, [bubbleOn]);
+    if (!anySidebarIndicator) setSidebarOpen(false);
+  }, [anySidebarIndicator]);
 
-  // ── Initial fetch ────────────────────────────────────────────────────────
+  // ── Wave data from CandleChart ────────────────────────────────────────────
+  const [wavePivots, setWavePivots] = useState([]);
+  const [waveSegments, setWaveSegments] = useState([]);
+
+  const handleWaveData = useCallback((pivots, segments) => {
+    setWavePivots(pivots);
+    setWaveSegments(segments);
+  }, []);
+
+  // Ref to CandleChart's resetView fn — called when user intentionally changes
+  // symbol, timeframe, or hits Refresh, so the chart right-anchors to the new data.
+  const chartResetRef = useRef(null);
+  const handleResetViewReady = useCallback((fn) => { chartResetRef.current = fn; }, []);
+
+  // Flag passed to CandleChart: true = next full data load should right-anchor,
+  // false = background refresh should restore previous viewport.
+  const [intentionalReload, setIntentionalReload] = useState(false);
+
+  function handleRefresh(sym, res) {
+    setIntentionalReload(true);
+    refresh(sym ?? symbol, res ?? resolution);
+  }
+  function handleSymbolChange(sym) {
+    setSymbol(sym);
+    setIntentionalReload(true);
+  }
+  function handleResolutionChange(res) {
+    setResolution(res);
+    setIntentionalReload(true);
+  }
+
+  // Reset the flag once CandleChart has consumed it (after render)
+  useEffect(() => {
+    if (intentionalReload) setIntentionalReload(false);
+  }, [intentionalReload]);
+
+  // ── Initial data fetch ────────────────────────────────────────────────────
   const [didInitialFetch, setDidInitialFetch] = useState(false);
   useEffect(() => {
-    if (!didInitialFetch) {
-      setDidInitialFetch(true);
-      refresh(symbol, resolution);
-    }
+    if (!didInitialFetch) { setDidInitialFetch(true); refresh(symbol, resolution); }
   }, []); // eslint-disable-line
 
+  // ── Crosshair ─────────────────────────────────────────────────────────────
   const [crosshairBar, setCrosshairBar] = useState(null);
   const handleCrosshairMove = useCallback((bar) => setCrosshairBar(bar), []);
 
+  // ── Chart data ────────────────────────────────────────────────────────────
   const candles = chartData?.candles || [];
   const emaHighs = chartData?.emaHighs || [];
   const emaLows = chartData?.emaLows || [];
@@ -77,23 +119,69 @@ export default function ChartsPage() {
 
   const showLoadingScreen = loading && candles.length === 0;
 
+  // Displayed signal count for Bubble tab label
   const todayIST = new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
   const displayedSignals = todayMode
-    ? signals.filter((s) =>
-      new Date(s.time).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) === todayIST
-    )
+    ? signals.filter((s) => new Date(s.time).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) === todayIST)
     : signals;
+  const displayedWavePivots = todayMode
+    ? wavePivots.filter((p) => new Date(p.time).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) === todayIST)
+    : wavePivots;
 
-  // Sidebar toggle blocked when indicator is OFF
   function handleSidebarToggle() {
-    if (!bubbleOn) return;
+    if (!anySidebarIndicator) return;
     setSidebarOpen((p) => !p);
+  }
+
+  function setTab(indicator, tab) {
+    setActiveTabs((prev) => ({ ...prev, [indicator]: tab }));
+  }
+
+  // ── Sidebar section component (inline, reused for Bubble + Waves) ─────────
+  function SidebarSection({ id, title, color, tabSignalCount, tabWaveCount, children }) {
+    const tab = activeTabs[id];
+    const isBubble = id === "bubble";
+    const sigCount = isBubble ? tabSignalCount : tabWaveCount;
+
+    return (
+      <div style={{ borderBottom: "1px solid var(--border)" }}>
+        {/* Section header */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "8px 12px 4px",
+          borderBottom: "1px solid var(--border)",
+        }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text3)", textTransform: "uppercase" }}>
+            {title}
+          </span>
+        </div>
+        {/* Tabs */}
+        <div className="tabs">
+          <button
+            className={`tab-btn ${tab === "signals" ? "active" : ""}`}
+            onClick={() => setTab(id, "signals")}
+          >
+            {isBubble ? `Signals (${sigCount})` : `Pivots (${sigCount})`}
+          </button>
+          <button
+            className={`tab-btn ${tab === "stats" ? "active" : ""}`}
+            onClick={() => setTab(id, "stats")}
+          >
+            Stats
+          </button>
+        </div>
+        <div className="tab-content">
+          {children(tab)}
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="charts-page app-layout">
 
-      {/* ── Topbar ──────────────────────────────────────────────────────── */}
+      {/* ── Topbar ───────────────────────────────────────────────────────── */}
       <div className="charts-topbar">
         <button className="charts-home-btn" onClick={() => navigate("/")} title="Home">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -106,11 +194,11 @@ export default function ChartsPage() {
             connected={connected}
             loading={loading}
             chartData={chartData}
-            onRefresh={refresh}
+            onRefresh={handleRefresh}
             symbol={symbol}
             resolution={resolution}
-            onSymbolChange={setSymbol}
-            onResolutionChange={setResolution}
+            onSymbolChange={handleSymbolChange}
+            onResolutionChange={handleResolutionChange}
             todayMode={todayMode}
             onTodayToggle={() => setTodayMode((p) => !p)}
             crosshairBar={crosshairBar}
@@ -119,18 +207,15 @@ export default function ChartsPage() {
         </div>
       </div>
 
-      {/* ── Main content ────────────────────────────────────────────────── */}
+      {/* ── Main content ─────────────────────────────────────────────────── */}
       <div className="main-content">
 
+        {/* Chart area */}
         <div className="chart-area">
           {error && <div className="error-bar">⚠ {error}</div>}
 
-          {/* Floating Indicator Panel — top-left corner of the chart */}
           <div className="chart-indicator-float">
-            <IndicatorPanel
-              indicators={indicators}
-              onChange={handleIndicatorChange}
-            />
+            <IndicatorPanel indicators={indicators} onChange={handleIndicatorChange} />
           </div>
 
           {showLoadingScreen ? (
@@ -159,49 +244,66 @@ export default function ChartsPage() {
               todayMode={todayMode}
               onCrosshairMove={handleCrosshairMove}
               showBubble={bubbleOn}
+              showWaves={wavesOn}
+              onWaveData={handleWaveData}
+              onResetViewReady={handleResetViewReady}
+              intentionalReload={intentionalReload}
             />
           )}
         </div>
 
-        {/*
-          Sidebar exists in DOM ONLY when indicator is ON.
-          OFF → sidebar completely removed → no Signals tab, no Stats tab,
-                no slide-in panel at all, chart fills full width.
-          ON  → sidebar works normally with all tabs & timeframe filters.
-        */}
-        {bubbleOn && (
+        {/* Sidebar — exists only when at least one sidebar indicator is ON */}
+        {anySidebarIndicator && (
           <div className={`sidebar ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
-            <div className="tabs">
-              <button
-                className={`tab-btn ${activeTab === "signals" ? "active" : ""}`}
-                onClick={() => setActiveTab("signals")}
+
+            {/*
+              When BOTH are on: two stacked sections, each with their own tabs.
+              When only one is on: single section (no section header needed,
+              but we still use the same component for consistency).
+            */}
+
+            {bubbleOn && (
+              <SidebarSection
+                id="bubble"
+                title="Bubble"
+                color="var(--accent, #3d84ff)"
+                tabSignalCount={displayedSignals.length}
+                tabWaveCount={0}
               >
-                Signals ({displayedSignals.length})
-              </button>
-              <button
-                className={`tab-btn ${activeTab === "stats" ? "active" : ""}`}
-                onClick={() => setActiveTab("stats")}
+                {(tab) => tab === "signals" ? (
+                  <SignalTable signals={signals} candles={candles} todayMode={todayMode} />
+                ) : (
+                  <StatsPanel
+                    signals={signals}
+                    candles={candles}
+                    currentState={currentState}
+                    bestPrice={bestPrice}
+                    todayMode={todayMode}
+                  />
+                )}
+              </SidebarSection>
+            )}
+
+            {wavesOn && (
+              <SidebarSection
+                id="waves"
+                title="Waves"
+                color="#f5a623"
+                tabSignalCount={0}
+                tabWaveCount={displayedWavePivots.length}
               >
-                Stats
-              </button>
-            </div>
-            <div className="tab-content">
-              {activeTab === "signals" ? (
-                <SignalTable
-                  signals={signals}
-                  candles={candles}
-                  todayMode={todayMode}
-                />
-              ) : (
-                <StatsPanel
-                  signals={signals}
-                  candles={candles}
-                  currentState={currentState}
-                  bestPrice={bestPrice}
-                  todayMode={todayMode}
-                />
-              )}
-            </div>
+                {(tab) => tab === "signals" ? (
+                  <WaveSignalTable wavePivots={wavePivots} todayMode={todayMode} />
+                ) : (
+                  <WaveStatsPanel
+                    wavePivots={wavePivots}
+                    waveSegments={waveSegments}
+                    todayMode={todayMode}
+                  />
+                )}
+              </SidebarSection>
+            )}
+
           </div>
         )}
       </div>
