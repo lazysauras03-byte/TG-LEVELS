@@ -1,0 +1,214 @@
+/* ─── IndicatorPanel ─────────────────────────────────── */
+.ind-panel {
+  position: relative;
+}
+
+/* ─── Trigger button ─────────────────────────────────── */
+.ind-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.ind-trigger:hover,
+.ind-trigger--open {
+  border-color: var(--border2);
+  color: var(--text);
+  background: var(--bg3);
+}
+
+.ind-trigger-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.ind-trigger-label {
+  font-size: 11px;
+}
+
+.ind-trigger-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  line-height: 1.4;
+}
+
+.ind-trigger-caret {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+.ind-trigger-caret--open {
+  transform: rotate(180deg);
+}
+
+/* ─── Dropdown ───────────────────────────────────────── */
+.ind-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 200;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  min-width: 280px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: indDropIn 0.15s ease;
+}
+
+@keyframes indDropIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.ind-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ind-dropdown-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ind-dropdown-count {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
+
+/* ─── List ───────────────────────────────────────────── */
+.ind-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.ind-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+  gap: 12px;
+}
+
+.ind-row:last-child {
+  border-bottom: none;
+}
+
+.ind-row:hover {
+  background: var(--bg3);
+}
+
+.ind-row-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ind-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 3px;
+  transition: opacity 0.2s;
+}
+
+.ind-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ind-row-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.ind-row--on .ind-row-label {
+  color: var(--text);
+}
+
+.ind-row:not(.ind-row--on) .ind-row-label {
+  color: var(--text3);
+}
+
+.ind-row-desc {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  line-height: 1.4;
+}
+
+/* ─── Toggle switch ──────────────────────────────────── */
+.ind-toggle {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.ind-toggle--on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ind-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text3);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.ind-toggle--on .ind-toggle-thumb {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+/* ─── Footer ─────────────────────────────────────────── */
+.ind-dropdown-footer {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}

@@ -1,0 +1,319 @@
+/* ─── HomePage ───────────────────────────────────────── */
+.home-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle grid background */
+.home-grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ─── Header ─────────────────────────────────────────── */
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 32px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 2;
+}
+
+.home-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-logo-mark {
+  font-size: 22px;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.home-logo-text {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+
+.home-logo-version {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.home-header-tag {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+}
+
+.home-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.home-dot.green {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: homePulse 2s ease-in-out infinite;
+}
+
+@keyframes homePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── Main ───────────────────────────────────────────── */
+.home-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 32px;
+  position: relative;
+  z-index: 2;
+  gap: 52px;
+}
+
+/* ─── Hero ───────────────────────────────────────────── */
+.home-hero {
+  text-align: center;
+  max-width: 520px;
+}
+
+.home-eyebrow {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.home-title {
+  font-family: var(--font-display);
+  font-size: clamp(52px, 8vw, 80px);
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.0;
+  margin-bottom: 20px;
+  letter-spacing: -0.02em;
+}
+
+.home-title-accent {
+  color: var(--accent);
+  position: relative;
+}
+
+.home-subtitle {
+  font-size: 14px;
+  color: var(--text2);
+  line-height: 1.7;
+  font-family: var(--font-mono);
+}
+
+/* ─── Cards ──────────────────────────────────────────── */
+.home-cards {
+  display: flex;
+  gap: 20px;
+  width: 100%;
+  max-width: 720px;
+}
+
+.home-card {
+  flex: 1;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius2);
+  padding: 28px 24px 24px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  position: relative;
+  overflow: hidden;
+}
+
+.home-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.home-card--green::before { background: var(--green); }
+.home-card--yellow::before { background: var(--yellow); }
+
+.home-card:hover {
+  border-color: var(--border2);
+  background: var(--bg3);
+  transform: translateY(-3px);
+}
+
+.home-card:hover::before {
+  opacity: 1;
+}
+
+.home-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.home-card-icon {
+  width: 40px;
+  height: 40px;
+  color: var(--text2);
+}
+.home-card-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.home-card--green .home-card-icon { color: var(--green); }
+.home-card--yellow .home-card-icon { color: var(--yellow); }
+
+.home-card-tag {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 3px 7px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+.home-card-tag--green {
+  color: var(--green);
+  background: var(--green-dim);
+  border-color: rgba(0, 217, 126, 0.3);
+}
+.home-card-tag--yellow {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+  border-color: rgba(255, 193, 53, 0.3);
+}
+
+.home-card-body {
+  flex: 1;
+}
+
+.home-card-label {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+
+.home-card-desc {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.65;
+  font-family: var(--font-mono);
+}
+
+.home-card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.home-card-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
+
+.home-card-stat-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--border2);
+  flex-shrink: 0;
+}
+.home-card--green .home-card-stat-dot { background: var(--green2); }
+.home-card--yellow .home-card-stat-dot { background: var(--yellow); }
+
+.home-card-arrow {
+  width: 18px;
+  height: 18px;
+  color: var(--text3);
+  align-self: flex-end;
+  transition: color 0.2s, transform 0.2s;
+}
+.home-card-arrow svg { width: 100%; height: 100%; }
+.home-card:hover .home-card-arrow {
+  color: var(--text);
+  transform: translateX(3px);
+}
+
+/* ─── Footer ─────────────────────────────────────────── */
+.home-footer {
+  padding: 18px 32px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+}
+
+.home-footer-text {
+  font-size: 11px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+}
+
+.home-footer-sep {
+  color: var(--border2);
+  font-size: 11px;
+}
+
+/* ─── Responsive ─────────────────────────────────────── */
+@media (max-width: 600px) {
+  .home-cards {
+    flex-direction: column;
+  }
+  .home-header {
+    padding: 16px 20px;
+  }
+  .home-main {
+    padding: 32px 20px;
+    gap: 36px;
+  }
+}

@@ -44,6 +44,8 @@ export default function CandleChart({
   candles, emaHighs, emaLows, signals, currentState,
   todayMode,
   onCrosshairMove,
+  // Bubble Indicator: NH / NL / BC markers — controlled by IndicatorPanel
+  showBubble = true,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -53,12 +55,21 @@ export default function CandleChart({
 
   const isFirstLoadRef = useRef(true);
   const prevCountRef = useRef(0);
+
+  // Always-current refs — used inside effects that have empty/minimal deps
+  // so they never read stale closure values
   const todayModeRef = useRef(todayMode);
-  const candlesRef = useRef(candles);   // always-current refs for reset handler
+  const candlesRef = useRef(candles);
   const signalsRef = useRef(signals);
+  const showBubbleRef = useRef(showBubble);
+
+  // Keep every ref in sync with the latest prop value
+  useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
+  useEffect(() => { candlesRef.current = candles; }, [candles]);
+  useEffect(() => { signalsRef.current = signals; }, [signals]);
+  useEffect(() => { showBubbleRef.current = showBubble; }, [showBubble]);
 
   // ── Reset view — TradingView style ────────────────────────────────────────
-  // Fits all data if full-month; fits today if todayMode is on.
   const resetView = useCallback(() => {
     if (!chartRef.current || !candlesRef.current?.length) return;
     const ts = chartRef.current.timeScale();
@@ -164,15 +175,12 @@ export default function CandleChart({
       onCrosshairMove({ ...bar, unixSec: param.time });
     });
 
-    // ── Right-click → reset view (TradingView behaviour) ─────────────────
+    // Right-click → reset view
     const el = containerRef.current;
-    const onContextMenu = (e) => {
-      e.preventDefault();
-      resetView();
-    };
+    const onContextMenu = (e) => { e.preventDefault(); resetView(); };
     el.addEventListener("contextmenu", onContextMenu);
 
-    // ── Double-click → reset view ─────────────────────────────────────────
+    // Double-click → reset view
     const onDblClick = () => resetView();
     el.addEventListener("dblclick", onDblClick);
 
@@ -194,19 +202,18 @@ export default function CandleChart({
     };
   }, []); // eslint-disable-line
 
-  // Keep refs in sync
-  useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
-  useEffect(() => { candlesRef.current = candles; }, [candles]);
-  useEffect(() => { signalsRef.current = signals; }, [signals]);
-
   // ── TODAY toggle → update markers + zoom ─────────────────────────────────
   useEffect(() => {
     if (!candleRef.current || !candles?.length) return;
-    candleRef.current.setMarkers(buildMarkers(signals, candles, todayMode));
+    // Always read showBubbleRef so this works regardless of toggle state
+    const markers = showBubbleRef.current
+      ? buildMarkers(signals, candles, todayMode)
+      : [];
+    candleRef.current.setMarkers(markers);
     resetView();
   }, [todayMode]); // eslint-disable-line
 
-  // ── Data update (new candles / refresh / symbol change) ───────────────────
+  // ── Data update (new candles / refresh / symbol / timeframe change) ───────
   useEffect(() => {
     if (!candleRef.current || !candles?.length) return;
 
@@ -215,9 +222,15 @@ export default function CandleChart({
     const isNewCandle = !isFirst && candles.length === prevCountRef.current + 1;
 
     if (isNewCandle) {
-      // Streaming update — don't disturb scroll
-      const latest = { time: Math.floor(candles.at(-1).time / 1000), ...candles.at(-1) };
-      const lc = { time: latest.time, open: latest.open, high: latest.high, low: latest.low, close: latest.close };
+      // Streaming tick — don't disturb scroll
+      const latest = candles.at(-1);
+      const lc = {
+        time: Math.floor(latest.time / 1000),
+        open: latest.open,
+        high: latest.high,
+        low: latest.low,
+        close: latest.close,
+      };
       candleRef.current.update(lc);
       const i = candles.length - 1;
       if (emaHighs[i] != null && !isNaN(emaHighs[i]))
@@ -228,33 +241,43 @@ export default function CandleChart({
       return;
     }
 
-    // Full reload — save scroll position so manual refreshes don't jump
+    // Full reload (symbol change, timeframe change, manual refresh, first load)
     const savedRange = isFirst ? null : ts.getVisibleLogicalRange();
 
     const allData = candles.map((c) => ({
       time: Math.floor(c.time / 1000),
-      open: c.open, high: c.high, low: c.low, close: c.close,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
     }));
 
     candleRef.current.setData(allData);
     emaHiRef.current.setData(
-      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaHighs[i] }))
+      candles
+        .map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaHighs[i] }))
         .filter((d) => d.value != null && !isNaN(d.value))
     );
     emaLoRef.current.setData(
-      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaLows[i] }))
+      candles
+        .map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaLows[i] }))
         .filter((d) => d.value != null && !isNaN(d.value))
     );
 
-    candleRef.current.setMarkers(buildMarkers(signals, candles, todayModeRef.current));
+    // Use the REF here — not the closure prop — so the current toggle state
+    // is always respected even when this effect fires on timeframe/symbol change
+    candleRef.current.setMarkers(
+      showBubbleRef.current
+        ? buildMarkers(signals, candles, todayModeRef.current)
+        : []
+    );
 
     prevCountRef.current = candles.length;
 
     if (isFirst) {
       isFirstLoadRef.current = false;
-      resetView(); // first load → fit to today or full month
+      resetView();
     } else if (savedRange) {
-      // Manual refresh → restore where user was scrolled
       setTimeout(() => {
         try { chartRef.current?.timeScale().setVisibleLogicalRange(savedRange); }
         catch { chartRef.current?.timeScale().fitContent(); }
@@ -265,10 +288,21 @@ export default function CandleChart({
 
   }, [candles, emaHighs, emaLows, signals]); // eslint-disable-line
 
+  // ── Bubble indicator toggle — instant show/hide without reloading data ────
+  // This fires whenever the toggle changes. Because we always read from refs
+  // in the data-update effect above, toggling here is the ONLY thing that
+  // controls marker visibility.
+  useEffect(() => {
+    if (!candleRef.current || !candlesRef.current?.length) return;
+    const markers = showBubble
+      ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
+      : [];
+    candleRef.current.setMarkers(markers);
+  }, [showBubble]); // eslint-disable-line
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
-      {/* Reset hint — subtle, bottom-left, doesn't clutter the chart */}
       <div style={{
         position: "absolute", bottom: 36, left: 12,
         color: "#3a4060", fontSize: 10,
