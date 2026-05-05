@@ -199,10 +199,15 @@ export default function CandleChart({
     emaHiRef.current = emaHiSeries;
     emaLoRef.current = emaLoSeries;
 
-    // Pass wave data callback into WavesIndicator
-    createWavesIndicator(chart, containerRef.current, (pivots, segments) => {
-      if (onWaveDataRef.current) onWaveDataRef.current(pivots, segments);
-    });
+    // Pass wave data callback + candleSeries into WavesIndicator.
+    // candleSeries is required for priceToCoordinate() in lightweight-charts v4
+    // (the method lives on ISeriesApi, not on IPriceScaleApi).
+    createWavesIndicator(
+      chart,
+      containerRef.current,
+      (pivots, segments) => { if (onWaveDataRef.current) onWaveDataRef.current(pivots, segments); },
+      candleSeries
+    );
 
     // Track whether the user has scrolled away from the right edge.
     // lightweight-charts fires visibleLogicalRangeChanged on every pan/zoom.
@@ -320,12 +325,14 @@ export default function CandleChart({
         .filter((d) => d.value != null && !isNaN(d.value))
     );
 
+    if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
+    else removeWavesIndicator();
+
+    // Set markers AFTER wave line series are added — adding new series to the
+    // chart can reset markers on the candlestick series in lightweight-charts.
     candleRef.current.setMarkers(
       showBubbleRef.current ? buildMarkers(signals, candles, todayModeRef.current) : []
     );
-
-    if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
-    else removeWavesIndicator();
 
     prevCountRef.current = candles.length;
 
@@ -370,6 +377,15 @@ export default function CandleChart({
         updateWavesIndicator(candlesRef.current, emaHighsRef.current, emaLowsRef.current);
     } else {
       removeWavesIndicator();
+    }
+    // Re-apply markers after wave line series are added/removed — adding or
+    // removing series in lightweight-charts can reset markers on the candlestick series.
+    if (candleRef.current && candlesRef.current?.length) {
+      candleRef.current.setMarkers(
+        showBubbleRef.current
+          ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
+          : []
+      );
     }
   }, [showWaves]); // eslint-disable-line
 

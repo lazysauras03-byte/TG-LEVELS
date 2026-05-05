@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import HomePage from "./pages/HomePage";
 import ChartsPage from "./pages/ChartsPage";
 import ReportsPage from "./pages/ReportsPage";
+import ChartsReportPage from "./pages/ChartsReportPage";
 import "./App.css";
 
 /**
@@ -21,6 +22,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/charts" element={<ChartsPage />} />
+        <Route path="/charts-report" element={<ChartsReportPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

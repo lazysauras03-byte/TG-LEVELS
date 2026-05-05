@@ -22,6 +22,7 @@ export default function StatusBar({
   todayMode, onTodayToggle,
   crosshairBar,
   onSidebarToggle,
+  onReportClick,
 }) {
   const lastUpdate = chartData?.lastUpdate
     ? new Date(chartData.lastUpdate).toLocaleTimeString("en-IN", {
@@ -181,8 +182,17 @@ export default function StatusBar({
         )}
       </div>
 
-      {/* ── Right side: Refresh + Sidebar toggle ── */}
+      {/* ── Right side: Refresh + Report + Sidebar toggle ── */}
       <div style={styles.rightActions}>
+        {/* 📄 Report — opens Charts Report page */}
+        <button
+          onClick={onReportClick}
+          title="View Wave Report"
+          style={styles.reportBtn}
+        >
+          📄 REPORT
+        </button>
+
         {/* ↻ Refresh — fetches latest 1-month data from backend */}
         <button
           onClick={() => onRefresh(symbol, resolution)}
@@ -276,6 +286,20 @@ const styles = {
     display: "flex", alignItems: "center", gap: 6,
     marginLeft: "auto", flexShrink: 0,
     paddingLeft: 10, borderLeft: "1px solid var(--border)",
+  },
+  reportBtn: {
+    background: "var(--accent-dim)",
+    border: "1px solid var(--accent)",
+    borderRadius: 5,
+    color: "var(--accent)",
+    fontFamily: "var(--font-mono)",
+    fontSize: 11, fontWeight: 700,
+    padding: "4px 12px",
+    letterSpacing: "0.04em",
+    display: "flex", alignItems: "center", gap: 4,
+    transition: "background 0.15s, color 0.15s",
+    cursor: "pointer",
+    flexShrink: 0,
   },
   refreshBtn: {
     background: "var(--bg3)",

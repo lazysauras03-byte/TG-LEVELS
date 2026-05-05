@@ -204,6 +204,7 @@ export default function ChartsPage() {
             onTodayToggle={() => setTodayMode((p) => !p)}
             crosshairBar={crosshairBar}
             onSidebarToggle={handleSidebarToggle}
+            onReportClick={() => navigate("/charts-report")}
           />
         </div>
       </div>

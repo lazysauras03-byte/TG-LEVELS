@@ -118,7 +118,8 @@ export default function ReportsPage() {
   // ── Derive wave pivots using pure (no-DOM) computation ──────────────────
   const enrichedPivots = useMemo(() => {
     if (!candles.length) return [];
-    return updateWavesIndicatorPure(candles, emaHighs, emaLows);
+    const result = updateWavesIndicatorPure(candles, emaHighs, emaLows);
+    return result.pivots ?? result;
   }, [candles, emaHighs, emaLows]);
 
   // ── Build flat table rows from wave groups ──────────────────────────────
@@ -308,4 +309,3 @@ export default function ReportsPage() {
     </div>
   );
 }
-
