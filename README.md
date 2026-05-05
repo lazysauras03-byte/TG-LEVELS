@@ -1,5 +1,14 @@
 # TGG — EMA9 NH/NL/BC Dashboard
 
+                                    
+<!-- git add .ve -o tgg-clean.zip HEAD
+>> git commit -m "Include latest changes"archive -o tgg-clean.zip HEAD
+>> git archive -o tgg-clean.zip HEAD  -->
+
+<!-- git add . 
+git commit -m ""
+git push -u origin TGG -->
+
 Professional trading dashboard that visualises your Pine Script v6 EMA9 NH/NL/BC strategy using live Fyers API data.
 
 ```

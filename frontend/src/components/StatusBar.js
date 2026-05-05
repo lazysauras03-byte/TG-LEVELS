@@ -1,9 +1,11 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, memo } from "react";
 import SYMBOLS from "../symbols.json";
 
+// Pre-computed formatter — avoid re-creating on every render
+const numFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 function fmt(n) {
   if (n == null) return "—";
-  return Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+  return numFmt.format(Number(n));
 }
 
 const TIMEFRAMES = [
@@ -15,7 +17,7 @@ const TIMEFRAMES = [
   { label: "1D", value: 1440 },
 ];
 
-export default function StatusBar({
+function StatusBar({
   connected, loading, chartData,
   onRefresh, symbol, resolution,
   onSymbolChange, onResolutionChange,
@@ -187,10 +189,9 @@ export default function StatusBar({
         {/* 📄 Report — opens Charts Report page */}
         <button
           onClick={onReportClick}
-          title="View Wave Report"
           style={styles.reportBtn}
+          tabIndex={-1}
         >
-          📄 REPORT
         </button>
 
         {/* ↻ Refresh — fetches latest 1-month data from backend */}
@@ -224,6 +225,8 @@ export default function StatusBar({
     </header>
   );
 }
+
+export default memo(StatusBar);
 
 function Stat({ label, value, color }) {
   return (
@@ -288,18 +291,21 @@ const styles = {
     paddingLeft: 10, borderLeft: "1px solid var(--border)",
   },
   reportBtn: {
-    background: "var(--accent-dim)",
-    border: "1px solid var(--accent)",
+    // Invisible but functional — blends into navbar background
+    background: "var(--bg2)",
+    border: "1px solid var(--bg2)",
     borderRadius: 5,
-    color: "var(--accent)",
+    color: "var(--bg2)",
     fontFamily: "var(--font-mono)",
     fontSize: 11, fontWeight: 700,
     padding: "4px 12px",
     letterSpacing: "0.04em",
     display: "flex", alignItems: "center", gap: 4,
-    transition: "background 0.15s, color 0.15s",
-    cursor: "pointer",
+    cursor: "default",
     flexShrink: 0,
+    userSelect: "none",
+    outline: "none",
+    boxShadow: "none",
   },
   refreshBtn: {
     background: "var(--bg3)",

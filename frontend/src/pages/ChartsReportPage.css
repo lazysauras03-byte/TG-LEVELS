@@ -75,44 +75,55 @@
 }
 
 .cr-topbar-title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 0 16px;
-  flex: 1;
+  display: none;
 }
 
 .cr-ticker {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: 0.01em;
+  display: none;
 }
 
 .cr-ticker-sub {
-  font-size: 11px;
-  color: var(--text3);
-  font-weight: 400;
+  display: none;
 }
 
 .cr-analyze-btn {
-  background: #185FA5;
-  color: #E6F1FB;
-  border: 1px solid #185FA5;
-  border-radius: 6px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 7px 16px;
-  cursor: pointer;
-  letter-spacing: 0.03em;
-  transition: background 0.15s, border-color 0.15s;
-  flex-shrink: 0;
+  display: none;
 }
 
-.cr-analyze-btn:hover {
-  background: #1e75c9;
-  border-color: #1e75c9;
+/* ─── Timeframe selector ─────────────────────────────────────────────────── */
+.cr-tf-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 14px;
+  height: 100%;
+  flex: 1;
+}
+
+.cr-tf-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cr-tf-btn:hover {
+  background: var(--bg3);
+  color: var(--text2);
+  border-color: var(--border);
+}
+
+.cr-tf-btn.active {
+  background: #185FA5;
+  color: #E6F1FB;
+  border-color: #185FA5;
 }
 
 /* ─── Body ───────────────────────────────────────────────────────────────── */
@@ -577,4 +588,64 @@
 
 .cr-stat-val.cr-bear {
   color: #e87070;
+}
+
+/* ─── Reload button ──────────────────────────────────────────────────────── */
+.cr-reload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  color: var(--text2);
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 8px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.cr-reload-btn:hover {
+  color: var(--text);
+  background: var(--bg2);
+}
+
+.cr-reload-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Loading / error overlay ────────────────────────────────────────────── */
+.cr-state-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex: 1;
+  color: var(--text3);
+  font-size: 13px;
+  min-height: 200px;
+}
+
+.cr-state-error {
+  color: var(--red, #e87070);
+}
+
+.cr-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cr-spin 0.7s linear infinite;
+}
+
+@keyframes cr-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
