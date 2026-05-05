@@ -1,40 +1,33 @@
 // IndicatorPanel.js
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { INDICATOR_REGISTRY } from "../indicators/indicatorRegistry";
 import "./IndicatorPanel.css";
 
-/**
- * IndicatorPanel
- *
- * Reads INDICATOR_REGISTRY for the list of indicators.
- * Adding a new indicator = only edit indicatorRegistry.js.
- * No changes needed here.
- *
- * Props:
- *   indicators  — { [id]: boolean }   current enabled/disabled state
- *   onChange    — (id, enabled) => void
- */
 export default function IndicatorPanel({ indicators, onChange }) {
   const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
 
   const enabledCount = Object.values(indicators).filter(Boolean).length;
 
-  return (
-    <div className="ind-panel">
+  useEffect(() => {
+    if (!open) return;
+    function handleOutsideClick(e) {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick, true);
+    return () => document.removeEventListener("mousedown", handleOutsideClick, true);
+  }, [open]);
 
-      {/* Trigger button */}
+  return (
+    <div className="ind-panel" ref={panelRef}>
       <button
         className={`ind-trigger ${open ? "ind-trigger--open" : ""}`}
         onClick={() => setOpen((p) => !p)}
         title="Indicators"
       >
-        <svg
-          className="ind-trigger-icon"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-        >
+        <svg className="ind-trigger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
           <line x1="4" y1="6" x2="20" y2="6" />
           <line x1="4" y1="12" x2="20" y2="12" />
           <line x1="4" y1="18" x2="14" y2="18" />
@@ -45,20 +38,16 @@ export default function IndicatorPanel({ indicators, onChange }) {
         )}
         <svg
           className={`ind-trigger-caret ${open ? "ind-trigger-caret--open" : ""}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
 
-      {/* Dropdown */}
       {open && (
         <div className="ind-dropdown">
           <div className="ind-dropdown-header">
-            <span className="ind-dropdown-title">Indicators</span>
+            <span className="ind-dropdown-title">INDICATORS</span>
             <span className="ind-dropdown-count">
               {enabledCount} / {INDICATOR_REGISTRY.length} active
             </span>
@@ -68,9 +57,19 @@ export default function IndicatorPanel({ indicators, onChange }) {
             {INDICATOR_REGISTRY.map((ind) => {
               const enabled = !!indicators[ind.id];
               return (
-                <label
+                <div
                   key={ind.id}
                   className={`ind-row ${enabled ? "ind-row--on" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Toggle ${ind.label}`}
+                  onClick={() => onChange(ind.id, !enabled)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onChange(ind.id, !enabled);
+                    }
+                  }}
                 >
                   <span className="ind-row-left">
                     <span
@@ -79,18 +78,18 @@ export default function IndicatorPanel({ indicators, onChange }) {
                     />
                     <span className="ind-row-info">
                       <span className="ind-row-label">{ind.label}</span>
-                      <span className="ind-row-desc">{ind.desc}</span>
                     </span>
                   </span>
+                  {/* stopPropagation so clicking the knob doesn't double-fire */}
                   <span
                     className={`ind-toggle ${enabled ? "ind-toggle--on" : ""}`}
                     role="switch"
                     aria-checked={enabled}
-                    onClick={() => onChange(ind.id, !enabled)}
+                    onClick={(e) => e.stopPropagation()}
                   >
                     <span className="ind-toggle-thumb" />
                   </span>
-                </label>
+                </div>
               );
             })}
           </div>

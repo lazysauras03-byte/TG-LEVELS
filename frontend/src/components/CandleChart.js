@@ -242,7 +242,7 @@ export default function CandleChart({
     return () => {
       el.removeEventListener("contextmenu", onContextMenu);
       ro.disconnect();
-      removeWavesIndicator();
+      removeWavesIndicator(true);
       chart.remove();
     };
   }, []); // eslint-disable-line

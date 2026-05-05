@@ -53,6 +53,7 @@
   flex-shrink: 0;
   transition: transform 0.2s;
 }
+
 .ind-trigger-caret--open {
   transform: rotate(180deg);
 }
@@ -72,8 +73,15 @@
 }
 
 @keyframes indDropIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .ind-dropdown-header {
@@ -114,6 +122,7 @@
   cursor: pointer;
   transition: background 0.12s;
   gap: 12px;
+  user-select: none;
 }
 
 .ind-row:last-child {
@@ -144,7 +153,6 @@
 .ind-row-info {
   display: flex;
   flex-direction: column;
-  gap: 3px;
   min-width: 0;
 }
 
@@ -161,13 +169,6 @@
 
 .ind-row:not(.ind-row--on) .ind-row-label {
   color: var(--text3);
-}
-
-.ind-row-desc {
-  font-size: 10px;
-  color: var(--text3);
-  font-family: var(--font-mono);
-  line-height: 1.4;
 }
 
 /* ─── Toggle switch ──────────────────────────────────── */

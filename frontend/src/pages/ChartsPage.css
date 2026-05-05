@@ -54,3 +54,30 @@
   left: 10px;
   z-index: 50;
 }
+
+/* ─── Sidebar sections — split evenly when both bubble + waves are shown ── */
+.sidebar .sidebar-sections {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidebar-section-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-section-wrap:last-child {
+  border-bottom: none;
+}
+
+.sidebar-section-wrap .tab-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}

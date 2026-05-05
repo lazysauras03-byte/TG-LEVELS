@@ -14,13 +14,11 @@ export const INDICATOR_REGISTRY = [
   {
     id: "bubble",
     label: "Bubble",
-    desc: "NH / NL / BC signals on candles",
     color: "#3d84ff",
   },
   {
     id: "waves",
     label: "Waves",
-    desc: "EMA9 sequential wave pivots",
     color: "#f5a623",
   },
 ];

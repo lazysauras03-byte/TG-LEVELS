@@ -8,6 +8,7 @@ import StatsPanel from "../components/StatsPanel";
 import WaveSignalTable from "../components/WaveSignalTable";
 import WaveStatsPanel from "../components/WaveStatsPanel";
 import IndicatorPanel from "../components/IndicatorPanel";
+import EmaFloatPanel from "../components/EmaFloatPanel";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import "./ChartsPage.css";
@@ -55,7 +56,7 @@ export default function ChartsPage() {
   }
 
   const bubbleOn = indicators.bubble !== false;
-  const wavesOn = indicators.waves === true;
+  const wavesOn = !!indicators.waves;
   const anySidebarIndicator = bubbleOn || wavesOn;
 
   // When no sidebar indicator is on → collapse sidebar
@@ -218,6 +219,16 @@ export default function ChartsPage() {
             <IndicatorPanel indicators={indicators} onChange={handleIndicatorChange} />
           </div>
 
+          {/* EMA9 High/Low floating panel — bottom left */}
+          {candles.length > 0 && (
+            <EmaFloatPanel
+              emaHighs={emaHighs}
+              emaLows={emaLows}
+              candles={candles}
+              crosshairBar={crosshairBar}
+            />
+          )}
+
           {showLoadingScreen ? (
             <div className="loading-screen">
               <div className="loading-spinner" />
@@ -255,55 +266,55 @@ export default function ChartsPage() {
         {/* Sidebar — exists only when at least one sidebar indicator is ON */}
         {anySidebarIndicator && (
           <div className={`sidebar ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
+            <div className="sidebar-sections">
 
-            {/*
-              When BOTH are on: two stacked sections, each with their own tabs.
-              When only one is on: single section (no section header needed,
-              but we still use the same component for consistency).
-            */}
+              {bubbleOn && (
+                <div className="sidebar-section-wrap">
+                  <SidebarSection
+                    id="bubble"
+                    title="Bubble"
+                    color="var(--accent, #3d84ff)"
+                    tabSignalCount={displayedSignals.length}
+                    tabWaveCount={0}
+                  >
+                    {(tab) => tab === "signals" ? (
+                      <SignalTable signals={signals} candles={candles} todayMode={todayMode} />
+                    ) : (
+                      <StatsPanel
+                        signals={signals}
+                        candles={candles}
+                        currentState={currentState}
+                        bestPrice={bestPrice}
+                        todayMode={todayMode}
+                      />
+                    )}
+                  </SidebarSection>
+                </div>
+              )}
 
-            {bubbleOn && (
-              <SidebarSection
-                id="bubble"
-                title="Bubble"
-                color="var(--accent, #3d84ff)"
-                tabSignalCount={displayedSignals.length}
-                tabWaveCount={0}
-              >
-                {(tab) => tab === "signals" ? (
-                  <SignalTable signals={signals} candles={candles} todayMode={todayMode} />
-                ) : (
-                  <StatsPanel
-                    signals={signals}
-                    candles={candles}
-                    currentState={currentState}
-                    bestPrice={bestPrice}
-                    todayMode={todayMode}
-                  />
-                )}
-              </SidebarSection>
-            )}
+              {wavesOn && (
+                <div className="sidebar-section-wrap">
+                  <SidebarSection
+                    id="waves"
+                    title="Waves"
+                    color="#f5a623"
+                    tabSignalCount={0}
+                    tabWaveCount={displayedWavePivots.length}
+                  >
+                    {(tab) => tab === "signals" ? (
+                      <WaveSignalTable wavePivots={wavePivots} todayMode={todayMode} />
+                    ) : (
+                      <WaveStatsPanel
+                        wavePivots={wavePivots}
+                        waveSegments={waveSegments}
+                        todayMode={todayMode}
+                      />
+                    )}
+                  </SidebarSection>
+                </div>
+              )}
 
-            {wavesOn && (
-              <SidebarSection
-                id="waves"
-                title="Waves"
-                color="#f5a623"
-                tabSignalCount={0}
-                tabWaveCount={displayedWavePivots.length}
-              >
-                {(tab) => tab === "signals" ? (
-                  <WaveSignalTable wavePivots={wavePivots} todayMode={todayMode} />
-                ) : (
-                  <WaveStatsPanel
-                    wavePivots={wavePivots}
-                    waveSegments={waveSegments}
-                    todayMode={todayMode}
-                  />
-                )}
-              </SidebarSection>
-            )}
-
+            </div>
           </div>
         )}
       </div>

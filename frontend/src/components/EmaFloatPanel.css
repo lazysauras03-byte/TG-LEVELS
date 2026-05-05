@@ -1,0 +1,52 @@
+/* ─── EmaFloatPanel ──────────────────────────────────── */
+.ema-float-panel {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 50;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none; /* purely informational — doesn't steal chart events */
+}
+
+.ema-float-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ema-float-key {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  min-width: 38px;
+}
+
+.ema-float-key--high {
+  color: #00d97e;
+}
+
+.ema-float-key--low {
+  color: #ff4560;
+}
+
+.ema-float-val {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.ema-float-val--high {
+  color: #00d97e;
+}
+
+.ema-float-val--low {
+  color: #ff4560;
+}

@@ -1,33 +1,9 @@
 /**
  * WavesIndicator.js
- * ─────────────────────────────────────────────────────────────────────────────
- * Mirrors updated Pine Script "EMA 9 Structure Waves (Negative Numbering)".
- *
- * Changes vs previous version:
- *   - legTouchedEMA guard (matches Bubble logic)
- *   - HH / LH / HL / LL wave type tracking
- *   - Wave labels: "Wave -N prevType → currType"
- *   - onWaveData(pivots, lines) callback → React sidebar can consume
- *
- * Public API:
- *   createWavesIndicator(chart, container, onWaveData?)
- *   updateWavesIndicator(candles, emaHighs, emaLows)
- *   removeWavesIndicator()
- * ─────────────────────────────────────────────────────────────────────────────
  */
 
 const MAX_WAVES = 50;
 
-// ─── Module-level refs ───────────────────────────────────────────────────────
-let _chart = null;
-let _container = null;
-let _refSeries = null;
-let _onWaveData = null;   // (pivots, segments) => void
-
-let _waveSeriesList = [];
-let _labelEls = [];
-
-// ─── EMA helper ───────────────────────────────────────────────────────────────
 function calcEMA(prices, period) {
   const k = 2 / (period + 1);
   const result = new Array(prices.length).fill(null);
@@ -41,85 +17,18 @@ function calcEMA(prices, period) {
   return result;
 }
 
-// ─── Label DOM helpers ────────────────────────────────────────────────────────
-function createLabelEl(text, side) {
-  const el = document.createElement("div");
-  el.setAttribute("data-waves-label", "1");
-  el.innerText = text;
-  Object.assign(el.style, {
-    position: "absolute",
-    pointerEvents: "none",
-    userSelect: "none",
-    background: "#111827",
-    color: "#f5a623",
-    fontSize: "10px",
-    fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
-    fontWeight: "600",
-    padding: "2px 5px",
-    borderRadius: "3px",
-    border: "1px solid rgba(245,166,35,0.4)",
-    whiteSpace: "nowrap",
-    zIndex: "20",
-    transform: "translateX(-50%)",
-  });
-  return el;
-}
+export function updateWavesIndicatorPure(candles, emaHighs, emaLows) {
+  if (!candles?.length) return [];
 
-function repositionLabels() {
-  if (!_chart || !_container || !_refSeries) return;
-  const ts = _chart.timeScale();
-  _labelEls.forEach(({ el, barIndex, price, side, candles }) => {
-    if (!candles || barIndex >= candles.length) { el.style.display = "none"; return; }
-    const unixSec = Math.floor(candles[barIndex].time / 1000);
-    const x = ts.timeToCoordinate(unixSec);
-    const y = _refSeries.priceToCoordinate(price);
-    if (x == null || y == null) { el.style.display = "none"; return; }
-    el.style.display = "block";
-    el.style.left = `${x}px`;
-    el.style.top = side === "down" ? `${y - 22}px` : `${y + 6}px`;
-  });
-}
+  const eH =
+    emaHighs?.length === candles.length
+      ? emaHighs
+      : calcEMA(candles.map((c) => c.high), 9);
+  const eL =
+    emaLows?.length === candles.length
+      ? emaLows
+      : calcEMA(candles.map((c) => c.low), 9);
 
-// ─── Internal cleanup ─────────────────────────────────────────────────────────
-function _clearDrawings() {
-  _waveSeriesList.forEach((s) => {
-    try { if (_chart) _chart.removeSeries(s); } catch (_) { }
-  });
-  _waveSeriesList = [];
-  try { if (_refSeries) _refSeries.setData([]); } catch (_) { }
-  _labelEls.forEach(({ el }) => {
-    try { if (el.parentNode) el.parentNode.removeChild(el); } catch (_) { }
-  });
-  _labelEls = [];
-}
-
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-export function createWavesIndicator(chart, container, onWaveData = null) {
-  _chart = chart;
-  _container = container;
-  _onWaveData = onWaveData;
-
-  _refSeries = chart.addLineSeries({
-    priceLineVisible: false,
-    lastValueVisible: false,
-    crosshairMarkerVisible: false,
-    color: "transparent",
-    lineWidth: 1,
-  });
-
-  chart.timeScale().subscribeVisibleTimeRangeChange(repositionLabels);
-  chart.subscribeCrosshairMove(repositionLabels);
-}
-
-export function updateWavesIndicator(candles, emaHighs, emaLows) {
-  if (!_chart || !_container || !candles?.length) return;
-  _clearDrawings();
-
-  const eH = (emaHighs?.length === candles.length) ? emaHighs : calcEMA(candles.map((c) => c.high), 9);
-  const eL = (emaLows?.length === candles.length) ? emaLows : calcEMA(candles.map((c) => c.low), 9);
-
-  // ── Pine Script bar-by-bar replay (matches updated Pine) ─────────────────
   let state = 0;
   let bestPrice = null;
   let bestBar = null;
@@ -133,10 +42,7 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
   let prevWaveType = "";
   let currWaveType = "";
 
-  // Pivots: { barIndex, price, side, waveNum (set later), label }
   const pivots = [];
-  // Segments: { fromBar, fromPrice, toBar, toPrice, waveNum, waveLabel }
-  const segments = [];
 
   for (let i = 0; i < candles.length; i++) {
     const c = candles[i];
@@ -144,158 +50,213 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
     const emaL = eL[i];
     if (emaH == null || emaL == null) continue;
 
-    // Pine Script touch logic (same as Bubble):
-    // hhTouch = (isGreen && close > ema9High) || (isRed && open > ema9High)
-    // llTouch = (isGreen && open < ema9Low) || (isRed && close < ema9Low)
     const isGreen = c.close > c.open;
     const isRed = c.close < c.open;
+
+    // Match Pine Script exactly:
+    // hhTouch = (isGreen and close > ema9High) or (isRed and open > ema9High)
+    // llTouch = (isGreen and open < ema9Low)  or (isRed and close < ema9Low)
     const touchHigh = (isGreen && c.close > emaH) || (isRed && c.open > emaH);
     const touchLow = (isGreen && c.open < emaL) || (isRed && c.close < emaL);
 
-    // ── INIT ──────────────────────────────────────────────────────────────
     if (state === 0) {
-      if (touchHigh) { state = 1; bestPrice = c.high; bestBar = i; legTouchedEMA = true; }
-      else if (touchLow) { state = -1; bestPrice = c.low; bestBar = i; legTouchedEMA = true; }
+      if (touchHigh) {
+        state = 1;
+        bestPrice = c.high;
+        bestBar = i;
+        legTouchedEMA = true;
+      } else if (touchLow) {
+        state = -1;
+        bestPrice = c.low;
+        bestBar = i;
+        legTouchedEMA = true;
+      }
       continue;
     }
 
-    // ── HIGH TRACKING ─────────────────────────────────────────────────────
     if (state === 1) {
-      if (bestPrice === null || c.high > bestPrice) { bestPrice = c.high; bestBar = i; }
+      if (bestPrice === null || c.high > bestPrice) {
+        bestPrice = c.high;
+        bestBar = i;
+      }
       if (touchHigh) legTouchedEMA = true;
 
       if (touchLow && legTouchedEMA) {
         const lockPrice = bestPrice;
         const lockBar = bestBar;
 
-        currWaveType = prevHigh === null ? "HH" : (lockPrice > prevHigh ? "HH" : "LH");
+        currWaveType = prevHigh === null ? "HH" : lockPrice > prevHigh ? "HH" : "LH";
         prevHigh = lockPrice;
-
-        const waveLabel = `Wave X ${prevWaveType} → ${currWaveType}`;
-
-        if (lastPrice !== null) {
-          segments.push({
-            fromBar: lastBar, fromPrice: lastPrice,
-            toBar: lockBar, toPrice: lockPrice,
-            prevWaveType, currWaveType,
-          });
-        }
 
         pivots.push({ barIndex: lockBar, price: lockPrice, side: "high", waveType: currWaveType });
 
-        prevWaveType = currWaveType;
+        prevWaveType = currWaveType; // eslint-disable-line no-unused-vars
         lastPrice = lockPrice;
         lastBar = lockBar;
 
         state = -1;
         bestPrice = c.low;
         bestBar = i;
-        legTouchedEMA = touchLow;
+        legTouchedEMA = touchLow;   // Pine: legTouchedEMA := llTouch
       }
       continue;
     }
 
-    // ── LOW TRACKING ──────────────────────────────────────────────────────
     if (state === -1) {
-      if (bestPrice === null || c.low < bestPrice) { bestPrice = c.low; bestBar = i; }
+      if (bestPrice === null || c.low < bestPrice) {
+        bestPrice = c.low;
+        bestBar = i;
+      }
       if (touchLow) legTouchedEMA = true;
 
       if (touchHigh && legTouchedEMA) {
         const lockPrice = bestPrice;
         const lockBar = bestBar;
 
-        currWaveType = prevLow === null ? "LL" : (lockPrice < prevLow ? "LL" : "HL");
+        currWaveType = prevLow === null ? "LL" : lockPrice < prevLow ? "LL" : "HL";
         prevLow = lockPrice;
-
-        if (lastPrice !== null) {
-          segments.push({
-            fromBar: lastBar, fromPrice: lastPrice,
-            toBar: lockBar, toPrice: lockPrice,
-            prevWaveType, currWaveType,
-          });
-        }
 
         pivots.push({ barIndex: lockBar, price: lockPrice, side: "low", waveType: currWaveType });
 
-        prevWaveType = currWaveType;
+        prevWaveType = currWaveType; // eslint-disable-line no-unused-vars
         lastPrice = lockPrice;
         lastBar = lockBar;
 
         state = 1;
         bestPrice = c.high;
         bestBar = i;
-        legTouchedEMA = touchHigh;
+        legTouchedEMA = touchHigh;  // Pine: legTouchedEMA := hhTouch
       }
       continue;
     }
   }
 
-  // Trim to MAX_WAVES (keep latest)
-  const trimmedSegments = segments.slice(-MAX_WAVES);
-  const trimmedPivots = pivots.slice(-MAX_WAVES);
-
-  // Apply negative wave numbering (latest = -1)
-  const total = trimmedPivots.length;
-  const enrichedPivots = trimmedPivots.map((piv, i) => ({
+  const trimmed = pivots.slice(-MAX_WAVES);
+  const total = trimmed.length;
+  return trimmed.map((piv, i) => ({
     ...piv,
-    waveNum: -(total - i),          // -1 = latest, -N = oldest
+    waveNum: -(total - i),
     time: candles[piv.barIndex].time,
   }));
-
-  const enrichedSegments = trimmedSegments.map((seg, i) => ({
-    ...seg,
-    waveNum: -(trimmedSegments.length - i),
-    fromTime: candles[seg.fromBar].time,
-    toTime: candles[seg.toBar].time,
-  }));
-
-  // ── Draw line segments ────────────────────────────────────────────────────
-  trimmedSegments.forEach((seg) => {
-    const fromTime = Math.floor(candles[seg.fromBar].time / 1000);
-    const toTime = Math.floor(candles[seg.toBar].time / 1000);
-    if (fromTime >= toTime) return;
-
-    const series = _chart.addLineSeries({
-      color: "rgba(245,166,35,0.85)",
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    series.setData([
-      { time: fromTime, value: seg.fromPrice },
-      { time: toTime, value: seg.toPrice },
-    ]);
-    _waveSeriesList.push(series);
-  });
-
-  // Feed refSeries pivot prices for priceToCoordinate()
-  if (_refSeries && trimmedPivots.length > 0) {
-    const refData = trimmedPivots
-      .map((piv) => ({ time: Math.floor(candles[piv.barIndex].time / 1000), value: piv.price }))
-      .sort((a, b) => a.time - b.time);
-    const seen = new Set();
-    const unique = refData.filter(({ time }) => seen.has(time) ? false : seen.add(time));
-    try { _refSeries.setData(unique); } catch (_) { }
-  }
-
-  // ── Draw DOM labels with negative wave numbering ──────────────────────────
-  enrichedPivots.forEach((piv) => {
-    const side = piv.side === "high" ? "down" : "up";
-    const el = createLabelEl(`Wave ${piv.waveNum} · ${piv.waveType}`, side);
-    _container.appendChild(el);
-    _labelEls.push({ el, barIndex: piv.barIndex, price: piv.price, side, candles });
-  });
-
-  repositionLabels();
-
-  // ── Fire callback so React sidebar can render wave data ───────────────────
-  if (_onWaveData) {
-    _onWaveData(enrichedPivots, enrichedSegments);
-  }
 }
 
-export function removeWavesIndicator() {
-  _clearDrawings();
+// ─── Chart overlay ────────────────────────────────────────────────────────────
+
+let _chart = null;
+let _container = null;
+let _onWaveData = null;
+let _lines = [];
+let _labels = [];
+
+export function createWavesIndicator(chart, container, onWaveData) {
+  _chart = chart;
+  _container = container;
+  _onWaveData = onWaveData ?? null;
+  _lines = [];
+  _labels = [];
+}
+
+export function updateWavesIndicator(candles, emaHighs, emaLows) {
+  if (!_chart || !candles?.length) return;
+
+  _clearOverlay();
+
+  const pivots = updateWavesIndicatorPure(candles, emaHighs, emaLows);
+  if (!pivots.length) {
+    if (_onWaveData) _onWaveData([], []);
+    return;
+  }
+
+  const segments = [];
+  for (let i = 1; i < pivots.length; i++) {
+    segments.push({ from: pivots[i - 1], to: pivots[i] });
+  }
+
+  segments.forEach(({ from, to }) => {
+    try {
+      const color = to.side === "high"
+        ? "rgba(0,217,126,0.85)"
+        : "rgba(255,69,96,0.85)";
+
+      const lineSeries = _chart.addLineSeries({
+        color,
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+
+      lineSeries.setData([
+        { time: Math.floor(from.time / 1000), value: from.price },
+        { time: Math.floor(to.time / 1000), value: to.price },
+      ]);
+
+      _lines.push(lineSeries);
+    } catch (_) { }
+  });
+
+  if (_container) {
+    pivots.forEach((piv) => {
+      const label = document.createElement("div");
+      label.textContent = `${piv.waveType}(${piv.waveNum})`;
+      label.style.cssText = [
+        "position:absolute",
+        "font-size:10px",
+        "font-weight:700",
+        "pointer-events:none",
+        "white-space:nowrap",
+        `color:${piv.side === "high" ? "#00d97e" : "#ff4560"}`,
+        "background:rgba(0,0,0,0.65)",
+        "padding:1px 4px",
+        "border-radius:3px",
+        "z-index:10",
+      ].join(";");
+
+      try {
+        const unixSec = Math.floor(piv.time / 1000);
+        const x = _chart.timeScale().timeToCoordinate(unixSec);
+        const y = _chart.priceScale("right").priceToCoordinate(piv.price);
+
+        if (x != null && y != null) {
+          label.style.left = `${x + 4}px`;
+          label.style.top = `${piv.side === "high" ? y - 18 : y + 4}px`;
+          _container.appendChild(label);
+          _labels.push(label);
+        }
+      } catch (_) { }
+    });
+  }
+
+  if (_onWaveData) _onWaveData(pivots, segments);
+}
+
+/**
+ * removeWavesIndicator — clears overlay drawings but keeps _chart reference
+ * so waves can be re-enabled without needing createWavesIndicator again.
+ * Pass `fullTeardown = true` only when the chart itself is being destroyed.
+ */
+export function removeWavesIndicator(fullTeardown = false) {
+  _clearOverlay();
+  if (fullTeardown) {
+    _chart = null;
+    _container = null;
+    _onWaveData = null;
+  }
+  // When fullTeardown is false (user toggled waves OFF), keep _chart/_container
+  // so updateWavesIndicator works again when user toggles back ON.
   if (_onWaveData) _onWaveData([], []);
+}
+
+function _clearOverlay() {
+  if (_chart) {
+    _lines.forEach((series) => {
+      try { _chart.removeSeries(series); } catch (_) { }
+    });
+  }
+  _lines = [];
+
+  _labels.forEach((el) => {
+    try { el.parentNode?.removeChild(el); } catch (_) { }
+  });
+  _labels = [];
 }
