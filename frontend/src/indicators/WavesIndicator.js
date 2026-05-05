@@ -198,18 +198,20 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
   if (_container) {
     pivots.forEach((piv) => {
       const label = document.createElement("div");
+      // Display: WaveType + Wave Number (e.g., "HH(-1)", "LL(-2)", etc.)
       label.textContent = `${piv.waveType}(${piv.waveNum})`;
       label.style.cssText = [
         "position:absolute",
-        "font-size:10px",
+        "font-size:11px",
         "font-weight:700",
         "pointer-events:none",
         "white-space:nowrap",
         `color:${piv.side === "high" ? "#00d97e" : "#ff4560"}`,
-        "background:rgba(0,0,0,0.65)",
-        "padding:1px 4px",
-        "border-radius:3px",
+        "background:rgba(0,0,0,0.75)",
+        "padding:2px 6px",
+        "border-radius:4px",
         "z-index:10",
+        "letter-spacing:0.5px",
       ].join(";");
 
       try {
@@ -219,7 +221,7 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
 
         if (x != null && y != null) {
           label.style.left = `${x + 4}px`;
-          label.style.top = `${piv.side === "high" ? y - 18 : y + 4}px`;
+          label.style.top = `${piv.side === "high" ? y - 20 : y + 6}px`;
           _container.appendChild(label);
           _labels.push(label);
         }
