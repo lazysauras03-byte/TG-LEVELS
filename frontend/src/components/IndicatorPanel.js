@@ -80,12 +80,11 @@ export default function IndicatorPanel({ indicators, onChange }) {
                       <span className="ind-row-label">{ind.label}</span>
                     </span>
                   </span>
-                  {/* stopPropagation so clicking the knob doesn't double-fire */}
+                  {/* Now BOTH the toggle button AND rectangle are clickable */}
                   <span
                     className={`ind-toggle ${enabled ? "ind-toggle--on" : ""}`}
                     role="switch"
                     aria-checked={enabled}
-                    onClick={(e) => e.stopPropagation()}
                   >
                     <span className="ind-toggle-thumb" />
                   </span>
