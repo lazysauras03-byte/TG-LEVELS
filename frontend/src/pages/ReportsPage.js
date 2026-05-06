@@ -20,7 +20,7 @@ import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 
 // Re-use the same WavesIndicator logic to compute pivots from raw candles
-import { updateWavesIndicatorPure } from "../indicators/WavesIndicatorPure";
+import { updateWavesIndicatorPure } from "../indicators/WavesIndicator";
 
 import "./ReportsPage.css";
 

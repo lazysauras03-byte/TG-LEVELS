@@ -401,10 +401,11 @@
 }
 
 .cr-row-count {
-  font-size: 11px;
-  color: var(--text3);
+  font-size: 12px;
+  color: var(--text2);
   margin-left: 4px;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 /* ─── Table ───────────────────────────────────────────────────────────────── */
@@ -419,7 +420,7 @@
 .cr-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13px;
   min-width: 860px;
 }
 
@@ -430,13 +431,13 @@
 .cr-th-wave,
 .cr-th-dir,
 .cr-th-sortable {
-  padding: 9px 12px;
-  font-size: 10px;
-  font-weight: 500;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--text3);
-  border-bottom: 1px solid var(--border);
+  color: var(--text2);
+  border-bottom: 2px solid var(--border2);
   background: var(--bg2);
   text-align: left;
   white-space: nowrap;
@@ -498,7 +499,7 @@
 }
 
 .cr-row td {
-  padding: 9px 12px;
+  padding: 10px 14px;
   vertical-align: middle;
 }
 
@@ -525,24 +526,24 @@
 
 /* ─── Cell contents ──────────────────────────────────────────────────────── */
 .cr-w-num {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text2);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .cr-w-label {
-  font-size: 9px;
-  color: var(--text3);
+  font-size: 11px;
+  color: var(--text2);
   letter-spacing: 0.04em;
 }
 
 /* Wave label shown as its own cell (standalone, not under a number) */
 .cr-w-label-standalone {
   display: inline-block;
-  font-size: 10px;
-  color: var(--text3);
+  font-size: 12px;
+  color: var(--text);
   letter-spacing: 0.05em;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* Second "Wave" header (label column) */
@@ -552,15 +553,16 @@
 
 .cr-time {
   display: block;
-  font-size: 10px;
-  color: var(--text3);
-  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--text2);
+  margin-bottom: 3px;
+  font-weight: 500;
 }
 
 .cr-price {
   display: block;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -608,7 +610,7 @@
 /* Delta value */
 .cr-delta {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
@@ -624,28 +626,29 @@
 .cr-bar-wrap {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .cr-bar-bg {
-  height: 6px;
-  border-radius: 3px;
+  height: 8px;
+  border-radius: 4px;
   background: var(--bg3);
   flex: 1;
-  min-width: 50px;
+  min-width: 80px;
   overflow: hidden;
 }
 
 .cr-bar-fill {
-  height: 6px;
-  border-radius: 3px;
+  height: 8px;
+  border-radius: 4px;
   transition: width 0.3s ease;
 }
 
 .cr-bar-pct {
-  font-size: 10px;
-  color: var(--text3);
-  min-width: 28px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  min-width: 32px;
   text-align: right;
 }
 

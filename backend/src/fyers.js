@@ -88,17 +88,53 @@ async function validateToken() {
   }
 }
 
+// ── Smart lookback calculator ─────────────────────────────────────────────────
+// Goal: always load enough data to form 50 waves, with a minimum of 3 months.
+// Wave frequency estimates per resolution (waves per trading day):
+//   1m  → ~10-15 waves/day   | 1D  → ~0.4-0.6 waves/day (2-3/week)
+//   3m  → ~6-8 waves/day     | 15m → ~3-4 waves/day
+//   5m  → ~5-6 waves/day     | 60m → ~1-2 waves/day
+// We want 50 waves ÷ waves_per_day = trading days needed.
+// 1 month ≈ 22 trading days. Add 50% buffer. Cap at 12 months for daily,
+// 3 months for intraday (Fyers limit on intraday history is 100 days).
+function calcLookbackDays(resolution) {
+  const res = String(resolution).toUpperCase();
+  const TARGET_WAVES = 50;
+  const TRADING_DAYS_PER_MONTH = 22;
+  const MIN_MONTHS = 3; // always fetch at least 3 months
+  const MIN_DAYS = MIN_MONTHS * 30;
+
+  let wavesPerDay;
+  if (res === "D" || res === "1440") {
+    wavesPerDay = 0.5; // ~2-3 waves per week
+  } else {
+    const mins = parseInt(res, 10) || 3;
+    // Intraday session = 375 minutes. Each wave = ~2x resolution minutes minimum.
+    // Be conservative: effective waves per candle ≈ 1/8 of candles per day
+    const candlesPerDay = Math.floor(375 / mins);
+    wavesPerDay = candlesPerDay / 8;
+  }
+
+  const tradingDaysNeeded = Math.ceil((TARGET_WAVES / wavesPerDay) * 1.5); // 50% buffer
+  const calendarDaysNeeded = Math.ceil(tradingDaysNeeded * (365 / 252)); // trading→calendar
+
+  const isDaily = res === "D" || res === "1440";
+  const maxDays = isDaily ? 365 : 100; // Fyers intraday limit ~100 days
+
+  return Math.min(maxDays, Math.max(MIN_DAYS, calendarDaysNeeded));
+}
+
 // ── Fetch historical candles ─────────────────────────────────────────────────
 async function fetchCandles(symbol, resolution, count = 10000) {
   const fyers = getFyersClient();
 
   const now = Math.floor(Date.now() / 1000);
 
-  // 1D candles: Fyers API requires resolution "D" (not "1440"), fetch 2 years
-  // Intraday: go back 45 calendar days (~30 trading days)
   const isDaily = resolution === 1440 || String(resolution).toUpperCase() === "D";
   const fyersResolution = isDaily ? "D" : String(resolution);
-  const lookbackDays = isDaily ? 730 : 45;
+
+  // Smart lookback: enough data for 50 waves, min 3 months
+  const lookbackDays = calcLookbackDays(resolution);
   const rangeFrom = now - lookbackDays * 24 * 60 * 60;
 
   let res = await fyers.getHistory({
@@ -110,18 +146,22 @@ async function fetchCandles(symbol, resolution, count = 10000) {
     cont_flag: "1",
   });
 
-  // Fyers sometimes rejects very long date ranges for daily candles on indices.
-  // Fall back to 1 year if 2-year request fails.
-  if (isDaily && res && res.s !== "ok") {
-    const shorterFrom = now - 365 * 24 * 60 * 60;
-    res = await fyers.getHistory({
-      symbol,
-      resolution: fyersResolution,
-      date_format: "0",
-      range_from: String(shorterFrom),
-      range_to: String(now),
-      cont_flag: "1",
-    });
+  // If the full range fails (stock may not have that history), fall back to
+  // progressively shorter ranges: 6 months → 3 months → 1 month
+  if (res && res.s !== "ok") {
+    const fallbacks = [180, 90, 30].map((d) => now - d * 24 * 60 * 60);
+    for (const fallbackFrom of fallbacks) {
+      if (fallbackFrom >= rangeFrom) continue; // no point trying a longer range
+      res = await fyers.getHistory({
+        symbol,
+        resolution: fyersResolution,
+        date_format: "0",
+        range_from: String(fallbackFrom),
+        range_to: String(now),
+        cont_flag: "1",
+      });
+      if (res && res.s === "ok") break;
+    }
   }
 
   if (!res || res.s !== "ok") {

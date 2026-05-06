@@ -417,27 +417,48 @@ export default function CandleChart({
   //               nicely at any timeframe without being too crowded)
   const resetView = useCallback(() => {
     if (!chartRef.current || !candlesRef.current?.length) return;
-    const ts = chartRef.current.timeScale();
-    const total = candlesRef.current.length;
-    const RIGHT_MARGIN = 10;
+
+    const chart = chartRef.current;
+    const ts = chart.timeScale();
+    const candles = candlesRef.current;
+    const total = candles.length;
 
     const barsToShow = (() => {
       if (todayModeRef.current) {
-        const latestIST = toISTDate(candlesRef.current.at(-1).time);
-        const todayCount = candlesRef.current.filter(
-          (c) => toISTDate(c.time) === latestIST
-        ).length;
-        return Math.max(todayCount, 20); // show full day, min 20 bars
+        const latestIST = toISTDate(candles.at(-1).time);
+        const todayCount = candles.filter(c => toISTDate(c.time) === latestIST).length;
+        return Math.max(todayCount, 20);
       }
-      return 80; // fixed comfortable window for any non-TODAY timeframe
+      return Math.min(80, total);
     })();
 
+    const lastIdx = total - 1;
+    const leftBars = Math.round(barsToShow * 0.65);
+    const rightBars = Math.round(barsToShow * 0.35);
+    const fromIdx = Math.max(0, lastIdx - leftBars);
+    const toLogical = lastIdx + rightBars;
+
     try {
-      const to = total - 1 + RIGHT_MARGIN;
-      const from = to - barsToShow - RIGHT_MARGIN;
-      ts.setVisibleLogicalRange({ from, to });
+      // STEP 1: freeze autoScale so the existing (possibly wrong) price range
+      // doesn't fight us while we move the time axis
+      chart.priceScale('right').applyOptions({ autoScale: false });
+
+      // STEP 2: jump to the correct time window
+      ts.setVisibleLogicalRange({ from: fromIdx, to: toLogical });
+
+      // STEP 3: re-enable autoScale after a short delay — by then the time
+      // axis has settled on the latest candles, so autoScale recalculates
+      // the price range from those candles → both axes correct simultaneously.
+      // 80ms is enough for the browser to paint the new time position.
+      setTimeout(() => {
+        try {
+          chart.priceScale('right').applyOptions({ autoScale: true });
+        } catch { /* ignore */ }
+      }, 80);
+
     } catch {
-      try { ts.scrollToRealTime(); } catch { ts.fitContent(); }
+      // Fallback: fitContent resets everything
+      try { ts.fitContent(); } catch { /* ignore */ }
     }
   }, []);
 
@@ -518,8 +539,8 @@ export default function CandleChart({
       },
       handleScroll: true,
       handleScale: true,
-      width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight,
+      width: containerRef.current.clientWidth || containerRef.current.offsetWidth || 800,
+      height: containerRef.current.clientHeight || containerRef.current.offsetHeight || 500,
     });
 
     const candleSeries = chart.addCandlestickSeries({
@@ -682,6 +703,7 @@ export default function CandleChart({
     if (isFirst) {
       isFirstLoadRef.current = false;
       userScrolledRef.current = false;
+      // resetView() calls fitContent() first then sets the comfortable window via rAF
       resetView();
     } else if (intentionalReloadRef.current) {
       intentionalReloadRef.current = false;
@@ -733,12 +755,12 @@ export default function CandleChart({
       {/* Hint labels */}
       <div style={{
         position: "absolute", bottom: 36, left: 12,
-        color: "#3a4060", fontSize: 10, fontFamily: "var(--font-mono)",
+        color: "#4a5270", fontSize: 10, fontFamily: "var(--font-mono)",
         pointerEvents: "none", userSelect: "none",
         display: "flex", gap: 16,
       }}>
-        <span>Right-click to go to latest</span>
-        <span style={{ color: "#2a3050" }}>Hold Ctrl to measure</span>
+        <span>Right-click → latest candle</span>
+        <span style={{ color: "#3a4060" }}>Hold Ctrl to measure</span>
       </div>
     </div>
   );

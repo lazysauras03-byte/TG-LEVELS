@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { updateWavesIndicatorPure } from "../indicators/WavesIndicatorPure";
+import { updateWavesIndicatorPure } from "../indicators/WavesIndicator";
 import SYMBOLS from "../symbols.json";
 import "./ChartsReportPage.css";
 
