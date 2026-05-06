@@ -3,14 +3,15 @@
 // timeframe, runs the exact same wave algorithm as the chart, and displays the
 // resulting wave table with proper Dow Theory labels (HH / LH / HL / LL).
 
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { updateWavesIndicatorPure } from "../indicators/WavesIndicatorPure";
+import SYMBOLS from "../symbols.json";
 import "./ChartsReportPage.css";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL || "http://localhost:3299";
 
-// ── Timeframes — identical to ChartsPage / StatusBar ─────────────────────────
+// ── Timeframes ────────────────────────────────────────────────────────────────
 const TIMEFRAMES = [
   { label: "1m", value: 1 },
   { label: "3m", value: 3 },
@@ -39,27 +40,13 @@ function toISTDate(tsMs) {
   return `${String(ist.getUTCDate()).padStart(2, "0")}/${ist.toLocaleString("en", { month: "short", timeZone: "UTC" })}`;
 }
 
-// ── Convert segments from WavesIndicatorPure into table rows ─────────────────
-// For BOTH bull and bear:
-//   col1 = start of the wave (fromTime / fromPrice)
-//   col2 = end of the wave   (toTime   / toPrice)
-// This means:
-//   Bearish: high (fromTime) → low (toTime)   → col1=high, col2=low  ✓
-//   Bullish: low  (fromTime) → high (toTime)  → col1=low,  col2=high ✓
+// ── Build table rows ──────────────────────────────────────────────────────────
+// col1 = wave START (fromTime/fromPrice), col2 = wave END (toTime/toPrice)
 function buildTableRows(segments) {
   return segments.map((seg, i) => {
     const isBull = seg.toSide === "high";
     const delta = Math.abs(seg.toPrice - seg.fromPrice);
-    const fromLbl = seg.prevWaveType || "—";
-    const toLbl = seg.currWaveType || "—";
-    const label = `${fromLbl}\u2192${toLbl}`;
-
-    // col1 = wave start (fromTime/fromPrice), col2 = wave end (toTime/toPrice)
-    const col1Time = seg.fromTime;
-    const col1Price = seg.fromPrice;
-    const col2Time = seg.toTime;
-    const col2Price = seg.toPrice;
-
+    const label = `${seg.prevWaveType || "—"}\u2192${seg.currWaveType || "—"}`;
     const date = toISTDate(seg.fromTime);
 
     return {
@@ -68,15 +55,88 @@ function buildTableRows(segments) {
       date,
       dir: isBull ? "bull" : "bear",
       label,
-      col1Time, col1Price,
-      col2Time, col2Price,
+      col1Time: seg.fromTime,
+      col1Price: seg.fromPrice,
+      col2Time: seg.toTime,
+      col2Price: seg.toPrice,
       delta: +delta.toFixed(2),
       waveNum: seg.waveNum,
-      // keep for sort compatibility
-      highTime: isBull ? seg.toTime : seg.fromTime,
-      lowTime: isBull ? seg.fromTime : seg.toTime,
     };
   });
+}
+
+// ── Symbol search — identical style to ChartsPage StatusBar ──────────────────
+function SymbolSearch({ symbol, onSelect }) {
+  const [query, setQuery] = useState(symbol);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showDrop, setShowDrop] = useState(false);
+  const inputRef = useRef(null);
+  const dropRef = useRef(null);
+
+  useEffect(() => { setQuery(symbol); }, [symbol]);
+
+  function handleChange(e) {
+    const val = e.target.value;
+    setQuery(val);
+    if (!val) { setSuggestions([]); setShowDrop(false); return; }
+    const q = val.toLowerCase();
+    const hits = SYMBOLS.filter(
+      (s) => s.name.toLowerCase().includes(q) || s.symbol.toLowerCase().includes(q)
+    ).slice(0, 10);
+    setSuggestions(hits);
+    setShowDrop(hits.length > 0);
+  }
+
+  function handleSelect(sym) {
+    setQuery(sym.symbol);
+    setSuggestions([]);
+    setShowDrop(false);
+    onSelect(sym.symbol);
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === "Enter") { setShowDrop(false); onSelect(query); }
+    if (e.key === "Escape") setShowDrop(false);
+  }
+
+  useEffect(() => {
+    function handler(e) {
+      if (
+        dropRef.current && !dropRef.current.contains(e.target) &&
+        inputRef.current && !inputRef.current.contains(e.target)
+      ) setShowDrop(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div className="cr-sym-wrap">
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => query && setShowDrop(suggestions.length > 0)}
+        className="cr-sym-input"
+        placeholder="Search symbol…"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      {showDrop && (
+        <div ref={dropRef} className="cr-sym-dropdown">
+          {suggestions.map((s, i) => (
+            <div key={i} className="cr-sym-item" onMouseDown={() => handleSelect(s)}>
+              <span className="cr-sym-ticker">{s.symbol}</span>
+              <span className="cr-sym-name">
+                {s.name.length > 34 ? s.name.slice(0, 34) + "…" : s.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -88,7 +148,7 @@ export default function ChartsReportPage() {
     catch { return 15; }
   });
 
-  const [symbol] = useState(() => {
+  const [symbol, setSymbol] = useState(() => {
     try { const v = localStorage.getItem("tgg_symbol"); return v ? JSON.parse(v) : "NSE:NIFTY50-INDEX"; }
     catch { return "NSE:NIFTY50-INDEX"; }
   });
@@ -99,11 +159,13 @@ export default function ChartsReportPage() {
   const [loadState, setLoadState] = useState("idle");
   const [errMsg, setErrMsg] = useState("");
 
+  // Filters
   const [fDate, setFDate] = useState("all");
   const [fDir, setFDir] = useState("all");
   const [fSize, setFSize] = useState("all");
   const [fQ, setFQ] = useState("");
 
+  // Sort
   const [sortCol, setSortCol] = useState("delta");
   const [sortDir, setSortDir] = useState("asc");
 
@@ -111,12 +173,14 @@ export default function ChartsReportPage() {
   const fetchData = useCallback(async (sym, res) => {
     setLoadState("loading");
     setErrMsg("");
+    setFDate("all"); setFDir("all"); setFSize("all"); setFQ("");
+    setSortCol("delta"); setSortDir("asc");
     try {
       const url = `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
       const r = await fetch(url, { method: "POST" });
       const data = r.ok ? await r.json() : null;
 
-      if (data && data.candles && data.candles.length) {
+      if (data?.candles?.length) {
         setCandles(data.candles);
         setEmaHighs(data.emaHighs || []);
         setEmaLows(data.emaLows || []);
@@ -126,7 +190,7 @@ export default function ChartsReportPage() {
 
       const r2 = await fetch(`${BACKEND}/api/chart`);
       const data2 = r2.ok ? await r2.json() : null;
-      if (data2 && data2.candles && data2.candles.length) {
+      if (data2?.candles?.length) {
         setCandles(data2.candles);
         setEmaHighs(data2.emaHighs || []);
         setEmaLows(data2.emaLows || []);
@@ -143,17 +207,27 @@ export default function ChartsReportPage() {
 
   useEffect(() => { fetchData(symbol, timeframe); }, [symbol, timeframe, fetchData]);
 
-  // ── Wave calculation ────────────────────────────────────────────────────────
+  function handleSymbolSelect(sym) {
+    setSymbol(sym);
+    localStorage.setItem("tgg_symbol", JSON.stringify(sym));
+    fetchData(sym, timeframe);
+  }
+
+  function handleTimeframeChange(tf) {
+    setTimeframe(tf);
+    localStorage.setItem("tgg_resolution", JSON.stringify(tf));
+  }
+
+  // ── Wave computation ────────────────────────────────────────────────────────
   const { allWaves, allDates } = useMemo(() => {
     if (!candles.length) return { allWaves: [], allDates: [] };
     const { segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
     const rows = buildTableRows(segments);
-    // Dates sorted descending (latest first) for the filter dropdown
     const dates = [...new Set(rows.map((w) => w.date))].sort().reverse();
     return { allWaves: rows, allDates: dates };
   }, [candles, emaHighs, emaLows]);
 
-  // ── Filter ──────────────────────────────────────────────────────────────────
+  // ── Filter + sort ───────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let data = allWaves.filter((w) => {
       if (fDate !== "all" && w.date !== fDate) return false;
@@ -174,14 +248,13 @@ export default function ChartsReportPage() {
         return typeof av === "number" ? bv - av : bv > av ? 1 : -1;
       });
     } else {
-      // Default order: latest date first, within date latest wave first (desc by col1Time)
       data = [...data].sort((a, b) => b.col1Time - a.col1Time);
     }
 
     return data;
   }, [allWaves, fDate, fDir, fSize, fQ, sortCol, sortDir]);
 
-  // ── Stats — reflect filtered data ──────────────────────────────────────────
+  // ── Stats from filtered ─────────────────────────────────────────────────────
   const stats = useMemo(() => {
     if (!filtered.length) return { total: 0, avg: "0.0", maxBull: "0.00", maxBear: "0.00" };
     const deltas = filtered.map((w) => w.delta);
@@ -195,10 +268,9 @@ export default function ChartsReportPage() {
     };
   }, [filtered]);
 
-  // maxDelta from filtered for the strength bar
   const maxDelta = useMemo(() => filtered.reduce((acc, w) => Math.max(acc, w.delta), 1), [filtered]);
 
-  // ── Sort ────────────────────────────────────────────────────────────────────
+  // ── Sort helpers ────────────────────────────────────────────────────────────
   function handleColSort(col) {
     if (sortCol === col) {
       if (sortDir === "asc") setSortDir("desc");
@@ -216,8 +288,6 @@ export default function ChartsReportPage() {
   const sortLabel = !sortCol ? "Sort by Δ" : sortDir === "asc" ? "Δ Ascending" : "Δ Descending";
   const isSortedByDelta = sortCol === "delta" && sortDir;
   const tfLabel = TIMEFRAMES.find((t) => t.value === timeframe)?.label || String(timeframe);
-
-  // Track date separators (only when NOT sorted by delta)
   let lastDate = "";
 
   return (
@@ -236,6 +306,11 @@ export default function ChartsReportPage() {
           <span className="cr-logo-sub">DASHBOARD</span>
         </div>
 
+        {/* ── Symbol search box ── */}
+        <div className="cr-topbar-search">
+          <SymbolSearch symbol={symbol} onSelect={handleSymbolSelect} />
+        </div>
+
         <div style={{ flex: 1 }} />
 
         {/* Timeframe pills */}
@@ -244,7 +319,7 @@ export default function ChartsReportPage() {
             <button
               key={tf.value}
               className={`cr-tf-btn ${timeframe === tf.value ? "active" : ""}`}
-              onClick={() => setTimeframe(tf.value)}
+              onClick={() => handleTimeframeChange(tf.value)}
             >
               {tf.label}
             </button>
@@ -280,7 +355,7 @@ export default function ChartsReportPage() {
 
         {(loadState === "done" || (loadState === "idle" && allWaves.length > 0)) && (
           <>
-            {/* Stats — reflect filtered data */}
+            {/* Stats */}
             <div className="cr-stat-row">
               <div className="cr-stat">
                 <div className="cr-stat-lbl">Total Waves</div>
@@ -300,7 +375,7 @@ export default function ChartsReportPage() {
               </div>
             </div>
 
-            {/* Controls */}
+            {/* Filter controls */}
             <div className="cr-controls">
               <div className="cr-select-wrap">
                 <select value={fDate} onChange={(e) => setFDate(e.target.value)} className="cr-select">
@@ -356,7 +431,6 @@ export default function ChartsReportPage() {
               <table className="cr-table">
                 <thead>
                   <tr>
-                    {/* No Sr# column */}
                     <th className="cr-th-wave">Wave</th>
                     <th className="cr-th-wave cr-th-label">Wave</th>
                     <th className="cr-th-dir">Direction</th>
@@ -392,7 +466,7 @@ export default function ChartsReportPage() {
                       </td>
                     </tr>
                   ) : (
-                    filtered.map((w, idx) => {
+                    filtered.map((w) => {
                       const showDateSep = !isSortedByDelta && w.date !== lastDate;
                       if (showDateSep) lastDate = w.date;
                       const barW = Math.max(4, Math.round((w.delta / maxDelta) * 100));
@@ -406,43 +480,26 @@ export default function ChartsReportPage() {
                             </tr>
                           )}
                           <tr className="cr-row">
-                            {/* Wave number only */}
-                            <td>
-                              <span className="cr-w-num">{w.waveNum}</span>
-                            </td>
-
-                            {/* Wave label (HH→HL etc) */}
-                            <td>
-                              <span className="cr-w-label cr-w-label-standalone">{w.label}</span>
-                            </td>
-
-                            {/* Direction badge */}
+                            <td><span className="cr-w-num">{w.waveNum}</span></td>
+                            <td><span className="cr-w-label cr-w-label-standalone">{w.label}</span></td>
                             <td>
                               {isBull
                                 ? <span className="cr-badge cr-badge-bull">▲ Bullish</span>
                                 : <span className="cr-badge cr-badge-bear">▼ Bearish</span>}
                             </td>
-
-                            {/* col1 — wave start (from) */}
                             <td>
                               <span className="cr-time">{toISTStr(w.col1Time)}</span>
                               <span className="cr-price">{fmt(w.col1Price)}</span>
                             </td>
-
-                            {/* col2 — wave end (to) */}
                             <td>
                               <span className="cr-time">{toISTStr(w.col2Time)}</span>
                               <span className="cr-price">{fmt(w.col2Price)}</span>
                             </td>
-
-                            {/* Delta */}
                             <td>
                               <span className={`cr-delta ${isBull ? "cr-bull" : "cr-bear"}`}>
                                 {isBull ? "+" : "−"}{w.delta.toFixed(2)}
                               </span>
                             </td>
-
-                            {/* Strength bar */}
                             <td>
                               <div className="cr-bar-wrap">
                                 <div className="cr-bar-bg">
@@ -454,8 +511,6 @@ export default function ChartsReportPage() {
                                 <span className="cr-bar-pct">{barW}%</span>
                               </div>
                             </td>
-
-                            {/* Size badge */}
                             <td><SizeBadge delta={w.delta} /></td>
                           </tr>
                         </React.Fragment>
