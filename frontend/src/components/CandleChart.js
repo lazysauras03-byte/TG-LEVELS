@@ -46,6 +46,329 @@ function buildMarkers(signals, candles, todayModeOn) {
   return markers;
 }
 
+// ─── Ruler overlay ────────────────────────────────────────────────────────────
+// Draws a TradingView-style measurement ruler on a Canvas overlay.
+// Activated by holding Ctrl and dragging. Shows: bars, Δ price, Δ%, time range.
+
+class RulerOverlay {
+  constructor(container, chartRef, candleSeriesRef) {
+    this.container = container;
+    this.chartRef = chartRef;
+    this.candleSeriesRef = candleSeriesRef;
+
+    this.canvas = document.createElement("canvas");
+    this.canvas.style.cssText = [
+      "position:absolute", "inset:0", "pointer-events:none",
+      "z-index:20", "border-radius:inherit",
+    ].join(";");
+    container.style.position = "relative";
+    container.appendChild(this.canvas);
+
+    this.ctx = this.canvas.getContext("2d");
+    this.active = false;   // Ctrl is held
+    this.startPt = null;    // locked when Ctrl first pressed, in canvas px
+    this.endPt = null;    // follows mouse while Ctrl held
+    this._lastMouse = null;  // last known mouse position
+
+    this._rafId = null;
+    this._bound = {
+      keydown: this._onKeyDown.bind(this),
+      keyup: this._onKeyUp.bind(this),
+      mousemove: this._onMouseMove.bind(this),
+      resize: this._onResize.bind(this),
+    };
+
+    window.addEventListener("keydown", this._bound.keydown);
+    window.addEventListener("keyup", this._bound.keyup);
+    // Track mouse position globally so we know where to anchor when Ctrl is pressed
+    window.addEventListener("mousemove", this._bound.mousemove);
+    window.addEventListener("resize", this._bound.resize);
+
+    this._onResize();
+  }
+
+  _onResize() {
+    const r = this.container.getBoundingClientRect();
+    this.canvas.width = r.width;
+    this.canvas.height = r.height;
+    this._draw();
+  }
+
+  _onKeyDown(e) {
+    if (e.key !== "Control" || this.active) return;
+    this.active = true;
+    this.container.style.cursor = "crosshair";
+    // Lock start point to wherever the mouse is RIGHT NOW
+    this.startPt = this._lastMouse ? { ...this._lastMouse } : null;
+    this.endPt = this.startPt ? { ...this.startPt } : null;
+    this._scheduleDraw();
+  }
+
+  _onKeyUp(e) {
+    if (e.key !== "Control") return;
+    this.active = false;
+    this.startPt = null;
+    this.endPt = null;
+    this.container.style.cursor = "";
+    this._clear();
+  }
+
+  _rel(e) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  _onMouseMove(e) {
+    // Always track last known position (so Ctrl-press can anchor here)
+    const pt = this._rel(e);
+    this._lastMouse = pt;
+    if (!this.active) return;
+    // If somehow startPt wasn't set (mouse entered after Ctrl), set it now
+    if (!this.startPt) { this.startPt = { ...pt }; }
+    this.endPt = pt;
+    this._scheduleDraw();
+  }
+
+  _scheduleDraw() {
+    if (this._rafId) return;
+    this._rafId = requestAnimationFrame(() => {
+      this._rafId = null;
+      this._draw();
+    });
+  }
+
+  _clear() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  // Convert canvas-px X → unix seconds using the chart time scale
+  _xToTime(x) {
+    try {
+      return this.chartRef.current?.timeScale().coordinateToTime(x);
+    } catch { return null; }
+  }
+
+  // Convert canvas-px Y → price using the candle series
+  _yToPrice(y) {
+    try {
+      return this.candleSeriesRef.current?.coordinateToPrice(y);
+    } catch { return null; }
+  }
+
+  // Find the candle closest to a unix-seconds timestamp
+  _candleAt(unixSec, candles) {
+    if (!candles?.length || unixSec == null) return null;
+    let best = null, bestDiff = Infinity;
+    for (const c of candles) {
+      const t = Math.floor(c.time / 1000);
+      const d = Math.abs(t - unixSec);
+      if (d < bestDiff) { bestDiff = d; best = c; }
+    }
+    return best;
+  }
+
+  _draw() {
+    this._clear();
+    if (!this.startPt || !this.endPt) return;
+
+    const ctx = this.ctx;
+    const { startPt, endPt } = this;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+
+    // ── Resolve prices & times ────────────────────────────────────────────
+    const t1 = this._xToTime(startPt.x);
+    const t2 = this._xToTime(endPt.x);
+    const p1 = this._yToPrice(startPt.y);
+    const p2 = this._yToPrice(endPt.y);
+
+    if (p1 == null || p2 == null) return;
+
+    const x1 = startPt.x, y1 = startPt.y;
+    const x2 = endPt.x, y2 = endPt.y;
+
+    // ── Colors matching app UI ────────────────────────────────────────────
+    const isBull = p2 >= p1;
+    const clrLine = isBull ? "rgba(0,217,126,0.85)" : "rgba(255,69,96,0.85)";
+    const clrFill = isBull ? "rgba(0,217,126,0.08)" : "rgba(255,69,96,0.08)";
+    const clrBox = isBull ? "rgba(0,217,126,0.18)" : "rgba(255,69,96,0.18)";
+    const clrTxt = "#e4e8f5";
+    const clrMute = "#7a8099";
+    const clrBg = "rgba(14,16,26,0.92)";
+    const clrBdr = isBull ? "rgba(0,217,126,0.55)" : "rgba(255,69,96,0.55)";
+
+    // ── Draw filled rectangle ─────────────────────────────────────────────
+    ctx.fillStyle = clrFill;
+    ctx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+
+    // Horizontal midline
+    const midY = (y1 + y2) / 2;
+    ctx.save();
+    ctx.strokeStyle = clrLine;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(Math.min(x1, x2), midY);
+    ctx.lineTo(Math.max(x1, x2), midY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Vertical borders
+    [x1, x2].forEach((x) => {
+      ctx.strokeStyle = clrLine;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x, Math.min(y1, y2));
+      ctx.lineTo(x, Math.max(y1, y2));
+      ctx.stroke();
+    });
+
+    // Horizontal borders
+    [y1, y2].forEach((y) => {
+      ctx.strokeStyle = clrLine;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(Math.min(x1, x2), y);
+      ctx.lineTo(Math.max(x1, x2), y);
+      ctx.stroke();
+    });
+
+    // Corner dots
+    [[x1, y1], [x2, y1], [x1, y2], [x2, y2]].forEach(([cx, cy]) => {
+      ctx.fillStyle = clrLine;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+
+    // Diagonal measurement line
+    ctx.save();
+    ctx.strokeStyle = clrLine;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+
+    // ── Compute stats ─────────────────────────────────────────────────────
+    const dPrice = p2 - p1;
+    const dPct = p1 !== 0 ? (dPrice / Math.abs(p1)) * 100 : 0;
+    const sign = dPrice >= 0 ? "+" : "";
+
+    // Bar count from time
+    let barCount = 0;
+    if (t1 != null && t2 != null) {
+      const allCandles = window.__tggCandles || [];
+      const idx1 = allCandles.findIndex((c) => Math.floor(c.time / 1000) >= Math.min(t1, t2));
+      const idx2 = allCandles.findIndex((c) => Math.floor(c.time / 1000) >= Math.max(t1, t2));
+      barCount = Math.abs((idx2 < 0 ? allCandles.length : idx2) - (idx1 < 0 ? 0 : idx1));
+    }
+
+    // Time label (IST)
+    function fmtIST(unixSec) {
+      if (!unixSec) return "—";
+      const d = new Date((unixSec + 19800) * 1000);
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      const mon = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+      const hh = String(d.getUTCHours()).padStart(2, "0");
+      const mm = String(d.getUTCMinutes()).padStart(2, "0");
+      return `${dd} ${mon} ${hh}:${mm}`;
+    }
+
+    const numFmt = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // ── Info tooltip ──────────────────────────────────────────────────────
+    const lines = [
+      { label: "Δ Price", value: `${sign}${numFmt.format(dPrice)}`, color: clrLine },
+      { label: "Δ %", value: `${sign}${Math.abs(dPct).toFixed(2)}%`, color: clrLine },
+      { label: "Bars", value: String(barCount), color: clrMute },
+      { label: "From", value: fmtIST(Math.min(t1 ?? 0, t2 ?? 0)), color: clrMute },
+      { label: "To", value: fmtIST(Math.max(t1 ?? 0, t2 ?? 0)), color: clrMute },
+    ];
+
+    const padding = 10;
+    const lineH = 18;
+    const labelW = 56;
+    const boxW = 178;
+    const boxH = lines.length * lineH + padding * 2;
+
+    // Position tooltip so it stays inside canvas
+    let tipX = Math.max(x1, x2) + 12;
+    let tipY = (y1 + y2) / 2 - boxH / 2;
+    if (tipX + boxW > W - 8) tipX = Math.min(x1, x2) - boxW - 12;
+    if (tipX < 8) tipX = 8;
+    if (tipY < 8) tipY = 8;
+    if (tipY + boxH > H - 8) tipY = H - boxH - 8;
+
+    // Background
+    ctx.save();
+    const r = 7;
+    ctx.beginPath();
+    ctx.moveTo(tipX + r, tipY);
+    ctx.lineTo(tipX + boxW - r, tipY);
+    ctx.quadraticCurveTo(tipX + boxW, tipY, tipX + boxW, tipY + r);
+    ctx.lineTo(tipX + boxW, tipY + boxH - r);
+    ctx.quadraticCurveTo(tipX + boxW, tipY + boxH, tipX + boxW - r, tipY + boxH);
+    ctx.lineTo(tipX + r, tipY + boxH);
+    ctx.quadraticCurveTo(tipX, tipY + boxH, tipX, tipY + boxH - r);
+    ctx.lineTo(tipX, tipY + r);
+    ctx.quadraticCurveTo(tipX, tipY, tipX + r, tipY);
+    ctx.closePath();
+    ctx.fillStyle = clrBg;
+    ctx.fill();
+    ctx.strokeStyle = clrBdr;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // Lines
+    lines.forEach((ln, i) => {
+      const ly = tipY + padding + i * lineH + lineH / 2;
+      ctx.font = "600 11px 'JetBrains Mono', monospace";
+      ctx.fillStyle = clrMute;
+      ctx.textBaseline = "middle";
+      ctx.fillText(ln.label, tipX + padding, ly);
+
+      ctx.font = "700 11px 'JetBrains Mono', monospace";
+      ctx.fillStyle = ln.color;
+      ctx.textAlign = "right";
+      ctx.fillText(ln.value, tipX + boxW - padding, ly);
+      ctx.textAlign = "left";
+    });
+    ctx.restore();
+
+    // ── Price labels on right edge ─────────────────────────────────────────
+    [[p1, y1], [p2, y2]].forEach(([price, py]) => {
+      const label = numFmt.format(price);
+      const lw = ctx.measureText(label).width + 16;
+      const lh = 18;
+      const lx = W - lw - 2;
+      const ly = py - lh / 2;
+      ctx.save();
+      ctx.fillStyle = isBull ? "rgba(0,217,126,0.9)" : "rgba(255,69,96,0.9)";
+      ctx.beginPath();
+      ctx.roundRect(lx, ly, lw, lh, 3);
+      ctx.fill();
+      ctx.font = "700 10px 'JetBrains Mono', monospace";
+      ctx.fillStyle = "#0a0b0f";
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      ctx.fillText(label, lx + lw / 2, py);
+      ctx.restore();
+    });
+  }
+
+  destroy() {
+    window.removeEventListener("keydown", this._bound.keydown);
+    window.removeEventListener("keyup", this._bound.keyup);
+    window.removeEventListener("mousemove", this._bound.mousemove);
+    window.removeEventListener("resize", this._bound.resize);
+    if (this._rafId) cancelAnimationFrame(this._rafId);
+    if (this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas);
+  }
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function CandleChart({
   candles,
@@ -66,14 +389,13 @@ export default function CandleChart({
   const candleRef = useRef(null);
   const emaHiRef = useRef(null);
   const emaLoRef = useRef(null);
+  const rulerRef = useRef(null);
 
   const isFirstLoadRef = useRef(true);
   const prevCountRef = useRef(0);
   // true  = user has scrolled away from the right edge → don't auto-scroll on tick
   // false = user is pinned to right (default) → follow new candles
   const userScrolledRef = useRef(false);
-  // tracks the last intentional reload key so we can distinguish tick vs reload
-  const prevReloadKeyRef = useRef("");
 
   const todayModeRef = useRef(todayMode);
   const candlesRef = useRef(candles);
@@ -85,21 +407,34 @@ export default function CandleChart({
   const onWaveDataRef = useRef(onWaveData);
   const intentionalReloadRef = useRef(intentionalReload);
 
+  // ── resetView ────────────────────────────────────────────────────────────────
+  // RIGHT-CLICK behaviour: ALWAYS jump to the latest candle with a fixed,
+  // comfortable bar window. No zoom preservation — that's what caused candles
+  // to appear as tiny dots when the user was zoomed out.
+  //
+  // TODAY mode  → show all of today's candles + 10 right-margin bars
+  // Normal mode → show last 80 bars + 10 right-margin bars (fills the screen
+  //               nicely at any timeframe without being too crowded)
   const resetView = useCallback(() => {
     if (!chartRef.current || !candlesRef.current?.length) return;
     const ts = chartRef.current.timeScale();
+    const total = candlesRef.current.length;
+    const RIGHT_MARGIN = 10;
+
+    const barsToShow = (() => {
+      if (todayModeRef.current) {
+        const latestIST = toISTDate(candlesRef.current.at(-1).time);
+        const todayCount = candlesRef.current.filter(
+          (c) => toISTDate(c.time) === latestIST
+        ).length;
+        return Math.max(todayCount, 20); // show full day, min 20 bars
+      }
+      return 80; // fixed comfortable window for any non-TODAY timeframe
+    })();
+
     try {
-      const total = candlesRef.current.length;
-      const barsToShow = todayModeRef.current
-        ? (() => {
-          const latestIST = toISTDate(candlesRef.current.at(-1).time);
-          const todayCount = candlesRef.current.filter((c) => toISTDate(c.time) === latestIST).length;
-          return Math.max(todayCount, 20);
-        })()
-        : 120;
-      const rightOffset = 5;
-      const to = total - 1 + rightOffset;
-      const from = to - barsToShow - rightOffset;
+      const to = total - 1 + RIGHT_MARGIN;
+      const from = to - barsToShow - RIGHT_MARGIN;
       ts.setVisibleLogicalRange({ from, to });
     } catch {
       try { ts.scrollToRealTime(); } catch { ts.fitContent(); }
@@ -107,7 +442,11 @@ export default function CandleChart({
   }, []);
 
   useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
-  useEffect(() => { candlesRef.current = candles; }, [candles]);
+  useEffect(() => {
+    candlesRef.current = candles;
+    // Keep global reference for the ruler's bar-count calculation
+    window.__tggCandles = candles;
+  }, [candles]);
   useEffect(() => { signalsRef.current = signals; }, [signals]);
   useEffect(() => { emaHighsRef.current = emaHighs; }, [emaHighs]);
   useEffect(() => { emaLowsRef.current = emaLows; }, [emaLows]);
@@ -153,9 +492,12 @@ export default function CandleChart({
           const d = new Date((unixSec + 19800) * 1000);
           const hh = String(d.getUTCHours()).padStart(2, "0");
           const mm = String(d.getUTCMinutes()).padStart(2, "0");
-          if (hh === "09" && mm === "15") {
-            const day = String(d.getUTCDate()).padStart(2, "0");
-            const mon = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+          const day = String(d.getUTCDate()).padStart(2, "0");
+          const mon = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+          // Daily candles open at 09:15 IST; intraday session starts at 09:15 too.
+          // If time is midnight UTC+5:30 (i.e. 00:00 IST) it's a daily bar → show date only.
+          // Also show date at the start of each trading day (09:15).
+          if ((hh === "00" && mm === "00") || (hh === "09" && mm === "15")) {
             return `${day} ${mon}`;
           }
           return `${hh}:${mm}`;
@@ -169,6 +511,8 @@ export default function CandleChart({
           const yr = String(d.getUTCFullYear()).slice(2);
           const hh = String(d.getUTCHours()).padStart(2, "0");
           const mm = String(d.getUTCMinutes()).padStart(2, "0");
+          // Daily bar: time is midnight IST (00:00) — show date only
+          if (hh === "00" && mm === "00") return `${day} ${mon} '${yr}`;
           return `${day} ${mon} '${yr} ${hh}:${mm} IST`;
         },
       },
@@ -199,9 +543,10 @@ export default function CandleChart({
     emaHiRef.current = emaHiSeries;
     emaLoRef.current = emaLoSeries;
 
+    // Create ruler overlay (needs refs for coordinateToPrice/Time)
+    rulerRef.current = new RulerOverlay(containerRef.current, chartRef, candleRef);
+
     // Pass wave data callback + candleSeries into WavesIndicator.
-    // candleSeries is required for priceToCoordinate() in lightweight-charts v4
-    // (the method lives on ISeriesApi, not on IPriceScaleApi).
     createWavesIndicator(
       chart,
       containerRef.current,
@@ -209,14 +554,10 @@ export default function CandleChart({
       candleSeries
     );
 
-    // Track whether the user has scrolled away from the right edge.
-    // lightweight-charts fires visibleLogicalRangeChanged on every pan/zoom.
-    // We compare the right edge of the visible range against total bar count:
-    // if the user can see the last candle (right edge >= total-2), they're "pinned".
+    // Track whether the user has scrolled away from the right edge
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range) return;
       const total = candlesRef.current?.length ?? 0;
-      // "pinned" = right edge is within 8 bars of the last candle
       const pinnedThreshold = 8;
       userScrolledRef.current = range.to < total - 1 - pinnedThreshold;
     });
@@ -232,21 +573,32 @@ export default function CandleChart({
     });
 
     const el = containerRef.current;
-    const onContextMenu = (e) => { e.preventDefault(); resetView(); };
+
+    // Right-click → scroll to latest candle, PRESERVE current zoom width
+    const onContextMenu = (e) => {
+      e.preventDefault();
+      // Don't reset if Ctrl is held (ruler might be active)
+      if (e.ctrlKey) return;
+      resetView();
+    };
     el.addEventListener("contextmenu", onContextMenu);
 
     const ro = new ResizeObserver(() => {
-      if (containerRef.current)
+      if (containerRef.current) {
         chart.applyOptions({
           width: containerRef.current.clientWidth,
           height: containerRef.current.clientHeight,
         });
+        rulerRef.current?._onResize();
+      }
     });
     ro.observe(el);
 
     return () => {
       el.removeEventListener("contextmenu", onContextMenu);
       ro.disconnect();
+      rulerRef.current?.destroy();
+      rulerRef.current = null;
       removeWavesIndicator(true);
       chart.remove();
     };
@@ -269,7 +621,6 @@ export default function CandleChart({
     const isFirst = isFirstLoadRef.current;
 
     // A "tick" = one new candle appended, nothing else changed.
-    // Everything else (symbol change, timeframe change, refresh) = full reload.
     const isNewCandle = !isFirst && candles.length === prevCountRef.current + 1;
 
     // ── Streaming tick: preserve user's viewport exactly ─────────────────
@@ -290,13 +641,10 @@ export default function CandleChart({
       if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
       prevCountRef.current = candles.length;
 
-      // Only follow the new candle if user is still pinned to the right edge.
-      // If they've scrolled back to study history → don't touch their viewport.
       if (!userScrolledRef.current) {
         try {
           const range = ts.getVisibleLogicalRange();
           if (range) {
-            // Shift the window one bar to the right to follow the new candle
             ts.setVisibleLogicalRange({ from: range.from + 1, to: range.to + 1 });
           }
         } catch { /* ignore */ }
@@ -305,9 +653,6 @@ export default function CandleChart({
     }
 
     // ── Full reload (first load / symbol / timeframe / manual refresh) ────
-    // Save current viewport so we can restore it after setData() resets it,
-    // but only if this is NOT the first load and NOT an intentional reload
-    // triggered by the user changing symbol/timeframe (those should right-anchor).
     const savedRange = isFirst ? null : ts.getVisibleLogicalRange();
 
     candleRef.current.setData(
@@ -328,8 +673,6 @@ export default function CandleChart({
     if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
     else removeWavesIndicator();
 
-    // Set markers AFTER wave line series are added — adding new series to the
-    // chart can reset markers on the candlestick series in lightweight-charts.
     candleRef.current.setMarkers(
       showBubbleRef.current ? buildMarkers(signals, candles, todayModeRef.current) : []
     );
@@ -337,18 +680,14 @@ export default function CandleChart({
     prevCountRef.current = candles.length;
 
     if (isFirst) {
-      // Very first load → right-anchor
       isFirstLoadRef.current = false;
       userScrolledRef.current = false;
       resetView();
     } else if (intentionalReloadRef.current) {
-      // User deliberately changed symbol / timeframe / hit Refresh → right-anchor
-      intentionalReloadRef.current = false;   // consume the flag
+      intentionalReloadRef.current = false;
       userScrolledRef.current = false;
       resetView();
     } else if (savedRange) {
-      // Background auto-refresh (same symbol+timeframe, socket pushed new data) →
-      // restore exactly what the user was looking at
       setTimeout(() => {
         try {
           chartRef.current?.timeScale().setVisibleLogicalRange(savedRange);
@@ -378,8 +717,6 @@ export default function CandleChart({
     } else {
       removeWavesIndicator();
     }
-    // Re-apply markers after wave line series are added/removed — adding or
-    // removing series in lightweight-charts can reset markers on the candlestick series.
     if (candleRef.current && candlesRef.current?.length) {
       candleRef.current.setMarkers(
         showBubbleRef.current
@@ -392,12 +729,16 @@ export default function CandleChart({
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+
+      {/* Hint labels */}
       <div style={{
         position: "absolute", bottom: 36, left: 12,
         color: "#3a4060", fontSize: 10, fontFamily: "var(--font-mono)",
         pointerEvents: "none", userSelect: "none",
+        display: "flex", gap: 16,
       }}>
-        Right-click to reset view
+        <span>Right-click to go to latest</span>
+        <span style={{ color: "#2a3050" }}>Hold Ctrl to measure</span>
       </div>
     </div>
   );

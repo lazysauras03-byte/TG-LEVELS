@@ -18,7 +18,7 @@ export function useSocket() {
 
     socket.on("connect", () => { setConnected(true); setError(null); });
     socket.on("disconnect", () => setConnected(false));
-    socket.on("chart_update", (d) => { setChartData(d); setLoading(false); });
+    socket.on("chart_update", (d) => { setChartData(d); setLoading(false); setError(null); });
     socket.on("error", (e) => { setError(e.message); setLoading(false); });
 
     return () => socket.disconnect();

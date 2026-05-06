@@ -88,26 +88,45 @@ async function validateToken() {
   }
 }
 
-// ── Fetch historical candles — 1 month of data ───────────────────────────────
+// ── Fetch historical candles ─────────────────────────────────────────────────
 async function fetchCandles(symbol, resolution, count = 10000) {
   const fyers = getFyersClient();
 
-  // Go back 45 calendar days to guarantee ~30 trading days
-  // (accounts for weekends + holidays in Indian market)
   const now = Math.floor(Date.now() / 1000);
-  const rangeFrom = now - 45 * 24 * 60 * 60;
 
-  const res = await fyers.getHistory({
+  // 1D candles: Fyers API requires resolution "D" (not "1440"), fetch 2 years
+  // Intraday: go back 45 calendar days (~30 trading days)
+  const isDaily = resolution === 1440 || String(resolution).toUpperCase() === "D";
+  const fyersResolution = isDaily ? "D" : String(resolution);
+  const lookbackDays = isDaily ? 730 : 45;
+  const rangeFrom = now - lookbackDays * 24 * 60 * 60;
+
+  let res = await fyers.getHistory({
     symbol,
-    resolution: String(resolution),
+    resolution: fyersResolution,
     date_format: "0",
     range_from: String(rangeFrom),
     range_to: String(now),
     cont_flag: "1",
   });
 
+  // Fyers sometimes rejects very long date ranges for daily candles on indices.
+  // Fall back to 1 year if 2-year request fails.
+  if (isDaily && res && res.s !== "ok") {
+    const shorterFrom = now - 365 * 24 * 60 * 60;
+    res = await fyers.getHistory({
+      symbol,
+      resolution: fyersResolution,
+      date_format: "0",
+      range_from: String(shorterFrom),
+      range_to: String(now),
+      cont_flag: "1",
+    });
+  }
+
   if (!res || res.s !== "ok") {
-    throw new Error("Fyers getHistory failed: " + JSON.stringify(res));
+    const msg = res?.message || res?.errmsg || JSON.stringify(res);
+    throw new Error("Fyers getHistory failed: " + msg);
   }
 
   const raw = res.candles || [];

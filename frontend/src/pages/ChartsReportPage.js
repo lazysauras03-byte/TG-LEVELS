@@ -176,8 +176,9 @@ export default function ChartsReportPage() {
     setFDate("all"); setFDir("all"); setFSize("all"); setFQ("");
     setSortCol("delta"); setSortDir("asc");
     try {
-      const url = `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
-      const r = await fetch(url, { method: "POST" });
+      // 1️⃣ Try POST refresh — always passes symbol so backend fetches the right stock
+      const refreshUrl = `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
+      const r = await fetch(refreshUrl, { method: "POST" });
       const data = r.ok ? await r.json() : null;
 
       if (data?.candles?.length) {
@@ -188,8 +189,11 @@ export default function ChartsReportPage() {
         return;
       }
 
-      const r2 = await fetch(`${BACKEND}/api/chart`);
+      // 2️⃣ Fallback GET — MUST pass symbol+resolution so it doesn't return cached NIFTY
+      const getUrl = `${BACKEND}/api/chart?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
+      const r2 = await fetch(getUrl);
       const data2 = r2.ok ? await r2.json() : null;
+
       if (data2?.candles?.length) {
         setCandles(data2.candles);
         setEmaHighs(data2.emaHighs || []);
@@ -197,7 +201,7 @@ export default function ChartsReportPage() {
         setLoadState("done");
       } else {
         setLoadState("error");
-        setErrMsg("No candle data from backend. Run npm run generate, then Refresh.");
+        setErrMsg(`No candle data for ${sym}. Check backend connection and try Refresh.`);
       }
     } catch (e) {
       setLoadState("error");
@@ -208,12 +212,20 @@ export default function ChartsReportPage() {
   useEffect(() => { fetchData(symbol, timeframe); }, [symbol, timeframe, fetchData]);
 
   function handleSymbolSelect(sym) {
+    // Clear stale data so old waves don't flash while new symbol loads
+    setCandles([]);
+    setEmaHighs([]);
+    setEmaLows([]);
     setSymbol(sym);
     localStorage.setItem("tgg_symbol", JSON.stringify(sym));
-    fetchData(sym, timeframe);
+    // useEffect on [symbol, timeframe] will trigger fetchData
   }
 
   function handleTimeframeChange(tf) {
+    // Clear stale candles so old symbol's waves don't flash
+    setCandles([]);
+    setEmaHighs([]);
+    setEmaLows([]);
     setTimeframe(tf);
     localStorage.setItem("tgg_resolution", JSON.stringify(tf));
   }

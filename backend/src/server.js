@@ -38,7 +38,7 @@ const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
 const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
 // 1m candles for 1 month ≈ 8580, 3m ≈ 2860, set high so all timeframes get full month
 const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
-const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "180000");
+const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "65000"); // 1m 5s — ensures 1-min candles complete before fetch
 
 // ─── Core fetch & process ─────────────────────────────────────────────────────
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
