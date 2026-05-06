@@ -40,6 +40,12 @@ function toISTDate(tsMs) {
 }
 
 // ── Convert segments from WavesIndicatorPure into table rows ─────────────────
+// For BOTH bull and bear:
+//   col1 = start of the wave (fromTime / fromPrice)
+//   col2 = end of the wave   (toTime   / toPrice)
+// This means:
+//   Bearish: high (fromTime) → low (toTime)   → col1=high, col2=low  ✓
+//   Bullish: low  (fromTime) → high (toTime)  → col1=low,  col2=high ✓
 function buildTableRows(segments) {
   return segments.map((seg, i) => {
     const isBull = seg.toSide === "high";
@@ -48,11 +54,13 @@ function buildTableRows(segments) {
     const toLbl = seg.currWaveType || "—";
     const label = `${fromLbl}\u2192${toLbl}`;
 
-    const highTime = isBull ? seg.toTime : seg.fromTime;
-    const highPrice = isBull ? seg.toPrice : seg.fromPrice;
-    const lowTime = isBull ? seg.fromTime : seg.toTime;
-    const lowPrice = isBull ? seg.fromPrice : seg.toPrice;
-    const date = toISTDate(lowTime);
+    // col1 = wave start (fromTime/fromPrice), col2 = wave end (toTime/toPrice)
+    const col1Time = seg.fromTime;
+    const col1Price = seg.fromPrice;
+    const col2Time = seg.toTime;
+    const col2Price = seg.toPrice;
+
+    const date = toISTDate(seg.fromTime);
 
     return {
       id: `seg-${i}`,
@@ -60,10 +68,13 @@ function buildTableRows(segments) {
       date,
       dir: isBull ? "bull" : "bear",
       label,
-      highTime, highPrice,
-      lowTime, lowPrice,
+      col1Time, col1Price,
+      col2Time, col2Price,
       delta: +delta.toFixed(2),
       waveNum: seg.waveNum,
+      // keep for sort compatibility
+      highTime: isBull ? seg.toTime : seg.fromTime,
+      lowTime: isBull ? seg.fromTime : seg.toTime,
     };
   });
 }
@@ -101,7 +112,6 @@ export default function ChartsReportPage() {
     setLoadState("loading");
     setErrMsg("");
     try {
-      // Try POST refresh first (same endpoint ChartsPage uses)
       const url = `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
       const r = await fetch(url, { method: "POST" });
       const data = r.ok ? await r.json() : null;
@@ -114,7 +124,6 @@ export default function ChartsReportPage() {
         return;
       }
 
-      // Fallback: GET current cached data
       const r2 = await fetch(`${BACKEND}/api/chart`);
       const data2 = r2.ok ? await r2.json() : null;
       if (data2 && data2.candles && data2.candles.length) {
@@ -135,28 +144,59 @@ export default function ChartsReportPage() {
   useEffect(() => { fetchData(symbol, timeframe); }, [symbol, timeframe, fetchData]);
 
   // ── Wave calculation ────────────────────────────────────────────────────────
-  const { allWaves, maxDelta, allDates } = useMemo(() => {
-    if (!candles.length) return { allWaves: [], maxDelta: 1, allDates: [] };
+  const { allWaves, allDates } = useMemo(() => {
+    if (!candles.length) return { allWaves: [], allDates: [] };
     const { segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
     const rows = buildTableRows(segments);
-    const md = rows.reduce((acc, w) => Math.max(acc, w.delta), 1);
-    const dates = [...new Set(rows.map((w) => w.date))].sort();
-    return { allWaves: rows, maxDelta: md, allDates: dates };
+    // Dates sorted descending (latest first) for the filter dropdown
+    const dates = [...new Set(rows.map((w) => w.date))].sort().reverse();
+    return { allWaves: rows, allDates: dates };
   }, [candles, emaHighs, emaLows]);
 
-  // ── Stats ───────────────────────────────────────────────────────────────────
+  // ── Filter ──────────────────────────────────────────────────────────────────
+  const filtered = useMemo(() => {
+    let data = allWaves.filter((w) => {
+      if (fDate !== "all" && w.date !== fDate) return false;
+      if (fDir === "bull" && w.dir !== "bull") return false;
+      if (fDir === "bear" && w.dir !== "bear") return false;
+      if (fSize === "small" && w.delta >= 30) return false;
+      if (fSize === "medium" && (w.delta < 30 || w.delta > 80)) return false;
+      if (fSize === "large" && w.delta <= 80) return false;
+      if (fQ && !String(w.waveNum).includes(fQ.trim())) return false;
+      return true;
+    });
+
+    if (sortCol && sortDir) {
+      data = [...data].sort((a, b) => {
+        const av = sortCol === "delta" ? a.delta : sortCol === "col1Time" ? a.col1Time : a.col2Time;
+        const bv = sortCol === "delta" ? b.delta : sortCol === "col1Time" ? b.col1Time : b.col2Time;
+        if (sortDir === "asc") return typeof av === "number" ? av - bv : av > bv ? 1 : -1;
+        return typeof av === "number" ? bv - av : bv > av ? 1 : -1;
+      });
+    } else {
+      // Default order: latest date first, within date latest wave first (desc by col1Time)
+      data = [...data].sort((a, b) => b.col1Time - a.col1Time);
+    }
+
+    return data;
+  }, [allWaves, fDate, fDir, fSize, fQ, sortCol, sortDir]);
+
+  // ── Stats — reflect filtered data ──────────────────────────────────────────
   const stats = useMemo(() => {
-    if (!allWaves.length) return { total: 0, avg: "0.0", maxBull: "0.00", maxBear: "0.00" };
-    const deltas = allWaves.map((w) => w.delta);
-    const bullWaves = allWaves.filter((w) => w.dir === "bull");
-    const bearWaves = allWaves.filter((w) => w.dir === "bear");
+    if (!filtered.length) return { total: 0, avg: "0.0", maxBull: "0.00", maxBear: "0.00" };
+    const deltas = filtered.map((w) => w.delta);
+    const bullWaves = filtered.filter((w) => w.dir === "bull");
+    const bearWaves = filtered.filter((w) => w.dir === "bear");
     return {
-      total: allWaves.length,
+      total: filtered.length,
       avg: (deltas.reduce((a, b) => a + b, 0) / deltas.length).toFixed(1),
       maxBull: bullWaves.length ? Math.max(...bullWaves.map((w) => w.delta)).toFixed(2) : "0.00",
       maxBear: bearWaves.length ? Math.max(...bearWaves.map((w) => w.delta)).toFixed(2) : "0.00",
     };
-  }, [allWaves]);
+  }, [filtered]);
+
+  // maxDelta from filtered for the strength bar
+  const maxDelta = useMemo(() => filtered.reduce((acc, w) => Math.max(acc, w.delta), 1), [filtered]);
 
   // ── Sort ────────────────────────────────────────────────────────────────────
   function handleColSort(col) {
@@ -168,29 +208,6 @@ export default function ChartsReportPage() {
   }
   function clearSort() { setSortCol(null); setSortDir(null); }
 
-  // ── Filter + sort ───────────────────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    let data = allWaves.filter((w) => {
-      if (fDate !== "all" && w.date !== fDate) return false;
-      if (fDir === "bull" && w.dir !== "bull") return false;
-      if (fDir === "bear" && w.dir !== "bear") return false;
-      if (fSize === "small" && w.delta >= 30) return false;
-      if (fSize === "medium" && (w.delta < 30 || w.delta > 80)) return false;
-      if (fSize === "large" && w.delta <= 80) return false;
-      if (fQ && !String(w.n).includes(fQ.trim())) return false;
-      return true;
-    });
-    if (sortCol && sortDir) {
-      data = [...data].sort((a, b) => {
-        const av = sortCol === "delta" ? a.delta : sortCol === "highTime" ? a.highTime : a.lowTime;
-        const bv = sortCol === "delta" ? b.delta : sortCol === "highTime" ? b.highTime : b.lowTime;
-        if (sortDir === "asc") return typeof av === "number" ? av - bv : av > bv ? 1 : -1;
-        return typeof av === "number" ? bv - av : bv > av ? 1 : -1;
-      });
-    }
-    return data;
-  }, [allWaves, fDate, fDir, fSize, fQ, sortCol, sortDir]);
-
   function sortArrow(col) {
     if (sortCol !== col || !sortDir) return <span className="cr-sort-arrow inactive">↕</span>;
     return <span className="cr-sort-arrow active">{sortDir === "asc" ? "↑" : "↓"}</span>;
@@ -199,6 +216,8 @@ export default function ChartsReportPage() {
   const sortLabel = !sortCol ? "Sort by Δ" : sortDir === "asc" ? "Δ Ascending" : "Δ Descending";
   const isSortedByDelta = sortCol === "delta" && sortDir;
   const tfLabel = TIMEFRAMES.find((t) => t.value === timeframe)?.label || String(timeframe);
+
+  // Track date separators (only when NOT sorted by delta)
   let lastDate = "";
 
   return (
@@ -219,7 +238,7 @@ export default function ChartsReportPage() {
 
         <div style={{ flex: 1 }} />
 
-        {/* Timeframe pills — right side */}
+        {/* Timeframe pills */}
         <div className="cr-tf-group">
           {TIMEFRAMES.map((tf) => (
             <button
@@ -261,7 +280,7 @@ export default function ChartsReportPage() {
 
         {(loadState === "done" || (loadState === "idle" && allWaves.length > 0)) && (
           <>
-            {/* Stats */}
+            {/* Stats — reflect filtered data */}
             <div className="cr-stat-row">
               <div className="cr-stat">
                 <div className="cr-stat-lbl">Total Waves</div>
@@ -337,20 +356,21 @@ export default function ChartsReportPage() {
               <table className="cr-table">
                 <thead>
                   <tr>
-                    <th className="cr-th-num">#</th>
+                    {/* No Sr# column */}
                     <th className="cr-th-wave">Wave</th>
+                    <th className="cr-th-wave cr-th-label">Wave</th>
                     <th className="cr-th-dir">Direction</th>
                     <th
-                      className={`cr-th-sortable ${sortCol === "highTime" ? "cr-th-sorted" : ""}`}
-                      onClick={() => handleColSort("highTime")}
+                      className={`cr-th-sortable ${sortCol === "col1Time" ? "cr-th-sorted" : ""}`}
+                      onClick={() => handleColSort("col1Time")}
                     >
-                      High Time / Price {sortArrow("highTime")}
+                      Time / Price {sortArrow("col1Time")}
                     </th>
                     <th
-                      className={`cr-th-sortable ${sortCol === "lowTime" ? "cr-th-sorted" : ""}`}
-                      onClick={() => handleColSort("lowTime")}
+                      className={`cr-th-sortable ${sortCol === "col2Time" ? "cr-th-sorted" : ""}`}
+                      onClick={() => handleColSort("col2Time")}
                     >
-                      Low Time / Price {sortArrow("lowTime")}
+                      Time / Price {sortArrow("col2Time")}
                     </th>
                     <th
                       className={`cr-th-sortable ${sortCol === "delta" ? "cr-th-sorted" : ""}`}
@@ -386,40 +406,43 @@ export default function ChartsReportPage() {
                             </tr>
                           )}
                           <tr className="cr-row">
+                            {/* Wave number only */}
                             <td>
-                              {isSortedByDelta
-                                ? <RankPill rank={idx + 1} />
-                                : <span className="cr-w-num">{idx + 1}</span>}
+                              <span className="cr-w-num">{w.waveNum}</span>
                             </td>
 
+                            {/* Wave label (HH→HL etc) */}
                             <td>
-                              <span className="cr-w-num">{w.n}</span>
-                              <br />
-                              <span className="cr-w-label">{w.label}</span>
+                              <span className="cr-w-label cr-w-label-standalone">{w.label}</span>
                             </td>
 
+                            {/* Direction badge */}
                             <td>
                               {isBull
                                 ? <span className="cr-badge cr-badge-bull">▲ Bullish</span>
                                 : <span className="cr-badge cr-badge-bear">▼ Bearish</span>}
                             </td>
 
+                            {/* col1 — wave start (from) */}
                             <td>
-                              <span className="cr-time">{toISTStr(w.highTime)}</span>
-                              <span className="cr-price">{fmt(w.highPrice)}</span>
+                              <span className="cr-time">{toISTStr(w.col1Time)}</span>
+                              <span className="cr-price">{fmt(w.col1Price)}</span>
                             </td>
 
+                            {/* col2 — wave end (to) */}
                             <td>
-                              <span className="cr-time">{toISTStr(w.lowTime)}</span>
-                              <span className="cr-price">{fmt(w.lowPrice)}</span>
+                              <span className="cr-time">{toISTStr(w.col2Time)}</span>
+                              <span className="cr-price">{fmt(w.col2Price)}</span>
                             </td>
 
+                            {/* Delta */}
                             <td>
                               <span className={`cr-delta ${isBull ? "cr-bull" : "cr-bear"}`}>
                                 {isBull ? "+" : "−"}{w.delta.toFixed(2)}
                               </span>
                             </td>
 
+                            {/* Strength bar */}
                             <td>
                               <div className="cr-bar-wrap">
                                 <div className="cr-bar-bg">
@@ -432,6 +455,7 @@ export default function ChartsReportPage() {
                               </div>
                             </td>
 
+                            {/* Size badge */}
                             <td><SizeBadge delta={w.delta} /></td>
                           </tr>
                         </React.Fragment>
@@ -446,14 +470,6 @@ export default function ChartsReportPage() {
       </div>
     </div>
   );
-}
-
-function RankPill({ rank }) {
-  const cls = rank === 1 ? "cr-rank cr-rank-1"
-    : rank === 2 ? "cr-rank cr-rank-2"
-      : rank === 3 ? "cr-rank cr-rank-3"
-        : "cr-rank";
-  return <span className={cls}>{rank}</span>;
 }
 
 function SizeBadge({ delta }) {

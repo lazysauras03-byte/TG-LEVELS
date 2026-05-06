@@ -453,6 +453,20 @@
   letter-spacing: 0.04em;
 }
 
+/* Wave label shown as its own cell (standalone, not under a number) */
+.cr-w-label-standalone {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text3);
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+/* Second "Wave" header (label column) */
+.cr-th-label {
+  width: 80px;
+}
+
 .cr-time {
   display: block;
   font-size: 10px;
