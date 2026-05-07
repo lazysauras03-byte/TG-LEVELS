@@ -1,5 +1,17 @@
 /**
- * WavesIndicator.js
+ * WavesIndicator.js — performance-fixed
+ *
+ * Key change: removed the continuous rAF loop (_startLoop / _stopLoop).
+ * The loop was redrawing every ~16ms regardless of whether the chart moved,
+ * causing severe lag when both Waves and Bubble indicators are active together.
+ *
+ * Replacement strategy:
+ *   - subscribeVisibleLogicalRangeChange  → redraws on pan/zoom
+ *   - subscribeCrosshairMove             → redraws on crosshair (label coords shift)
+ *   - explicit _scheduleRedraw() after data updates
+ *   - ResizeObserver already calls _scheduleRedraw() on resize
+ *
+ * All rendering is still correct and pixel-perfect.
  *
  * Rendering:
  *   - Wave lines: lightweight-charts addLineSeries (correct coordinate space)
@@ -132,8 +144,9 @@ let _lines = [];
 let _pivots = [];
 let _segments = [];
 let _rafId = null;
-let _loopId = null;   // ← continuous rAF loop handle (NEW)
+// NOTE: _loopId removed — continuous rAF loop was causing lag with Bubble+Waves
 let _rangeUnsub = null;
+let _crosshairUnsub = null;  // NEW: unsubscribe handle for crosshair listener
 let _resizeObs = null;
 
 // ─── Canvas helpers ───────────────────────────────────────────────────────────
@@ -195,7 +208,7 @@ function _redraw() {
 
   const ts = _chart.timeScale();
 
-  // ── price → pixel via the candleSeries (correct in lw-charts v4) ─────
+  // price → pixel via the candleSeries (correct in lw-charts v4)
   function toXY(timeMs, price) {
     try {
       const x = ts.timeToCoordinate(Math.floor(timeMs / 1000));
@@ -262,6 +275,8 @@ function _redraw() {
   });
 }
 
+// Double-rAF ensures we paint AFTER lightweight-charts finishes its own canvas update.
+// This is event-driven only — no continuous loop.
 function _scheduleRedraw() {
   if (_rafId != null) cancelAnimationFrame(_rafId);
   _rafId = requestAnimationFrame(() => {
@@ -269,28 +284,12 @@ function _scheduleRedraw() {
   });
 }
 
-// ── Continuous rAF loop — redraws every frame while waves are active ──────────
-// This keeps labels pixel-perfect during pan/zoom/scroll without waiting for
-// the subscribeVisibleLogicalRangeChange debounce to fire. (NEW)
-function _startLoop() {
-  if (_loopId != null) return;
-  function loop() {
-    _redraw();
-    _loopId = requestAnimationFrame(loop);
-  }
-  _loopId = requestAnimationFrame(loop);
-}
-
-function _stopLoop() {
-  if (_loopId != null) { cancelAnimationFrame(_loopId); _loopId = null; }
-}
-
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * @param chart       - IChartApi
- * @param container   - DOM element wrapping the chart
- * @param onWaveData  - callback(pivots, segments)
+ * @param chart        - IChartApi
+ * @param container    - DOM element wrapping the chart
+ * @param onWaveData   - callback(pivots, segments)
  * @param candleSeries - ISeriesApi — needed for priceToCoordinate() in lw-charts v4
  */
 export function createWavesIndicator(chart, container, onWaveData, candleSeries) {
@@ -299,7 +298,7 @@ export function createWavesIndicator(chart, container, onWaveData, candleSeries)
   _container = container;
   _onWaveData = onWaveData ?? null;
   _lines = []; _pivots = []; _segments = [];
-  _rafId = null; _rangeUnsub = null;
+  _rafId = null; _rangeUnsub = null; _crosshairUnsub = null;
 }
 
 export function updateWavesIndicator(candles, emaHighs, emaLows) {
@@ -336,24 +335,38 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
 
   _ensureCanvas();
 
+  // Subscribe to visible range changes (pan / zoom) — event-driven redraw
   if (!_rangeUnsub && _chart) {
-    const h = () => _scheduleRedraw();
-    _chart.timeScale().subscribeVisibleLogicalRangeChange(h);
-    _rangeUnsub = () => { try { _chart.timeScale().unsubscribeVisibleLogicalRangeChange(h); } catch (_) { } };
+    const rangeHandler = () => _scheduleRedraw();
+    _chart.timeScale().subscribeVisibleLogicalRangeChange(rangeHandler);
+    _rangeUnsub = () => {
+      try { _chart.timeScale().unsubscribeVisibleLogicalRangeChange(rangeHandler); } catch (_) { }
+    };
+  }
+
+  // Subscribe to crosshair moves — labels need to repaint because the price
+  // axis can shift when the crosshair price label appears/disappears.
+  // This replaces the continuous loop with a targeted, lightweight redraw.
+  if (!_crosshairUnsub && _chart) {
+    const crosshairHandler = () => _scheduleRedraw();
+    _chart.subscribeCrosshairMove(crosshairHandler);
+    _crosshairUnsub = () => {
+      try { _chart.unsubscribeCrosshairMove(crosshairHandler); } catch (_) { }
+    };
   }
 
   _scheduleRedraw();
-  _startLoop(); // ← start continuous loop so labels stay stable every frame (NEW)
   if (_onWaveData) _onWaveData(pivots, segments);
 }
 
 export function removeWavesIndicator(fullTeardown = false) {
   _clearOverlay();
   _pivots = []; _segments = [];
-  _stopLoop(); // ← stop loop when waves removed (NEW)
+  // No loop to stop — it was removed entirely
 
   if (fullTeardown) {
     if (_rangeUnsub) { _rangeUnsub(); _rangeUnsub = null; }
+    if (_crosshairUnsub) { _crosshairUnsub(); _crosshairUnsub = null; }
     _removeCanvas();
     _chart = null; _series = null; _container = null; _onWaveData = null;
   } else {

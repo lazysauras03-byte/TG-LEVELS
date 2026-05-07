@@ -175,7 +175,7 @@ function StatusBar({
       <div style={styles.group}>
         <div style={{ ...styles.dot, background: connected ? "var(--green)" : "var(--red)" }} />
         <span style={{ color: connected ? "var(--green)" : "var(--red)", fontSize: 11 }}>
-          {connected ? "LIVE" : "OFFLINE"}
+          {connected ? "Market Closed" : "OFFLINE"}
         </span>
         {lastUpdate && (
           <span style={{ color: "var(--text3)", fontSize: 11, marginLeft: 6 }}>

@@ -38,7 +38,10 @@ const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
 const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
 // 1m candles for 1 month ≈ 8580, 3m ≈ 2860, set high so all timeframes get full month
 const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
-const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "65000"); // 1m 5s — ensures 1-min candles complete before fetch
+// FIXED: 70 seconds — 1 minute 10 seconds.
+// This gives the 1-min candle time to fully close before we fetch it,
+// while staying close enough to real-time for all timeframes.
+const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "70000");
 
 // ─── Core fetch & process ─────────────────────────────────────────────────────
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
@@ -48,8 +51,9 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   cachedResult = result;
   lastFetch = Date.now();
 
-  // Broadcast to all connected clients
-  // isAutoRefresh=true so frontend knows to preserve scroll position
+  // IMPORTANT: Always include the resolution in the payload so the frontend
+  // can filter out updates that don't match the currently selected timeframe.
+  // isAutoRefresh=true so frontend knows to preserve scroll position.
   io.emit("chart_update", buildPayload(candles, result, symbol, resolution, true));
   return { candles, result };
 }
@@ -57,7 +61,7 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
 function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false) {
   return {
     symbol,
-    resolution,
+    resolution,           // ← always present so frontend can filter by timeframe
     candles,
     emaHighs: result.emaHighs,
     emaLows: result.emaLows,
@@ -66,7 +70,6 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
     bestPrice: result.bestPrice,
     bestBar: result.bestBar,
     lastUpdate: new Date().toISOString(),
-    // Convert balance to IST display (stored in .env as a number)
     balance: parseFloat(process.env.CURRENT_BALANCE || 0),
     isAutoRefresh,
   };
@@ -128,13 +131,13 @@ app.get("/api/chart", async (req, res) => {
   }
 });
 
-// Force refresh (user action — isAutoRefresh=false → frontend will NOT preserve scroll)
+// Force refresh (user action — isAutoRefresh=false → frontend will reset chart position)
 app.post("/api/chart/refresh", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
-    // Mark as user-triggered refresh: frontend will reset chart position
+    // Mark as user-triggered: frontend will call resetView()
     const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
     res.json(payload);
   } catch (err) {
@@ -159,11 +162,11 @@ function startAutoRefresh() {
   autoRefreshTimer = setInterval(async () => {
     const valid = await validateToken();
     if (valid) {
-      console.log(`[AUTO] Refreshing chart data...`);
+      console.log(`[AUTO] Refreshing chart data (${SYMBOL}, ${RESOLUTION}m)...`);
       fetchAndProcess().catch((e) => console.error("[AUTO] Error:", e.message));
     }
   }, REFRESH_MS);
-  console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s`);
+  console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s (${(REFRESH_MS / 60000).toFixed(1)}min)`);
 }
 
 // ─── Socket.IO connections ────────────────────────────────────────────────────

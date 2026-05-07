@@ -13,7 +13,7 @@ const NAV_ITEMS = [
     ),
     label: "Charts",
     description: "Live candlestick charts with EMA indicators and signal overlays",
-    tag: "LIVE",
+    tag: "Market closed",
     tagColor: "green",
     stats: ["NH / NL signals", "Indicators"],
   },
@@ -68,7 +68,7 @@ export default function HomePage() {
           <span className="home-logo-version">DASHBOARD</span>
         </div>
         <div className="home-header-tag">
-          <span className="home-dot green" /> Live
+          <span className="home-dot green" /> Market Closed
         </div>
       </header>
 
