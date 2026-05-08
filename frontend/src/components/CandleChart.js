@@ -371,6 +371,8 @@ export default function CandleChart({
   // activeResolution: the resolution of the currently-loaded chartData.
   // Used to detect timeframe switches even when candle count is unchanged.
   activeResolution,
+  // symbol: active symbol — forces full reset + Y-axis rescale on symbol change
+  symbol,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -391,6 +393,8 @@ export default function CandleChart({
   const lastProcessedTokenRef = useRef(0);
   // Track last rendered resolution to detect timeframe switches
   const prevResolutionRef = useRef(null);
+  // Track last rendered symbol to detect symbol switches (Y-axis rescale)
+  const prevSymbolRef = useRef(null);
 
   const todayModeRef = useRef(todayMode);
   const candlesRef = useRef(candles);
@@ -632,10 +636,17 @@ export default function CandleChart({
       activeResolution != null &&
       Number(activeResolution) !== prevResolutionRef.current;
 
+    // Force full reset when symbol changes — Y-axis must rescale completely
+    const symbolChanged =
+      prevSymbolRef.current !== null &&
+      symbol != null &&
+      symbol !== prevSymbolRef.current;
+
     const isLastCandleUpdate =
       !isFirst &&
       !intentionalReloadRef.current &&
       !resolutionChanged &&
+      !symbolChanged &&
       candles.length === prevCount &&
       lastKey !== prevLastKey;
 
@@ -643,6 +654,7 @@ export default function CandleChart({
       !isFirst &&
       !intentionalReloadRef.current &&
       !resolutionChanged &&
+      !symbolChanged &&
       candles.length === prevCount + 1;
 
     if (isLastCandleUpdate || isNewCandleAppended) {
@@ -672,8 +684,9 @@ export default function CandleChart({
       if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
       prevCountRef.current = candles.length;
       prevLastCandleKeyRef.current = lastKey;
-      // Update tracked resolution (even on incremental updates)
+      // Update tracked resolution and symbol (even on incremental updates)
       if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
+      if (symbol != null) prevSymbolRef.current = symbol;
 
       // Auto-scroll only if user is pinned to right edge
       if (!userScrolledRef.current) {
@@ -722,8 +735,9 @@ export default function CandleChart({
     prevCountRef.current = candles.length;
     prevLastCandleKeyRef.current = lastKey;
 
-    // Always update tracked resolution after a full reload
+    // Always update tracked resolution and symbol after a full reload
     if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
+    if (symbol != null) prevSymbolRef.current = symbol;
 
     if (isFirst) {
       isFirstLoadRef.current = false;
@@ -732,7 +746,7 @@ export default function CandleChart({
       userScrolledRef.current = false;
       if (onIntentionalReloadAckRef.current) onIntentionalReloadAckRef.current();
       resetView();
-    } else if (isIntentional || resolutionChanged) {
+    } else if (isIntentional || resolutionChanged || symbolChanged) {
       // User explicitly changed symbol / timeframe / clicked Refresh
       intentionalReloadRef.current = false;
       lastProcessedTokenRef.current = reloadToken;

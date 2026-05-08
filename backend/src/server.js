@@ -387,8 +387,12 @@ function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
 
   autoRefreshTimer = setInterval(async () => {
+    // KEY FIX: do nothing outside market hours — prevents endless fetching
+    // after 15:30 IST (the "[AUTO] Refreshing every minute" bug)
+    if (!isMarketOpen()) return;
+
     // Skip if tick stream is live — it keeps the candle builder current
-    if (tickStream.isConnected() && isMarketOpen()) return;
+    if (tickStream.isConnected()) return;
 
     const valid = await validateToken();
     if (!valid) return;
@@ -404,7 +408,7 @@ function startAutoRefresh() {
     }
   }, REFRESH_MS);
 
-  console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s (fallback when tick stream inactive)`);
+  console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s (fallback when tick stream inactive, market hours only)`);
 }
 
 // ─── Socket.IO connections ────────────────────────────────────────────────────
