@@ -38,9 +38,15 @@ let autoRefreshTimer = null;
 const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
 const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
 const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
-const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "65000");
+// Fallback REST poll used ONLY when WebSocket is down (market open but no ticks).
+// Kept tight (5s) so candle appears within 5s of a minute close if WS fails.
+// When WS is live, this interval is skipped entirely — no extra API calls.
+const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "5000");
+// Watchdog: restart WebSocket if no tick arrives for this many ms during market hours
+const TICK_WATCHDOG_MS = parseInt(process.env.TICK_WATCHDOG_MS || "10000");
 
 const socketResolutions = new Map();
+let lastTickAt = 0;   // epoch ms of the most recent tick received
 
 // ─── Candle Builder ───────────────────────────────────────────────────────────
 const candleBuilders = new Map();
@@ -150,6 +156,7 @@ function updateCacheFromBuilder(symbol, resolution) {
 const tickStream = new TickStream();
 
 tickStream.on("tick", (tick) => {
+  lastTickAt = Date.now();
   const builder = getOrCreateBuilder(tick.symbol);
   builder.processTick(tick);
 });
@@ -202,6 +209,27 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   // Always fetch 1m candles from Fyers — derive higher TFs locally
   const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH);
+
+  // ── Symbol change: if the builder already exists for this symbol but its
+  //    history belongs to a different price scale (e.g. switching from NIFTY
+  //    ~24000 to GAIL ~200), we must replace it entirely so the chart
+  //    auto-scales correctly.  We detect this by comparing the first candle's
+  //    close price ratio vs the incoming data — if they differ by >50% we
+  //    treat it as a "different instrument" and drop the old builder.
+  if (candleBuilders.has(symbol)) {
+    const existingBuilder = candleBuilders.get(symbol);
+    const existingHistory = existingBuilder.getOneMinHistory();
+    if (existingHistory.length > 0 && raw1m.length > 0) {
+      const existingPrice = existingHistory[0].close;
+      const newPrice = raw1m[0].close;
+      const ratio = existingPrice > 0 ? Math.abs(newPrice - existingPrice) / existingPrice : 1;
+      if (ratio > 0.5) {
+        // Price scale mismatch — stale builder from a different instrument
+        console.log(`[Server] Price scale mismatch for ${symbol} (${existingPrice} vs ${newPrice}) — resetting builder`);
+        candleBuilders.delete(symbol);
+      }
+    }
+  }
 
   // Seed the candle builder with this fresh 1m history
   const builder = getOrCreateBuilder(symbol);
@@ -334,6 +362,26 @@ app.get("/api/signals", async (req, res) => {
 
 app.use("/api/symbols", symbolsRouter);
 
+// ─── Tick Watchdog ────────────────────────────────────────────────────────────
+// If WebSocket is "connected" but no tick arrives for TICK_WATCHDOG_MS during
+// market hours, force a reconnect. This catches silent socket stalls (Fyers
+// sometimes stops sending without firing a close event).
+function startTickWatchdog() {
+  setInterval(() => {
+    if (!isMarketOpen()) return;
+    if (!tickStream.isConnected()) return;
+    const silenceMs = Date.now() - lastTickAt;
+    if (lastTickAt > 0 && silenceMs > TICK_WATCHDOG_MS) {
+      console.warn(`[Watchdog] No tick for ${(silenceMs / 1000).toFixed(1)}s — reconnecting WebSocket`);
+      tickStream.stop();
+      setTimeout(() => {
+        maybeStartTickStream();
+      }, 1000);
+    }
+  }, TICK_WATCHDOG_MS);
+  console.log(`[Watchdog] Tick watchdog started (timeout: ${TICK_WATCHDOG_MS / 1000}s)`);
+}
+
 // ─── Auto-refresh fallback ────────────────────────────────────────────────────
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
@@ -427,6 +475,7 @@ server.listen(PORT, async () => {
   console.log(`   Auth    : http://localhost:${PORT}/api/auth/status`);
   console.log(`   Symbols : http://localhost:${PORT}/api/symbols\n`);
   startAutoRefresh();
+  startTickWatchdog();
   await maybeStartTickStream();
 });
 

@@ -79,17 +79,36 @@ function StatusBar({
   function handleQueryChange(e) {
     const val = e.target.value;
     setQuery(val);
-    if (!val) { setSuggestions([]); setShowDrop(false); return; }
-    const q = val.toLowerCase();
+    if (!val.trim()) { setSuggestions([]); setShowDrop(false); return; }
+    const q = val.toLowerCase().trim();
     const hits = symbols
       .filter((s) => {
         const nameLower = s.name.toLowerCase();
         const colonIdx = s.symbol.indexOf(":");
+        // ticker = the part after "NSE:" / "BSE:" e.g. "GAIL-EQ", "NIFTY50-INDEX"
         const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
-        return nameLower.startsWith(q) || ticker.startsWith(q);
+        // Also strip the -EQ / -INDEX suffix for cleaner matching
+        const tickerBase = ticker.replace(/-(eq|be|index|etf|pp|sm)$/i, "");
+        return (
+          nameLower.startsWith(q) ||
+          nameLower.includes(q) ||
+          ticker.startsWith(q) ||
+          tickerBase.startsWith(q) ||
+          tickerBase.includes(q)
+        );
       })
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 10);
+      // Rank: exact prefix matches first, then includes
+      .sort((a, b) => {
+        const colonA = a.symbol.indexOf(":");
+        const colonB = b.symbol.indexOf(":");
+        const tA = (colonA >= 0 ? a.symbol.slice(colonA + 1) : a.symbol).toLowerCase().replace(/-(eq|be|index|etf|pp|sm)$/i, "");
+        const tB = (colonB >= 0 ? b.symbol.slice(colonB + 1) : b.symbol).toLowerCase().replace(/-(eq|be|index|etf|pp|sm)$/i, "");
+        const scoreA = tA.startsWith(q) ? 0 : a.name.toLowerCase().startsWith(q) ? 1 : 2;
+        const scoreB = tB.startsWith(q) ? 0 : b.name.toLowerCase().startsWith(q) ? 1 : 2;
+        if (scoreA !== scoreB) return scoreA - scoreB;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 12);
     setSuggestions(hits);
     setShowDrop(hits.length > 0);
   }

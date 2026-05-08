@@ -9,7 +9,19 @@
  *   - skt.connect()          — NO arguments (token already in getInstance)
  *   - skt.subscribe([sym1])  — flat array of symbol STRINGS, not objects
  *   - skt.autoreconnect(n)   — call BEFORE connect()
+ *   - skt.mode(skt.LiteMode) — FASTEST: sends tick immediately on every
+ *                               price change (LTP + change only).
+ *                               FullMode batches data → causes ~30s candle delay.
  *   - skt.on('connect' | 'message' | 'error' | 'close', fn)
+ *
+ * MODE CHOICE:
+ *   LiteMode  → fields: symbol, ltp, ch, chp, tt
+ *               fires on EVERY price change — tick-by-tick, <1s latency
+ *   FullMode  → adds OHLC, volume, bid/ask depth
+ *               Fyers batches these → candle appears ~30s after minute closes
+ *
+ *   We use LiteMode for real-time candle updates. The OHLC fields we get
+ *   from REST history (seedHistory) and from our own CandleBuilder logic.
  *
  * SINGLETON NOTE: fyersDataSocket caches the instance internally.
  * To reconnect with a new token, call close() then re-call getInstance().
@@ -32,7 +44,7 @@ const { loadToken } = require("./fyers");
 const MARKET_OPEN = { h: 9, m: 15 };
 const MARKET_CLOSE = { h: 15, m: 30 };
 
-const RECONNECT_DELAY_MS = 5000;
+const RECONNECT_DELAY_MS = 3000;   // Faster first reconnect (was 5000)
 const MAX_RECONNECT = 10;
 
 // Fyers SDK logging — empty path = no file logs, false = SDK silent
@@ -63,6 +75,7 @@ class TickStream extends EventEmitter {
     this._reconnects = 0;
     this._reconnTimer = null;
     this._userStopped = false;
+    this._lastTickTime = 0;   // for gap diagnostics
   }
 
   /** Start streaming ticks for the given symbols. */
@@ -97,7 +110,6 @@ class TickStream extends EventEmitter {
     this._symbols = symbols;
     if (this._socket && this._running) {
       try {
-        // subscribe() takes a flat array of symbol strings
         this._socket.subscribe(this._symbols);
         console.log(`[TickStream] Re-subscribed to: ${symbols.join(", ")}`);
       } catch (err) {
@@ -126,11 +138,6 @@ class TickStream extends EventEmitter {
     }
 
     try {
-      // ── BUG FIX 1: getInstance, not new fyersDataSocket() ───────
-      // The SDK is a singleton. Pass the full "appId:token" here.
-      // On reconnect after close(), getInstance() returns the same
-      // (now-closed) instance and reinitialises it — this is correct.
-      // ────────────────────────────────────────────────────────────
       const fullToken = `${appId}:${token}`;
 
       this._socket = fyersDataSocket.getInstance(
@@ -139,21 +146,38 @@ class TickStream extends EventEmitter {
         FYERS_LOGGING
       );
 
+      // ── KEY FIX: Set LiteMode BEFORE connect ─────────────────────
+      // LiteMode fires a tick on EVERY price change with minimal delay (<1s).
+      // FullMode (default) batches extra fields (OHLC, depth) and causes the
+      // ~30 second delay visible in candle countdown (00:04 → restart from ~60).
+      //
+      // LiteMode tick fields: symbol, ltp, ch (change), chp (% change), tt (trade time)
+      // CandleBuilder only needs ltp + tt — it derives OHLC from the tick stream.
+      // ────────────────────────────────────────────────────────────
+      if (this._socket.LiteMode !== undefined) {
+        this._socket.mode(this._socket.LiteMode);
+        console.log("[TickStream] Mode set to LiteMode (fastest tick delivery)");
+      } else {
+        console.warn("[TickStream] LiteMode not available on this SDK version — using default mode");
+      }
+
       // autoreconnect() MUST be called before connect()
-      this._socket.autoreconnect(MAX_RECONNECT);
+      // Handle both SDK casing variants (autoreconnect vs autoReconnect)
+      if (typeof this._socket.autoReconnect === "function") {
+        this._socket.autoReconnect(MAX_RECONNECT);
+      } else {
+        this._socket.autoreconnect(MAX_RECONNECT);
+      }
 
       this._socket.on("connect", () => this._onConnect());
       this._socket.on("message", (msg) => this._onMessage(msg));
       this._socket.on("error", (err) => this._onError(err));
       this._socket.on("close", () => this._onClose());
 
-      // ── BUG FIX 2: connect() takes NO arguments ──────────────────
-      // The token was supplied to getInstance(); connect() just opens
-      // the WebSocket using the stored token.
-      // ────────────────────────────────────────────────────────────
+      // connect() takes NO arguments — token is stored in getInstance()
       this._socket.connect();
 
-      console.log("[TickStream] Connecting to Fyers data socket…");
+      console.log("[TickStream] Connecting to Fyers data socket (LiteMode)…");
     } catch (err) {
       console.error("[TickStream] Connect error:", err.message);
       this._scheduleReconnect();
@@ -169,12 +193,10 @@ class TickStream extends EventEmitter {
 
   _onConnect() {
     this._reconnects = 0;
-    console.log(`[TickStream] Connected. Subscribing to: ${this._symbols.join(", ")}`);
+    console.log(`[TickStream] Connected ✓ Subscribing to: ${this._symbols.join(", ")}`);
     try {
-      // ── BUG FIX 3: subscribe() takes flat string array, NOT objects
-      // Wrong:  [{ symbol: "NSE:NIFTY50-INDEX", dataType: "symbolData" }]
-      // Right:  ["NSE:NIFTY50-INDEX"]
-      // ──────────────────────────────────────────────────────────────
+      // subscribe() takes a flat string array only.
+      // Do NOT pass a second `true` arg (market depth) — that forces FullMode.
       this._socket.subscribe(this._symbols);
     } catch (err) {
       console.error("[TickStream] Subscribe failed:", err.message);
@@ -184,19 +206,6 @@ class TickStream extends EventEmitter {
 
   _onMessage(msg) {
     try {
-      // The Fyers SDK decodes binary frames and calls Mapper() before
-      // delivering to the message handler. After mapping, field names are:
-      //   symbol           → exchange:scrip (e.g. "NSE:NIFTY50-INDEX")
-      //   ltp              → last traded price (float)
-      //   tt               → trade time in epoch SECONDS
-      //   open_price       → day open
-      //   high_price       → day high
-      //   low_price        → day low
-      //   prev_close_price → previous close
-      //   vol_traded_today → total volume
-      //
-      // The SDK may deliver a single object or an array of objects.
-
       if (!msg) return;
       const ticks = Array.isArray(msg) ? msg : [msg];
 
@@ -206,15 +215,26 @@ class TickStream extends EventEmitter {
         const symbol = tick.symbol || this._symbols[0];
         if (!symbol) continue;
 
-        // Use exchange timestamp ('tt') for accurate candle alignment.
-        // Fall back to system time only if exchange time is missing.
+        // LiteMode fields: symbol, ltp, tt, ch, chp
+        // FullMode adds: open_price, high_price, low_price, vol_traded_today etc.
+        // Use tt (trade time) for exchange-accurate candle alignment.
         const timestamp = tick.tt || tick.timestamp || Math.floor(Date.now() / 1000);
+
+        // Diagnostic: log tick gaps > 5s during market hours
+        const now = Date.now();
+        if (this._lastTickTime && isMarketOpen()) {
+          const gapMs = now - this._lastTickTime;
+          if (gapMs > 5000) {
+            console.warn(`[TickStream] Tick gap: ${(gapMs / 1000).toFixed(1)}s for ${symbol}`);
+          }
+        }
+        this._lastTickTime = now;
 
         this.emit("tick", {
           symbol,
           ltp: Number(tick.ltp),
           timestamp: Number(timestamp),    // epoch seconds
-          // Pass-through fields (used by candleBuilder for extra context)
+          // These will be undefined in LiteMode — CandleBuilder handles that gracefully
           open: tick.open_price ?? tick.open,
           high: tick.high_price ?? tick.high,
           low: tick.low_price ?? tick.low,
@@ -248,7 +268,8 @@ class TickStream extends EventEmitter {
       return;
     }
     this._reconnects++;
-    const delay = RECONNECT_DELAY_MS * Math.min(this._reconnects, 4);
+    // Exponential backoff: 3s, 6s, 9s, 12s, 15s (capped)
+    const delay = RECONNECT_DELAY_MS * Math.min(this._reconnects, 5);
     console.log(`[TickStream] Reconnecting in ${delay / 1000}s (attempt ${this._reconnects})…`);
     this._reconnTimer = setTimeout(() => {
       this._disconnect();

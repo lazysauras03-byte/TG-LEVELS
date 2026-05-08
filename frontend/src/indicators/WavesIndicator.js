@@ -166,6 +166,17 @@ function _rrect(ctx, x, y, w, h, r) {
   }
 }
 
+// Return the pixel width of the right price scale so we can clip the canvas.
+// Without clipping, wave labels near the right edge drift over the scale.
+function _priceScaleWidth() {
+  if (!_chart) return 0;
+  try {
+    const ps = _chart.priceScale('right');
+    if (ps && typeof ps.width === 'function') return ps.width();
+  } catch (_) { }
+  return 0;
+}
+
 function _ensureCanvas() {
   if (_canvas && _container.contains(_canvas)) return;
   const old = _container.querySelector(".__wc");
@@ -202,6 +213,12 @@ function _redraw() {
   _ctx.clearRect(0, 0, cw, ch);
   if (!_pivots.length) return;
 
+  // Clip to the plot area (exclude the right price scale).
+  // This prevents pivot bubbles and segment labels from rendering
+  // on top of or beyond the price scale when scrolled to the right.
+  const scaleW = _priceScaleWidth();
+  const plotW = Math.max(cw - scaleW, 0);
+
   const ts = _chart.timeScale();
 
   function toXY(timeMs, price) {
@@ -212,23 +229,33 @@ function _redraw() {
     } catch (_) { return null; }
   }
 
+  // Clip drawing to the plot area — nothing renders beyond the scale boundary
+  _ctx.save();
+  _ctx.beginPath();
+  _ctx.rect(0, 0, plotW, ch);
+  _ctx.clip();
+
   // Pivot labels: HH / LH / HL / LL
   _pivots.forEach((piv) => {
     const pt = toXY(piv.time, piv.price);
     if (!pt) return;
+    // Skip if the pivot's x position is beyond the visible plot area
+    if (pt.x > plotW) return;
     const color = piv.side === "high" ? "#00d97e" : "#ff4560";
     _ctx.save();
     _ctx.font = "bold 11px 'JetBrains Mono',monospace";
     _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
     const tw = _ctx.measureText(piv.waveType).width;
     const pad = 4, bw = tw + pad * 2, bh = 16;
-    const bx = pt.x - bw / 2;
+    // Clamp label so it stays fully inside the plot area
+    const rawBx = pt.x - bw / 2;
+    const bx = Math.min(rawBx, plotW - bw - 2);
     const by = piv.side === "high" ? pt.y - bh - 6 : pt.y + 6;
     _ctx.fillStyle = "rgba(10,11,15,0.88)";
     _rrect(_ctx, bx, by, bw, bh, 3); _ctx.fill();
     _ctx.strokeStyle = color; _ctx.lineWidth = 1; _ctx.stroke();
     _ctx.fillStyle = color;
-    _ctx.fillText(piv.waveType, pt.x, by + bh / 2);
+    _ctx.fillText(piv.waveType, bx + bw / 2, by + bh / 2);
     _ctx.restore();
   });
 
@@ -237,23 +264,31 @@ function _redraw() {
     const p1 = toXY(seg.fromTime, seg.fromPrice);
     const p2 = toXY(seg.toTime, seg.toPrice);
     if (!p1 || !p2) return;
+    // Skip if the entire segment is beyond the plot area
+    if (p1.x > plotW && p2.x > plotW) return;
     const dx = p2.x - p1.x, dy = p2.y - p1.y;
     const angle = Math.atan2(dy, dx);
-    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+    // Clamp midpoint x so label stays inside the plot area
+    const rawMx = (p1.x + p2.x) / 2;
+    const my = (p1.y + p2.y) / 2;
     const color = seg.toSide === "high" ? "#00d97e" : "#ff4560";
     const text = `Wave ${seg.waveNum}  ${seg.prevWaveType} \u2192 ${seg.currWaveType}`;
     _ctx.save();
-    _ctx.translate(mx, my); _ctx.rotate(angle);
     _ctx.font = "600 10px 'JetBrains Mono',monospace";
     _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
     const tw = _ctx.measureText(text).width;
     const pad = 4, bw = tw + pad * 2, bh = 15, perpOff = -12;
+    // Only clamp the label position, not the midpoint for rotation
+    const mx = Math.min(rawMx, plotW - bw / 2 - 2);
+    _ctx.translate(mx, my); _ctx.rotate(angle);
     _ctx.fillStyle = "rgba(10,11,15,0.82)";
     _rrect(_ctx, -bw / 2, perpOff - bh / 2, bw, bh, 3); _ctx.fill();
     _ctx.fillStyle = color;
     _ctx.fillText(text, 0, perpOff);
     _ctx.restore();
   });
+
+  _ctx.restore(); // end clip
 }
 
 // ─── Scheduling ───────────────────────────────────────────────────────────────
