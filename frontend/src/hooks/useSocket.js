@@ -95,16 +95,19 @@ export function useSocket() {
       setError(null);
     });
 
-    // Live tick update — splice forming candle into existing chartData
-    // This is lightweight: only replaces/appends the last candle.
-    socket.on("tick_update", (d) => {
+    // ── Candle update (every tick) ─────────────────────────────────────────────
+    // Backend sends tick_update AND candle_update on every Fyers tick.
+    // The formingCandle contains the live OHLC of the currently-building candle.
+    // We update the last candle in-place so the chart moves tick-by-tick.
+    function handleCandleUpdate(d) {
       const incoming = d?.resolution != null ? Number(d.resolution) : null;
       const active = activeResolutionRef.current;
 
-      // Strict resolution guard for tick updates
       if (active !== null && incoming !== null && incoming !== active) return;
       if (!d?.formingCandle) return;
       if (d?.symbol && activeSymbolRef.current && d.symbol !== activeSymbolRef.current) return;
+
+      lastSocketUpdateRef.current = Date.now();
 
       setChartData((prev) => {
         if (!prev || !prev.candles || prev.candles.length === 0) return prev;
@@ -113,30 +116,73 @@ export function useSocket() {
         const prevCandles = prev.candles;
         const lastCandle = prevCandles[prevCandles.length - 1];
 
-        // Candle time is floored to the minute (seconds-level timestamp in ms).
-        // Compare minute boundaries (floor to minute).
+        // Floor to minute for comparison (candle.time is ms)
         const formingMin = Math.floor(forming.time / 60000);
         const lastMin = Math.floor(lastCandle.time / 60000);
 
         let updatedCandles;
         if (formingMin === lastMin) {
-          // Same minute — update the last candle in place
+          // Same minute — update the last candle in place (tick-by-tick movement)
           updatedCandles = [
             ...prevCandles.slice(0, -1),
             { ...lastCandle, ...forming },
           ];
         } else if (formingMin > lastMin) {
-          // New minute started — append as a new candle
+          // New minute — the forming candle is a new bar being built
           updatedCandles = [...prevCandles, forming];
         } else {
-          // Stale tick (formingMin < lastMin) — ignore
+          // Stale tick — ignore
           return prev;
         }
 
         return {
           ...prev,
           candles: updatedCandles,
-          // Update lastUpdate to reflect live tick time
+          lastUpdate: new Date(d.timestamp || Date.now()).toISOString(),
+        };
+      });
+    }
+
+    // Both event names do the same thing — backend sends both for compatibility
+    socket.on("tick_update", handleCandleUpdate);
+    socket.on("candle_update", handleCandleUpdate);
+
+    // ── New candle (minute boundary) ────────────────────────────────────────────
+    // Sent once when a 1m candle is finalized. Appends the closed candle.
+    // A chart_update with signals follows shortly after (via setImmediate on backend).
+    socket.on("new_candle", (d) => {
+      const incoming = d?.resolution != null ? Number(d.resolution) : null;
+      const active = activeResolutionRef.current;
+
+      if (active !== null && incoming !== null && incoming !== active) return;
+      if (!d?.candle) return;
+      if (d?.symbol && activeSymbolRef.current && d.symbol !== activeSymbolRef.current) return;
+
+      lastSocketUpdateRef.current = Date.now();
+
+      setChartData((prev) => {
+        if (!prev || !prev.candles || prev.candles.length === 0) return prev;
+
+        const newCandle = d.candle;
+        const prevCandles = prev.candles;
+        const lastCandle = prevCandles[prevCandles.length - 1];
+
+        const newMin = Math.floor(newCandle.time / 60000);
+        const lastMin = Math.floor(lastCandle.time / 60000);
+
+        let updatedCandles;
+        if (newMin === lastMin) {
+          // Finalize the last candle (it was forming, now closed)
+          updatedCandles = [...prevCandles.slice(0, -1), { ...lastCandle, ...newCandle }];
+        } else if (newMin > lastMin) {
+          updatedCandles = [...prevCandles, newCandle];
+        } else {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          candles: updatedCandles,
           lastUpdate: new Date(d.timestamp || Date.now()).toISOString(),
         };
       });

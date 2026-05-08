@@ -49,27 +49,38 @@ function getOrCreateBuilder(symbol) {
   if (!candleBuilders.has(symbol)) {
     const builder = new CandleBuilder({
       onTick: (formingCandles) => {
-        emitTickUpdate(symbol, formingCandles);
+        // Emit candle_update immediately on every tick — no batching, no delay.
+        emitCandleUpdate(symbol, formingCandles);
       },
       onFinalize: (finalizedCandle, formingCandles) => {
         console.log(`[Builder:${symbol}] Candle finalized @ ${new Date(finalizedCandle.time).toISOString()} close=${finalizedCandle.close}`);
-        emitTickUpdate(symbol, formingCandles);
-        const b = candleBuilders.get(symbol);
-        if (!b) return;
-        for (const res of [1, 3, 5, 15, 60, 1440]) {
-          const room = `res:${res}`;
-          const roomSockets = io.sockets.adapter.rooms.get(room);
-          if (!roomSockets || roomSockets.size === 0) continue;
-          const candles = b.getCandlesForResolution(res);
-          if (candles.length === 0) continue;
-          try {
-            const result = runSignalEngine(candles);
-            io.to(room).emit("chart_update", buildPayload(candles, result, symbol, res, true));
-          } catch (err) {
-            console.error(`[Builder:${symbol}] Signal engine error res=${res}:`, err.message);
+
+        // 1. Immediately emit the new forming candle for all active rooms
+        emitCandleUpdate(symbol, formingCandles);
+
+        // 2. Emit the finalized candle as a new_candle event (lightweight)
+        //    so the frontend can append it before the signal engine runs.
+        emitFinalCandle(symbol, finalizedCandle);
+
+        // 3. Defer the heavy signal-engine work so it doesn't block ticks.
+        setImmediate(() => {
+          const b = candleBuilders.get(symbol);
+          if (!b) return;
+          for (const res of [1, 3, 5, 15, 60, 1440]) {
+            const room = `res:${res}`;
+            const roomSockets = io.sockets.adapter.rooms.get(room);
+            if (!roomSockets || roomSockets.size === 0) continue;
+            const candles = b.getCandlesForResolution(res);
+            if (candles.length === 0) continue;
+            try {
+              const result = runSignalEngine(candles);
+              io.to(room).emit("chart_update", buildPayload(candles, result, symbol, res, true));
+            } catch (err) {
+              console.error(`[Builder:${symbol}] Signal engine error res=${res}:`, err.message);
+            }
           }
-        }
-        updateCacheFromBuilder(symbol, RESOLUTION);
+          updateCacheFromBuilder(symbol, RESOLUTION);
+        });
       },
     });
     candleBuilders.set(symbol, builder);
@@ -77,21 +88,49 @@ function getOrCreateBuilder(symbol) {
   return candleBuilders.get(symbol);
 }
 
-function emitTickUpdate(symbol, formingCandles) {
+/**
+ * emitCandleUpdate — sent on every tick with the currently-forming candle.
+ * Frontend uses this to update the live candle visually tick-by-tick.
+ */
+function emitCandleUpdate(symbol, formingCandles) {
   for (const [res, candle] of Object.entries(formingCandles)) {
     const numRes = Number(res);
     const room = `res:${numRes}`;
     const roomSockets = io.sockets.adapter.rooms.get(room);
     if (!roomSockets || roomSockets.size === 0) continue;
     if (!candle) continue;
-    io.to(room).emit("tick_update", {
+    const payload = {
       symbol,
       resolution: numRes,
       formingCandle: candle,
       timestamp: Date.now(),
+    };
+    // Emit to both event names: tick_update (legacy compat) and candle_update (new)
+    io.to(room).emit("tick_update", payload);
+    io.to(room).emit("candle_update", payload);
+  }
+}
+
+/**
+ * emitFinalCandle — sent once when a 1m candle completes.
+ * Frontend appends this as a new completed candle.
+ */
+function emitFinalCandle(symbol, finalizedCandle) {
+  for (const res of [1, 3, 5, 15, 60, 1440]) {
+    const room = `res:${res}`;
+    const roomSockets = io.sockets.adapter.rooms.get(room);
+    if (!roomSockets || roomSockets.size === 0) continue;
+    io.to(room).emit("new_candle", {
+      symbol,
+      resolution: res,
+      candle: finalizedCandle,
+      timestamp: Date.now(),
     });
   }
 }
+
+// Alias for backwards compat with any internal usages
+const emitTickUpdate = emitCandleUpdate;
 
 function updateCacheFromBuilder(symbol, resolution) {
   const builder = candleBuilders.get(symbol);
