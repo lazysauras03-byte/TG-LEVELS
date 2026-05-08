@@ -24,7 +24,6 @@ function savePref(key, value) {
   try { localStorage.setItem("tgg_" + key, JSON.stringify(value)); } catch { }
 }
 
-// IST date string helper — reused without allocation each call
 function toISTDate(tsMs) {
   return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
@@ -71,7 +70,6 @@ export default function ChartsPage() {
     loadPref("activeTabs", { bubble: "signals", waves: "signals" })
   );
 
-  // Batch pref saves with a single effect watching all prefs at once
   useEffect(() => { savePref("symbol", symbol); }, [symbol]);
   useEffect(() => { savePref("resolution", resolution); }, [resolution]);
   useEffect(() => { savePref("todayMode", todayMode); }, [todayMode]);
@@ -92,15 +90,12 @@ export default function ChartsPage() {
   const wavesOn = !!indicators.waves;
   const anySidebarIndicator = bubbleOn || wavesOn;
 
-  // ── Sidebar auto-open/close driven solely by indicator toggles ───────────
-  // Open when any indicator turns ON; close when all turn OFF.
-  // Today toggle and other state changes never touch sidebarOpen.
   const prevAnyRef = useRef(bubbleOn || wavesOn);
   useEffect(() => {
     const anyNow = bubbleOn || wavesOn;
     const anyBefore = prevAnyRef.current;
-    if (!anyBefore && anyNow) setSidebarOpen(true);   // at least one just turned on
-    if (anyBefore && !anyNow) setSidebarOpen(false);  // last one just turned off
+    if (!anyBefore && anyNow) setSidebarOpen(true);
+    if (anyBefore && !anyNow) setSidebarOpen(false);
     prevAnyRef.current = anyNow;
   }, [bubbleOn, wavesOn]);
 
@@ -116,31 +111,46 @@ export default function ChartsPage() {
   const chartResetRef = useRef(null);
   const handleResetViewReady = useCallback((fn) => { chartResetRef.current = fn; }, []);
 
-  const [intentionalReload, setIntentionalReload] = useState(false);
+  // ── intentionalReload — use a counter instead of boolean so even rapid
+  //    double-clicks (same resolution) still produce a stable signal.
+  //    CandleChart reads this as "any nonzero value = do full reload".
+  //    We increment on user action, CandleChart acknowledges by calling back
+  //    via onIntentionalReloadAck, which resets it to 0.
+  const [reloadToken, setReloadToken] = useState(0);
 
+  const handleIntentionalReloadAck = useCallback(() => {
+    setReloadToken(0);
+  }, []);
+
+  const triggerIntentionalReload = useCallback(() => {
+    setReloadToken((t) => t + 1);
+  }, []);
+
+  // ── Refresh / symbol / resolution handlers ────────────────────────────────
   const handleRefresh = useCallback((sym, res) => {
-    setIntentionalReload(true);
+    triggerIntentionalReload();
     refresh(sym ?? symbol, res ?? resolution);
-  }, [refresh, symbol, resolution]);
+  }, [refresh, symbol, resolution, triggerIntentionalReload]);
 
   const handleSymbolChange = useCallback((sym) => {
     setSymbol(sym);
-    setIntentionalReload(true);
+    // refresh() is called by StatusBar immediately after onSymbolChange
   }, []);
 
   const handleResolutionChange = useCallback((res) => {
     setResolution(res);
-    setIntentionalReload(true);
-  }, []);
-
-  useEffect(() => {
-    if (intentionalReload) setIntentionalReload(false);
-  }, [intentionalReload]);
+    triggerIntentionalReload();
+    // refresh() is called by StatusBar immediately after onResolutionChange
+  }, [triggerIntentionalReload]);
 
   // ── Initial data fetch ────────────────────────────────────────────────────
   const didInitialFetch = useRef(false);
   useEffect(() => {
-    if (!didInitialFetch.current) { didInitialFetch.current = true; refresh(symbol, resolution); }
+    if (!didInitialFetch.current) {
+      didInitialFetch.current = true;
+      triggerIntentionalReload();
+      refresh(symbol, resolution);
+    }
   }, []); // eslint-disable-line
 
   // ── Crosshair ─────────────────────────────────────────────────────────────
@@ -155,12 +165,15 @@ export default function ChartsPage() {
   const currentState = chartData?.currentState ?? 0;
   const bestPrice = chartData?.bestPrice;
 
+  // The resolution that the currently-loaded chartData actually contains.
+  // We pass this into CandleChart so it can detect a timeframe switch even
+  // when candle count happens to be the same as the previous timeframe.
+  const chartDataResolution = chartData?.resolution ?? resolution;
+
   const showLoadingScreen = loading && candles.length === 0;
 
-  // Memoized today IST string — only recomputed when date changes
   const todayIST = useMemo(() => new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }), []);
 
-  // Memoized filtered signals/pivots — only recomputed when deps change
   const displayedSignals = useMemo(() => {
     if (!todayMode) return signals;
     return signals.filter((s) => toISTDate(s.time) === todayIST);
@@ -262,7 +275,9 @@ export default function ChartsPage() {
               showWaves={wavesOn}
               onWaveData={handleWaveData}
               onResetViewReady={handleResetViewReady}
-              intentionalReload={intentionalReload}
+              reloadToken={reloadToken}
+              onIntentionalReloadAck={handleIntentionalReloadAck}
+              activeResolution={chartDataResolution}
             />
           )}
         </div>

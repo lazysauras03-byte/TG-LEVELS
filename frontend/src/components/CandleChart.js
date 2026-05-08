@@ -364,7 +364,13 @@ export default function CandleChart({
   showWaves = false,
   onWaveData,
   onResetViewReady,
-  intentionalReload,
+  // reloadToken: counter that increments on every intentional reload.
+  // Replaces the old boolean intentionalReload to avoid timing races.
+  reloadToken = 0,
+  onIntentionalReloadAck,
+  // activeResolution: the resolution of the currently-loaded chartData.
+  // Used to detect timeframe switches even when candle count is unchanged.
+  activeResolution,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -381,6 +387,10 @@ export default function CandleChart({
   const userScrolledRef = useRef(false);
   // Fingerprint of last marker array set — skip setMarkers when nothing changed
   const prevMarkerKeyRef = useRef(null);
+  // Track last processed reloadToken value to detect new intentional reloads
+  const lastProcessedTokenRef = useRef(0);
+  // Track last rendered resolution to detect timeframe switches
+  const prevResolutionRef = useRef(null);
 
   const todayModeRef = useRef(todayMode);
   const candlesRef = useRef(candles);
@@ -390,7 +400,9 @@ export default function CandleChart({
   const showBubbleRef = useRef(showBubble);
   const showWavesRef = useRef(showWaves);
   const onWaveDataRef = useRef(onWaveData);
-  const intentionalReloadRef = useRef(intentionalReload);
+  const onIntentionalReloadAckRef = useRef(onIntentionalReloadAck);
+  // intentionalReloadRef is now derived from reloadToken comparison (see data effect below)
+  const intentionalReloadRef = useRef(false);
 
   // ── resetView ─────────────────────────────────────────────────────────────
   const resetView = useCallback(() => {
@@ -438,7 +450,13 @@ export default function CandleChart({
   useEffect(() => { showBubbleRef.current = showBubble; }, [showBubble]);
   useEffect(() => { showWavesRef.current = showWaves; }, [showWaves]);
   useEffect(() => { onWaveDataRef.current = onWaveData; }, [onWaveData]);
-  useEffect(() => { intentionalReloadRef.current = intentionalReload; }, [intentionalReload]);
+  useEffect(() => { onIntentionalReloadAckRef.current = onIntentionalReloadAck; }, [onIntentionalReloadAck]);
+  // Sync intentionalReloadRef from reloadToken: any new token > last processed = intentional reload
+  useEffect(() => {
+    if (reloadToken > 0 && reloadToken !== lastProcessedTokenRef.current) {
+      intentionalReloadRef.current = true;
+    }
+  }, [reloadToken]);
 
   useEffect(() => {
     if (onResetViewReady) onResetViewReady(resetView);
@@ -608,15 +626,23 @@ export default function CandleChart({
     // ── Case 1: streaming tick — last candle updated in-place OR one new candle appended ──
     // Criteria: same count as before with last candle changed, OR count+1 with no intentional reload.
     // In both cases we do NOT do setData(), preserving the entire viewport.
+    // Resolution change always forces full reload, even if candle count is same.
+    const resolutionChanged =
+      prevResolutionRef.current !== null &&
+      activeResolution != null &&
+      Number(activeResolution) !== prevResolutionRef.current;
+
     const isLastCandleUpdate =
       !isFirst &&
       !intentionalReloadRef.current &&
+      !resolutionChanged &&
       candles.length === prevCount &&
       lastKey !== prevLastKey;
 
     const isNewCandleAppended =
       !isFirst &&
       !intentionalReloadRef.current &&
+      !resolutionChanged &&
       candles.length === prevCount + 1;
 
     if (isLastCandleUpdate || isNewCandleAppended) {
@@ -646,6 +672,8 @@ export default function CandleChart({
       if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
       prevCountRef.current = candles.length;
       prevLastCandleKeyRef.current = lastKey;
+      // Update tracked resolution (even on incremental updates)
+      if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
 
       // Auto-scroll only if user is pinned to right edge
       if (!userScrolledRef.current) {
@@ -694,15 +722,22 @@ export default function CandleChart({
     prevCountRef.current = candles.length;
     prevLastCandleKeyRef.current = lastKey;
 
+    // Always update tracked resolution after a full reload
+    if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
+
     if (isFirst) {
       isFirstLoadRef.current = false;
       intentionalReloadRef.current = false;
+      lastProcessedTokenRef.current = reloadToken;
       userScrolledRef.current = false;
+      if (onIntentionalReloadAckRef.current) onIntentionalReloadAckRef.current();
       resetView();
-    } else if (isIntentional) {
+    } else if (isIntentional || resolutionChanged) {
       // User explicitly changed symbol / timeframe / clicked Refresh
       intentionalReloadRef.current = false;
+      lastProcessedTokenRef.current = reloadToken;
       userScrolledRef.current = false;
+      if (onIntentionalReloadAckRef.current) onIntentionalReloadAckRef.current();
       resetView();
     } else {
       // Background auto-refresh with same timeframe but larger-than-tick diff
