@@ -60,7 +60,7 @@ const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onT
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function ChartsPage() {
   const navigate = useNavigate();
-  const { chartData, connected, loading, error, refresh } = useSocket();
+  const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
 
   const [symbol, setSymbol] = useState(() => loadPref("symbol", "NSE:NIFTY50-INDEX"));
   const [resolution, setResolution] = useState(() => loadPref("resolution", 3));
@@ -222,6 +222,7 @@ export default function ChartsPage() {
             crosshairBar={crosshairBar}
             onSidebarToggle={handleSidebarToggle}
             onReportClick={handleReportClick}
+            tickStreamActive={tickStreamActive}
           />
         </div>
       </div>

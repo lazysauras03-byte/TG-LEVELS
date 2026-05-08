@@ -1,6 +1,23 @@
 import React, { useState, useRef, useEffect, memo } from "react";
-import SYMBOLS from "../symbols.json";
 import { useMarketStatus } from "../hooks/useMarketStatus";
+
+const BACKEND = process.env.REACT_APP_BACKEND_URL || "http://localhost:3299";
+
+// Load symbols from backend API (merges symbols.json + Excel files).
+// Falls back to empty array gracefully if backend is unavailable.
+let _symbolsCache = [];
+let _symbolsLoaded = false;
+async function loadSymbols() {
+  if (_symbolsLoaded) return _symbolsCache;
+  try {
+    const r = await fetch(`${BACKEND}/api/symbols`);
+    if (r.ok) {
+      _symbolsCache = await r.json();
+    }
+  } catch { /* fallback: use empty list */ }
+  _symbolsLoaded = true;
+  return _symbolsCache;
+}
 
 // Pre-computed formatter — avoid re-creating on every render
 const numFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -26,6 +43,7 @@ function StatusBar({
   crosshairBar,
   onSidebarToggle,
   onReportClick,
+  tickStreamActive,
 }) {
   const lastUpdate = chartData?.lastUpdate
     ? new Date(chartData.lastUpdate).toLocaleTimeString("en-IN", {
@@ -45,11 +63,16 @@ function StatusBar({
       : null;
 
   // ── Symbol search ──────────────────────────────────────
+  const [symbols, setSymbols] = useState([]);
   const [query, setQuery] = useState(symbol);
   const [suggestions, setSuggestions] = useState([]);
   const [showDrop, setShowDrop] = useState(false);
   const inputRef = useRef(null);
   const dropRef = useRef(null);
+
+  useEffect(() => {
+    loadSymbols().then((list) => setSymbols(list));
+  }, []);
 
   useEffect(() => { setQuery(symbol); }, [symbol]);
 
@@ -58,10 +81,9 @@ function StatusBar({
     setQuery(val);
     if (!val) { setSuggestions([]); setShowDrop(false); return; }
     const q = val.toLowerCase();
-    const hits = SYMBOLS
+    const hits = symbols
       .filter((s) => {
         const nameLower = s.name.toLowerCase();
-        // Extract ticker portion after exchange prefix (e.g. "NSE:NIFTY50-INDEX" → "nifty50-index")
         const colonIdx = s.symbol.indexOf(":");
         const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
         return nameLower.startsWith(q) || ticker.startsWith(q);
@@ -182,12 +204,17 @@ function StatusBar({
         </div>
       )}
 
-      {/* LIVE + last update time */}
+      {/* LIVE + tick stream + last update time */}
       <div style={styles.group}>
         <div style={{ ...styles.dot, background: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)" }} />
         <span style={{ color: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)", fontSize: 11 }}>
           {connected ? (isLive ? "Market Live" : "Market Closed") : "OFFLINE"}
         </span>
+        {tickStreamActive && (
+          <span style={{ color: "var(--green)", fontSize: 10, marginLeft: 4, fontFamily: "var(--font-mono)", fontWeight: 700 }}>
+            ⚡TICK
+          </span>
+        )}
         {lastUpdate && (
           <span style={{ color: "var(--text3)", fontSize: 11, marginLeft: 6 }}>
             {lastUpdate} IST

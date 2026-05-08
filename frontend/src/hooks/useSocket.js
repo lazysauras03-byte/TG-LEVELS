@@ -1,18 +1,34 @@
-// useSocket.js — fixed:
-//  1. Tells the server which resolution is active via "set_resolution" events
-//     so the server only broadcasts auto-refreshes for that resolution.
-//  2. Frontend still guards incoming socket pushes by resolution (belt+suspenders).
-//  3. refresh() is the only path that sets activeResolutionRef AND notifies server.
-//  4. Polling fallback: if socket push for current resolution not received within
-//     POLL_INTERVAL, fetch via REST to ensure 1m candle updates aren't missed.
+// useSocket.js
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-time data hook with two distinct update paths:
+//
+// 1. REST (chart_update) — full candle set from backend.
+//    Triggered by: initial load, user refresh, TF switch, auto-refresh fallback.
+//    Contains: complete OHLC history + EMA overlays + signals.
+//
+// 2. WebSocket (tick_update) — lightweight live candle patch.
+//    Triggered by: every Fyers tick during market hours.
+//    Contains: { symbol, resolution, formingCandle } — replaces ONLY the last
+//    candle in the current chartData.candles array (or appends if new minute).
+//    EMA/signals are NOT recomputed on tick — that happens on chart_update.
+//
+// Multi-timeframe derivation:
+//    The server sends 1m base candles and derives higher TFs via deriveTimeframe().
+//    The frontend receives the pre-derived candles for the active resolution.
+//    tick_update always carries the forming candle for the active resolution,
+//    already aggregated on the backend.
+//
+// Poll fallback:
+//    If no socket update within POLL_INTERVAL_MS, fall back to REST.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useState, useEffect, useCallback, useRef } from "react";
 import { io } from "socket.io-client";
 import axios from "axios";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL || "http://localhost:3299";
 
-// Fallback REST poll: if no socket update received within this window, poll manually.
-// Set slightly longer than server REFRESH_MS (65s) to avoid unnecessary requests.
+// Fallback REST poll if no socket update within this window
 const POLL_INTERVAL_MS = 70000; // 1min 10sec
 
 export function useSocket() {
@@ -20,10 +36,12 @@ export function useSocket() {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [tickStreamActive, setTickStreamActive] = useState(false);
+
   const socketRef = useRef(null);
 
-  // The resolution the frontend ACTUALLY wants to display.
-  // Only refresh() updates this; socket pushes never change it.
+  // The resolution + symbol the frontend ACTUALLY wants to display.
+  // Only refresh() updates these; tick/socket pushes never change them.
   const activeResolutionRef = useRef(null);
   const activeSymbolRef = useRef(null);
 
@@ -32,7 +50,6 @@ export function useSocket() {
   const pollTimerRef = useRef(null);
 
   // ── REST poll fallback ──────────────────────────────────────────────────
-  // Ensures 1m (and other) candles update even if socket room routing has any gap.
   function startPollFallback() {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     pollTimerRef.current = setInterval(async () => {
@@ -43,7 +60,6 @@ export function useSocket() {
       const age = Date.now() - lastSocketUpdateRef.current;
       if (age < POLL_INTERVAL_MS) return; // socket is delivering — skip
 
-      // Socket hasn't delivered a fresh update — fall back to REST
       try {
         const r = await axios.get(`${BACKEND}/api/chart`, {
           params: { symbol: sym, resolution: res },
@@ -53,7 +69,7 @@ export function useSocket() {
           setChartData(r.data);
           lastSocketUpdateRef.current = Date.now();
         }
-      } catch { /* silent — server may be temporarily busy */ }
+      } catch { /* silent */ }
     }, POLL_INTERVAL_MS);
   }
 
@@ -65,18 +81,70 @@ export function useSocket() {
     socket.on("connect", () => { setConnected(true); setError(null); });
     socket.on("disconnect", () => setConnected(false));
 
+    // Full chart update (historical + signals + EMA)
     socket.on("chart_update", (d) => {
       const incoming = d?.resolution != null ? Number(d.resolution) : null;
       const active = activeResolutionRef.current;
 
-      // Belt-and-suspenders guard: drop pushes that don't match active resolution.
-      // (Server-side room routing should already prevent this, but guard anyway.)
+      // Guard: drop pushes that don't match active resolution
       if (active !== null && incoming !== null && incoming !== active) return;
 
       lastSocketUpdateRef.current = Date.now();
       setChartData(d);
       setLoading(false);
       setError(null);
+    });
+
+    // Live tick update — splice forming candle into existing chartData
+    // This is lightweight: only replaces/appends the last candle.
+    socket.on("tick_update", (d) => {
+      const incoming = d?.resolution != null ? Number(d.resolution) : null;
+      const active = activeResolutionRef.current;
+
+      // Strict resolution guard for tick updates
+      if (active !== null && incoming !== null && incoming !== active) return;
+      if (!d?.formingCandle) return;
+      if (d?.symbol && activeSymbolRef.current && d.symbol !== activeSymbolRef.current) return;
+
+      setChartData((prev) => {
+        if (!prev || !prev.candles || prev.candles.length === 0) return prev;
+
+        const forming = d.formingCandle;
+        const prevCandles = prev.candles;
+        const lastCandle = prevCandles[prevCandles.length - 1];
+
+        // Candle time is floored to the minute (seconds-level timestamp in ms).
+        // Compare minute boundaries (floor to minute).
+        const formingMin = Math.floor(forming.time / 60000);
+        const lastMin = Math.floor(lastCandle.time / 60000);
+
+        let updatedCandles;
+        if (formingMin === lastMin) {
+          // Same minute — update the last candle in place
+          updatedCandles = [
+            ...prevCandles.slice(0, -1),
+            { ...lastCandle, ...forming },
+          ];
+        } else if (formingMin > lastMin) {
+          // New minute started — append as a new candle
+          updatedCandles = [...prevCandles, forming];
+        } else {
+          // Stale tick (formingMin < lastMin) — ignore
+          return prev;
+        }
+
+        return {
+          ...prev,
+          candles: updatedCandles,
+          // Update lastUpdate to reflect live tick time
+          lastUpdate: new Date(d.timestamp || Date.now()).toISOString(),
+        };
+      });
+    });
+
+    // Market/tick stream status
+    socket.on("market_status", (d) => {
+      if (d?.tickStreamActive != null) setTickStreamActive(!!d.tickStreamActive);
     });
 
     socket.on("error", (e) => { setError(e.message); setLoading(false); });
@@ -110,7 +178,6 @@ export function useSocket() {
   }, []); // eslint-disable-line
 
   // ── Refresh (user-triggered or initial) ────────────────────────────────
-  // This is the ONLY place that updates activeResolutionRef.
   const refresh = useCallback(async (symbol, resolution) => {
     setError(null);
     setLoading(true);
@@ -119,14 +186,10 @@ export function useSocket() {
       if (symbol) params.symbol = symbol;
       if (resolution != null) {
         params.resolution = resolution;
-        // Lock active resolution BEFORE the fetch so that any socket push
-        // arriving during the round-trip is also filtered correctly.
         const numRes = Number(resolution);
         activeResolutionRef.current = numRes;
         activeSymbolRef.current = symbol;
 
-        // Tell the server which resolution this client is now viewing.
-        // Server will move us to the correct socket room for auto-refresh broadcasts.
         if (socketRef.current?.connected) {
           socketRef.current.emit("set_resolution", numRes);
         }
@@ -148,5 +211,5 @@ export function useSocket() {
     }
   }, []);
 
-  return { chartData, connected, loading, error, refresh };
+  return { chartData, connected, loading, error, refresh, tickStreamActive };
 }

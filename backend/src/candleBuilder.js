@@ -1,0 +1,352 @@
+/**
+ * candleBuilder.js
+ * ─────────────────────────────────────────────────────────────────
+ * Converts raw Fyers tick data into 1-minute OHLC candles and
+ * derives higher timeframes (3m, 5m, 15m, 1h, 1D) from the 1m base.
+ *
+ * Rules:
+ *   Open  = first tick of the minute
+ *   High  = max price seen in that minute
+ *   Low   = min price seen in that minute
+ *   Close = latest tick price (updates every tick until minute closes)
+ *
+ * When a minute boundary is crossed:
+ *   1. The previous candle is FINALIZED and appended to history.
+ *   2. A new "forming" candle begins with the current tick.
+ *   3. Subscribers are notified via the `onCandle` / `onTick` callbacks.
+ *
+ * Multi-timeframe derivation:
+ *   Derived candles are built by aggregating completed 1m candles:
+ *     3m  → combine 3 completed 1m candles
+ *     5m  → combine 5
+ *     15m → combine 15
+ *     1h  → combine 60
+ *     1D  → combine all candles of the same trading day (IST)
+ *
+ * The "current forming" candle for each higher TF is derived live by
+ * aggregating completed 1m candles in the current window PLUS the
+ * currently forming 1m candle.
+ * ─────────────────────────────────────────────────────────────────
+ */
+
+"use strict";
+
+// ── Constants ────────────────────────────────────────────────────
+const MARKET_OPEN_HOUR = 9;
+const MARKET_OPEN_MIN  = 15;
+const MARKET_CLOSE_HOUR = 15;
+const MARKET_CLOSE_MIN  = 30;
+
+// Resolution → number of 1m candles per bar
+const TF_MINUTES = {
+  1:    1,
+  3:    3,
+  5:    5,
+  15:   15,
+  60:   60,
+  1440: null, // "1D" — special: all candles in an IST calendar day
+};
+
+/**
+ * Floor a timestamp (ms) to the start of its IST minute.
+ * IST = UTC+5:30 = UTC + 330 minutes
+ */
+function floorToMinute(tsMs) {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const istMs = tsMs + IST_OFFSET_MS;
+  const floored = Math.floor(istMs / 60000) * 60000;
+  return floored - IST_OFFSET_MS; // back to UTC-aligned ms for storage
+}
+
+/**
+ * Return IST date string "YYYY-MM-DD" for a ms timestamp.
+ */
+function istDateKey(tsMs) {
+  return new Date(tsMs + 5.5 * 3600000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+// ── CandleBuilder class ──────────────────────────────────────────
+class CandleBuilder {
+  /**
+   * @param {object} opts
+   * @param {Function} opts.onTick     - called on every tick with (formingCandles)
+   *                                     where formingCandles = { <res>: candle }
+   * @param {Function} opts.onFinalize - called when a 1m candle closes with
+   *                                     (finalizedCandle, formingCandles)
+   */
+  constructor({ onTick, onFinalize } = {}) {
+    this.onTick     = onTick     || (() => {});
+    this.onFinalize = onFinalize || (() => {});
+
+    // Completed 1m candle history (oldest first)
+    this._oneMinHistory = [];
+
+    // Currently forming 1m candle (or null before first tick)
+    this._forming1m = null;
+  }
+
+  // ── Public API ────────────────────────────────────────────────
+
+  /**
+   * Seed historical 1m candles from REST API.
+   * Must be called BEFORE the first tick arrives to ensure seamless merge.
+   *
+   * @param {Array<{time, open, high, low, close, volume}>} candles - oldest first
+   */
+  seedHistory(candles) {
+    if (!candles || candles.length === 0) return;
+    // Accept only closed candles — drop the last one if it looks like it's
+    // still forming (timestamp within the current minute).
+    const nowMinute = floorToMinute(Date.now());
+    this._oneMinHistory = candles.filter(
+      (c) => floorToMinute(c.time) < nowMinute
+    );
+    console.log(
+      `[CandleBuilder] Seeded ${this._oneMinHistory.length} historical 1m candles`
+    );
+  }
+
+  /**
+   * Process a single tick from the Fyers data socket.
+   * @param {{ ltp: number, timestamp: number }} tick
+   *   timestamp is in SECONDS (Fyers WebSocket format)
+   */
+  processTick(tick) {
+    const price = tick.ltp;
+    if (!price || price <= 0) return;
+
+    // Fyers WS timestamps are Unix seconds; convert to ms
+    const tsMs   = (tick.timestamp || Math.floor(Date.now() / 1000)) * 1000;
+    const minute = floorToMinute(tsMs);
+
+    if (!this._forming1m) {
+      // Very first tick
+      this._forming1m = this._newCandle(minute, price);
+    } else if (minute > this._forming1m.time) {
+      // Minute rolled over → finalize current candle
+      const closed = { ...this._forming1m };
+      this._oneMinHistory.push(closed);
+
+      // Emit finalized candle + new forming state
+      this._forming1m = this._newCandle(minute, price);
+      const forming = this._buildFormingAll();
+      this.onFinalize(closed, forming);
+    } else {
+      // Same minute — update forming candle
+      if (price > this._forming1m.high) this._forming1m.high = price;
+      if (price < this._forming1m.low)  this._forming1m.low  = price;
+      this._forming1m.close = price;
+    }
+
+    // Always emit tick update
+    const forming = this._buildFormingAll();
+    this.onTick(forming);
+  }
+
+  /**
+   * Return the complete candle array for a given resolution,
+   * combining completed history + current forming candle.
+   *
+   * @param {number} resolution - 1 | 3 | 5 | 15 | 60 | 1440
+   * @returns {Array<{time, open, high, low, close, volume}>}
+   */
+  getCandlesForResolution(resolution) {
+    const res = Number(resolution);
+    const completed = this._buildCompletedBars(res);
+    const forming   = this._buildFormingBar(res);
+    if (forming) return [...completed, forming];
+    return completed;
+  }
+
+  /**
+   * Get the raw completed 1m history (no forming candle).
+   */
+  getOneMinHistory() {
+    return [...this._oneMinHistory];
+  }
+
+  // ── Private helpers ───────────────────────────────────────────
+
+  _newCandle(timeMs, price) {
+    return {
+      time:   timeMs,
+      open:   price,
+      high:   price,
+      low:    price,
+      close:  price,
+      volume: 0,
+    };
+  }
+
+  /**
+   * Build all currently-forming candles for every supported resolution.
+   * Returns { 1: candle, 3: candle, 5: candle, 15: candle, 60: candle, 1440: candle }
+   */
+  _buildFormingAll() {
+    const result = {};
+    for (const res of Object.keys(TF_MINUTES)) {
+      result[Number(res)] = this._buildFormingBar(Number(res));
+    }
+    return result;
+  }
+
+  /**
+   * Build the currently forming bar for a given resolution.
+   * Aggregates all completed 1m candles in the CURRENT window +
+   * the currently forming 1m candle.
+   */
+  _buildFormingBar(resolution) {
+    if (!this._forming1m) return null;
+
+    if (resolution === 1) {
+      return { ...this._forming1m };
+    }
+
+    // Determine the window start for the current forming bar
+    const windowStart = this._currentWindowStart(resolution, this._forming1m.time);
+
+    // Collect completed 1m candles within this window
+    const inWindow = this._oneMinHistory.filter(
+      (c) => c.time >= windowStart
+    );
+
+    // Add the forming 1m candle
+    const all = [...inWindow, this._forming1m];
+
+    return this._aggregateCandles(all, windowStart);
+  }
+
+  /**
+   * Build COMPLETED higher-TF bars from 1m history (no forming candle).
+   */
+  _buildCompletedBars(resolution) {
+    if (resolution === 1) {
+      return [...this._oneMinHistory];
+    }
+
+    if (this._oneMinHistory.length === 0) return [];
+
+    if (resolution === 1440) {
+      return this._buildDailyBars();
+    }
+
+    const bars = [];
+    let groupStart = null;
+    let group = [];
+
+    for (const candle of this._oneMinHistory) {
+      const ws = this._windowStartForCandle(resolution, candle.time);
+
+      if (groupStart === null) {
+        groupStart = ws;
+      }
+
+      if (ws !== groupStart) {
+        // New window — flush previous group as a completed bar
+        if (group.length > 0) {
+          bars.push(this._aggregateCandles(group, groupStart));
+        }
+        groupStart = ws;
+        group = [];
+      }
+      group.push(candle);
+    }
+
+    // Don't include the last group — it's the current (still-open) window
+    // It will appear as the forming bar instead.
+    return bars;
+  }
+
+  _buildDailyBars() {
+    const byDay = new Map();
+    for (const c of this._oneMinHistory) {
+      const key = istDateKey(c.time);
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(c);
+    }
+    const bars = [];
+    for (const [, dayCandles] of byDay) {
+      if (dayCandles.length > 0) {
+        const dayStart = floorToMinute(dayCandles[0].time);
+        // Snap to market open 09:15 IST
+        bars.push(this._aggregateCandles(dayCandles, dayStart));
+      }
+    }
+    return bars;
+  }
+
+  /**
+   * Compute the window-start timestamp for a given 1m candle time and resolution.
+   * For intraday resolutions, windows are aligned to market open (09:15 IST).
+   */
+  _windowStartForCandle(resolution, tsMs) {
+    if (resolution === 1440) return istDateKey(tsMs);
+
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const istMs = tsMs + IST_OFFSET_MS;
+
+    // Minutes since midnight IST
+    const d = new Date(istMs);
+    const minutesSinceMidnight = d.getUTCHours() * 60 + d.getUTCMinutes();
+
+    // Minutes since market open (09:15)
+    const marketOpenMins = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MIN;
+    const minutesSinceOpen = minutesSinceMidnight - marketOpenMins;
+
+    // Which window index are we in?
+    const windowIndex = Math.floor(minutesSinceOpen / resolution);
+    const windowMinuteSinceOpen = windowIndex * resolution;
+
+    // Window start in IST
+    const windowMinuteSinceMidnight = marketOpenMins + windowMinuteSinceOpen;
+    const windowHour = Math.floor(windowMinuteSinceMidnight / 60);
+    const windowMin  = windowMinuteSinceMidnight % 60;
+
+    // Build UTC ms for window start
+    const dateStr = d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const windowUtc = new Date(`${dateStr}T${String(windowHour).padStart(2,'0')}:${String(windowMin).padStart(2,'0')}:00.000Z`).getTime()
+      - IST_OFFSET_MS;
+
+    return windowUtc;
+  }
+
+  _currentWindowStart(resolution, tsMs) {
+    return this._windowStartForCandle(resolution, tsMs);
+  }
+
+  _aggregateCandles(candles, barTime) {
+    if (!candles || candles.length === 0) return null;
+    return {
+      time:   barTime,
+      open:   candles[0].open,
+      high:   Math.max(...candles.map((c) => c.high)),
+      low:    Math.min(...candles.map((c) => c.low)),
+      close:  candles[candles.length - 1].close,
+      volume: candles.reduce((s, c) => s + (c.volume || 0), 0),
+    };
+  }
+}
+
+// ── Multi-TF helper (stateless, used by frontend via backend) ────
+
+/**
+ * Derive higher timeframe candles from an array of 1m candles.
+ * Used when the frontend receives a batch of REST 1m candles and needs
+ * to display 3m/5m/15m/1h/1D without extra API calls.
+ *
+ * @param {Array} oneMinCandles - sorted oldest first, OHLC
+ * @param {number} resolution   - target resolution (3|5|15|60|1440)
+ * @returns {Array} aggregated candles
+ */
+function deriveTimeframe(oneMinCandles, resolution) {
+  if (!oneMinCandles || oneMinCandles.length === 0) return [];
+  if (resolution === 1) return oneMinCandles;
+
+  const builder = new CandleBuilder();
+  builder.seedHistory(oneMinCandles);
+  return builder._buildCompletedBars(resolution);
+}
+
+module.exports = { CandleBuilder, deriveTimeframe, floorToMinute, istDateKey };
