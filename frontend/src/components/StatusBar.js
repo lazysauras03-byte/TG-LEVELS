@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, memo } from "react";
 import SYMBOLS from "../symbols.json";
+import { useMarketStatus } from "../hooks/useMarketStatus";
 
 // Pre-computed formatter — avoid re-creating on every render
 const numFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -33,6 +34,9 @@ function StatusBar({
     })
     : null;
 
+  const marketStatus = useMarketStatus();
+  const isLive = marketStatus === "live";
+
   const lastCandle = chartData?.candles?.at(-1);
   const displayBar = crosshairBar
     ? { open: crosshairBar.open, high: crosshairBar.high, low: crosshairBar.low, close: crosshairBar.close }
@@ -54,9 +58,16 @@ function StatusBar({
     setQuery(val);
     if (!val) { setSuggestions([]); setShowDrop(false); return; }
     const q = val.toLowerCase();
-    const hits = SYMBOLS.filter(
-      (s) => s.name.toLowerCase().includes(q) || s.symbol.toLowerCase().includes(q)
-    ).slice(0, 10);
+    const hits = SYMBOLS
+      .filter((s) => {
+        const nameLower = s.name.toLowerCase();
+        // Extract ticker portion after exchange prefix (e.g. "NSE:NIFTY50-INDEX" → "nifty50-index")
+        const colonIdx = s.symbol.indexOf(":");
+        const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
+        return nameLower.startsWith(q) || ticker.startsWith(q);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 10);
     setSuggestions(hits);
     setShowDrop(hits.length > 0);
   }
@@ -173,9 +184,9 @@ function StatusBar({
 
       {/* LIVE + last update time */}
       <div style={styles.group}>
-        <div style={{ ...styles.dot, background: connected ? "var(--green)" : "var(--red)" }} />
-        <span style={{ color: connected ? "var(--green)" : "var(--red)", fontSize: 11 }}>
-          {connected ? "Market Closed" : "OFFLINE"}
+        <div style={{ ...styles.dot, background: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)" }} />
+        <span style={{ color: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)", fontSize: 11 }}>
+          {connected ? (isLive ? "Market Live" : "Market Closed") : "OFFLINE"}
         </span>
         {lastUpdate && (
           <span style={{ color: "var(--text3)", fontSize: 11, marginLeft: 6 }}>

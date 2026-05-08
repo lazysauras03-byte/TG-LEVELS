@@ -1,27 +1,27 @@
 /**
- * WavesIndicator.js — performance-fixed
+ * WavesIndicator.js
  *
- * Key change: removed the continuous rAF loop (_startLoop / _stopLoop).
- * The loop was redrawing every ~16ms regardless of whether the chart moved,
- * causing severe lag when both Waves and Bubble indicators are active together.
+ * Wave lines   → lightweight-charts addLineSeries (move with chart automatically)
+ * Labels       → <canvas> overlay redrawn on pan/zoom/resize
  *
- * Replacement strategy:
- *   - subscribeVisibleLogicalRangeChange  → redraws on pan/zoom
- *   - subscribeCrosshairMove             → redraws on crosshair (label coords shift)
- *   - explicit _scheduleRedraw() after data updates
- *   - ResizeObserver already calls _scheduleRedraw() on resize
+ * Key design decisions for stability and smoothness:
  *
- * All rendering is still correct and pixel-perfect.
+ *  1. SINGLE rAF on pan/zoom — not double-rAF.
+ *     lightweight-charts fires subscribeVisibleLogicalRangeChange AFTER it has
+ *     already updated its own canvas. A single rAF here fires in the very next
+ *     frame, syncing the label canvas immediately. Double-rAF added ~32ms lag
+ *     making labels visibly trail behind the wave lines during pan.
  *
- * Rendering:
- *   - Wave lines: lightweight-charts addLineSeries (correct coordinate space)
- *   - Labels: <canvas> overlay drawn after chart paint via double-rAF
- *       * Pivot labels  (HH/LH/HL/LL) at each pivot — above highs, below lows
- *       * Segment labels (Wave -N  PREV → CURR) rotated diagonally along each wave
+ *  2. No-op if already queued — _scheduleRedraw() is a no-op when a rAF is
+ *     already pending. Rapid pan events collapse into one paint per frame.
  *
- * Price→pixel:  uses the passed-in candleSeries.priceToCoordinate()
- *               (lightweight-charts v4: priceToCoordinate lives on ISeriesApi,
- *                NOT on IPriceScaleApi returned by chart.priceScale())
+ *  3. Crosshair suppressed during pan — _isPanning flag set on range-change,
+ *     cleared 150ms after the last one. Crosshair redraws are skipped entirely
+ *     while panning so they don't fight the pan redraws.
+ *
+ *  4. Pivot fingerprinting — line series rebuilt only when pivot structure
+ *     changes (new swing). On tick updates where pivots are unchanged, only the
+ *     canvas labels are refreshed — no chart series are added or removed.
  */
 
 const MAX_WAVES = 50;
@@ -86,9 +86,7 @@ export function updateWavesIndicatorPure(candles, emaHighs, emaLows) {
             toBarIndex: lb, toPrice: lp,
             midBarIndex: mbi, midPrice: (lastPrice + lp) / 2,
             prevWaveType, currWaveType, toSide: "high",
-            fromTime: candles[lastBar].time,
-            toTime: candles[lb].time,
-            midTime: candles[mbi].time,
+            fromTime: candles[lastBar].time, toTime: candles[lb].time, midTime: candles[mbi].time,
           });
         }
         prevWaveType = currWaveType; lastPrice = lp; lastBar = lb;
@@ -112,9 +110,7 @@ export function updateWavesIndicatorPure(candles, emaHighs, emaLows) {
             toBarIndex: lb, toPrice: lp,
             midBarIndex: mbi, midPrice: (lastPrice + lp) / 2,
             prevWaveType, currWaveType, toSide: "low",
-            fromTime: candles[lastBar].time,
-            toTime: candles[lb].time,
-            midTime: candles[mbi].time,
+            fromTime: candles[lastBar].time, toTime: candles[lb].time, midTime: candles[mbi].time,
           });
         }
         prevWaveType = currWaveType; lastPrice = lp; lastBar = lb;
@@ -135,7 +131,7 @@ export function updateWavesIndicatorPure(candles, emaHighs, emaLows) {
 // ─── Overlay state ────────────────────────────────────────────────────────────
 
 let _chart = null;
-let _series = null;   // candleSeries — used for priceToCoordinate()
+let _series = null;   // candleSeries — for priceToCoordinate()
 let _container = null;
 let _canvas = null;
 let _ctx = null;
@@ -143,15 +139,19 @@ let _onWaveData = null;
 let _lines = [];
 let _pivots = [];
 let _segments = [];
-let _rafId = null;
-// NOTE: _loopId removed — continuous rAF loop was causing lag with Bubble+Waves
+let _rafId = null;   // pending rAF — only one allowed at a time
 let _rangeUnsub = null;
-let _crosshairUnsub = null;  // NEW: unsubscribe handle for crosshair listener
+let _crosshairUnsub = null;
 let _resizeObs = null;
+let _pivotFingerprint = "";
+
+// Pan suppression
+let _isPanning = false;
+let _panClearId = null;
+let _crosshairDebounceId = null;
 
 // ─── Canvas helpers ───────────────────────────────────────────────────────────
 
-// roundRect polyfill for Chrome < 99
 function _rrect(ctx, x, y, w, h, r) {
   if (typeof ctx.roundRect === "function") {
     ctx.beginPath(); ctx.roundRect(x, y, w, h, r);
@@ -168,17 +168,14 @@ function _rrect(ctx, x, y, w, h, r) {
 
 function _ensureCanvas() {
   if (_canvas && _container.contains(_canvas)) return;
-
   const old = _container.querySelector(".__wc");
   if (old) try { _container.removeChild(old); } catch (_) { }
-
   _canvas = document.createElement("canvas");
   _canvas.className = "__wc";
   _canvas.style.cssText = "position:absolute;top:0;left:0;pointer-events:none;z-index:5;";
   _container.appendChild(_canvas);
   _ctx = _canvas.getContext("2d");
   _syncSize();
-
   _resizeObs = new ResizeObserver(() => { _syncSize(); _scheduleRedraw(); });
   _resizeObs.observe(_container);
 }
@@ -201,14 +198,12 @@ function _removeCanvas() {
 
 function _redraw() {
   if (!_ctx || !_canvas || !_chart || !_series) return;
-
   const cw = _canvas.clientWidth, ch = _canvas.clientHeight;
   _ctx.clearRect(0, 0, cw, ch);
   if (!_pivots.length) return;
 
   const ts = _chart.timeScale();
 
-  // price → pixel via the candleSeries (correct in lw-charts v4)
   function toXY(timeMs, price) {
     try {
       const x = ts.timeToCoordinate(Math.floor(timeMs / 1000));
@@ -217,101 +212,103 @@ function _redraw() {
     } catch (_) { return null; }
   }
 
-  // ── 1. Pivot labels: HH / LH / HL / LL ──────────────────────────────
+  // Pivot labels: HH / LH / HL / LL
   _pivots.forEach((piv) => {
     const pt = toXY(piv.time, piv.price);
     if (!pt) return;
-
     const color = piv.side === "high" ? "#00d97e" : "#ff4560";
     _ctx.save();
     _ctx.font = "bold 11px 'JetBrains Mono',monospace";
-    _ctx.textAlign = "center";
-    _ctx.textBaseline = "middle";
-
+    _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
     const tw = _ctx.measureText(piv.waveType).width;
     const pad = 4, bw = tw + pad * 2, bh = 16;
     const bx = pt.x - bw / 2;
     const by = piv.side === "high" ? pt.y - bh - 6 : pt.y + 6;
-
     _ctx.fillStyle = "rgba(10,11,15,0.88)";
-    _rrect(_ctx, bx, by, bw, bh, 3);
-    _ctx.fill();
+    _rrect(_ctx, bx, by, bw, bh, 3); _ctx.fill();
     _ctx.strokeStyle = color; _ctx.lineWidth = 1; _ctx.stroke();
     _ctx.fillStyle = color;
     _ctx.fillText(piv.waveType, pt.x, by + bh / 2);
     _ctx.restore();
   });
 
-  // ── 2. Diagonal segment labels ────────────────────────────────────────
+  // Diagonal segment labels
   _segments.forEach((seg) => {
     const p1 = toXY(seg.fromTime, seg.fromPrice);
     const p2 = toXY(seg.toTime, seg.toPrice);
     if (!p1 || !p2) return;
-
     const dx = p2.x - p1.x, dy = p2.y - p1.y;
     const angle = Math.atan2(dy, dx);
     const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
-
     const color = seg.toSide === "high" ? "#00d97e" : "#ff4560";
     const text = `Wave ${seg.waveNum}  ${seg.prevWaveType} \u2192 ${seg.currWaveType}`;
-
     _ctx.save();
-    _ctx.translate(mx, my);
-    _ctx.rotate(angle);
+    _ctx.translate(mx, my); _ctx.rotate(angle);
     _ctx.font = "600 10px 'JetBrains Mono',monospace";
-    _ctx.textAlign = "center";
-    _ctx.textBaseline = "middle";
-
+    _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
     const tw = _ctx.measureText(text).width;
-    const pad = 4, bw = tw + pad * 2, bh = 15;
-    const perpOff = -12;   // shift above the wave line
-
+    const pad = 4, bw = tw + pad * 2, bh = 15, perpOff = -12;
     _ctx.fillStyle = "rgba(10,11,15,0.82)";
-    _rrect(_ctx, -bw / 2, perpOff - bh / 2, bw, bh, 3);
-    _ctx.fill();
+    _rrect(_ctx, -bw / 2, perpOff - bh / 2, bw, bh, 3); _ctx.fill();
     _ctx.fillStyle = color;
     _ctx.fillText(text, 0, perpOff);
     _ctx.restore();
   });
 }
 
-// Double-rAF ensures we paint AFTER lightweight-charts finishes its own canvas update.
-// This is event-driven only — no continuous loop.
+// ─── Scheduling ───────────────────────────────────────────────────────────────
+
+// Single rAF — no-op if already queued. Rapid events collapse into one paint.
 function _scheduleRedraw() {
-  if (_rafId != null) cancelAnimationFrame(_rafId);
-  _rafId = requestAnimationFrame(() => {
-    _rafId = requestAnimationFrame(() => { _redraw(); _rafId = null; });
-  });
+  if (_rafId != null) return;
+  _rafId = requestAnimationFrame(() => { _rafId = null; _redraw(); });
+}
+
+// Pan handler — sets _isPanning, suppresses crosshair redraws for 150ms.
+function _onRangeChange() {
+  _isPanning = true;
+  if (_panClearId != null) clearTimeout(_panClearId);
+  _panClearId = setTimeout(() => { _isPanning = false; _panClearId = null; }, 150);
+  _scheduleRedraw();
+}
+
+// Crosshair handler — skipped during pan, debounced 60ms otherwise.
+function _onCrosshairMove() {
+  if (_isPanning) return;
+  if (_crosshairDebounceId != null) return;
+  _crosshairDebounceId = setTimeout(() => { _crosshairDebounceId = null; _scheduleRedraw(); }, 60);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * @param chart        - IChartApi
- * @param container    - DOM element wrapping the chart
- * @param onWaveData   - callback(pivots, segments)
- * @param candleSeries - ISeriesApi — needed for priceToCoordinate() in lw-charts v4
- */
 export function createWavesIndicator(chart, container, onWaveData, candleSeries) {
-  _chart = chart;
-  _series = candleSeries ?? null;
-  _container = container;
-  _onWaveData = onWaveData ?? null;
+  _chart = chart; _series = candleSeries ?? null;
+  _container = container; _onWaveData = onWaveData ?? null;
   _lines = []; _pivots = []; _segments = [];
   _rafId = null; _rangeUnsub = null; _crosshairUnsub = null;
+  _pivotFingerprint = "";
+  _isPanning = false; _panClearId = null; _crosshairDebounceId = null;
 }
 
 export function updateWavesIndicator(candles, emaHighs, emaLows) {
   if (!_chart || !candles?.length) return;
 
-  _clearOverlay();
-
   const { pivots, segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
+  const fp = pivots.map((p) => `${p.barIndex}:${p.price}`).join("|");
+
+  if (fp === _pivotFingerprint) {
+    // Structure unchanged — just refresh canvas labels.
+    _scheduleRedraw();
+    return;
+  }
+
+  // New pivot structure — rebuild line series.
+  _pivotFingerprint = fp;
+  _clearOverlay();
   _pivots = pivots; _segments = segments;
 
   if (!pivots.length) { if (_onWaveData) _onWaveData([], []); return; }
 
-  // Wave lines
   for (let i = 1; i < pivots.length; i++) {
     const from = pivots[i - 1], to = pivots[i];
     try {
@@ -330,28 +327,19 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
     } catch (_) { }
   }
 
-  // If no candleSeries was passed, try to borrow the first wave line series for coords
   if (!_series && _lines.length) _series = _lines[0];
-
   _ensureCanvas();
 
-  // Subscribe to visible range changes (pan / zoom) — event-driven redraw
   if (!_rangeUnsub && _chart) {
-    const rangeHandler = () => _scheduleRedraw();
-    _chart.timeScale().subscribeVisibleLogicalRangeChange(rangeHandler);
+    _chart.timeScale().subscribeVisibleLogicalRangeChange(_onRangeChange);
     _rangeUnsub = () => {
-      try { _chart.timeScale().unsubscribeVisibleLogicalRangeChange(rangeHandler); } catch (_) { }
+      try { _chart.timeScale().unsubscribeVisibleLogicalRangeChange(_onRangeChange); } catch (_) { }
     };
   }
-
-  // Subscribe to crosshair moves — labels need to repaint because the price
-  // axis can shift when the crosshair price label appears/disappears.
-  // This replaces the continuous loop with a targeted, lightweight redraw.
   if (!_crosshairUnsub && _chart) {
-    const crosshairHandler = () => _scheduleRedraw();
-    _chart.subscribeCrosshairMove(crosshairHandler);
+    _chart.subscribeCrosshairMove(_onCrosshairMove);
     _crosshairUnsub = () => {
-      try { _chart.unsubscribeCrosshairMove(crosshairHandler); } catch (_) { }
+      try { _chart.unsubscribeCrosshairMove(_onCrosshairMove); } catch (_) { }
     };
   }
 
@@ -361,8 +349,10 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
 
 export function removeWavesIndicator(fullTeardown = false) {
   _clearOverlay();
-  _pivots = []; _segments = [];
-  // No loop to stop — it was removed entirely
+  _pivots = []; _segments = []; _pivotFingerprint = "";
+  if (_crosshairDebounceId != null) { clearTimeout(_crosshairDebounceId); _crosshairDebounceId = null; }
+  if (_panClearId != null) { clearTimeout(_panClearId); _panClearId = null; }
+  _isPanning = false;
 
   if (fullTeardown) {
     if (_rangeUnsub) { _rangeUnsub(); _rangeUnsub = null; }
@@ -372,7 +362,6 @@ export function removeWavesIndicator(fullTeardown = false) {
   } else {
     if (_ctx && _canvas) _ctx.clearRect(0, 0, _canvas.clientWidth, _canvas.clientHeight);
   }
-
   if (_onWaveData) _onWaveData([], []);
 }
 

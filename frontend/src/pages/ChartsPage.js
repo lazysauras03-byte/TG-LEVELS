@@ -92,9 +92,17 @@ export default function ChartsPage() {
   const wavesOn = !!indicators.waves;
   const anySidebarIndicator = bubbleOn || wavesOn;
 
+  // ── Sidebar auto-open/close driven solely by indicator toggles ───────────
+  // Open when any indicator turns ON; close when all turn OFF.
+  // Today toggle and other state changes never touch sidebarOpen.
+  const prevAnyRef = useRef(bubbleOn || wavesOn);
   useEffect(() => {
-    if (!anySidebarIndicator) setSidebarOpen(false);
-  }, [anySidebarIndicator]);
+    const anyNow = bubbleOn || wavesOn;
+    const anyBefore = prevAnyRef.current;
+    if (!anyBefore && anyNow) setSidebarOpen(true);   // at least one just turned on
+    if (anyBefore && !anyNow) setSidebarOpen(false);  // last one just turned off
+    prevAnyRef.current = anyNow;
+  }, [bubbleOn, wavesOn]);
 
   // ── Wave data from CandleChart ────────────────────────────────────────────
   const [wavePivots, setWavePivots] = useState([]);

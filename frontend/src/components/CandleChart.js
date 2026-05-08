@@ -50,6 +50,16 @@ function buildMarkers(signals, candles, todayModeOn) {
   return markers;
 }
 
+// Deduplicated setMarkers — only calls the expensive lw-charts API when the
+// marker set actually changed. Compares a cheap key string. The keyRef is
+// passed in so multiple callers share the same dedup state.
+function setMarkersIfChanged(series, markers, keyRef) {
+  const key = markers.map((m) => `${m.time}:${m.text}`).join("|");
+  if (key === keyRef.current) return;
+  keyRef.current = key;
+  series.setMarkers(markers);
+}
+
 // ─── Ruler overlay ────────────────────────────────────────────────────────────
 class RulerOverlay {
   constructor(container, chartRef, candleSeriesRef) {
@@ -369,6 +379,8 @@ export default function CandleChart({
   const prevLastCandleKeyRef = useRef(null);
   // true = user scrolled away from right edge → don't auto-scroll on tick
   const userScrolledRef = useRef(false);
+  // Fingerprint of last marker array set — skip setMarkers when nothing changed
+  const prevMarkerKeyRef = useRef(null);
 
   const todayModeRef = useRef(todayMode);
   const candlesRef = useRef(candles);
@@ -568,12 +580,15 @@ export default function CandleChart({
   }, []); // eslint-disable-line
 
   // ── TODAY toggle ──────────────────────────────────────────────────────────
+  // Only refresh markers — do NOT reshape the chart viewport.
+  // resetView() is intentionally omitted here so the user's zoom/scroll is preserved.
   useEffect(() => {
     if (!candleRef.current || !candles?.length) return;
-    candleRef.current.setMarkers(
-      showBubbleRef.current ? buildMarkers(signals, candles, todayMode) : []
+    setMarkersIfChanged(
+      candleRef.current,
+      showBubbleRef.current ? buildMarkers(signals, candles, todayMode) : [],
+      prevMarkerKeyRef
     );
-    resetView();
   }, [todayMode]); // eslint-disable-line
 
   // ── Data update ───────────────────────────────────────────────────────────
@@ -621,8 +636,10 @@ export default function CandleChart({
       // Only update signals markers if something actually changed
       // (skip on pure OHLC tick to avoid any flicker)
       if (isNewCandleAppended && showBubbleRef.current) {
-        candleRef.current.setMarkers(
-          buildMarkers(signalsRef.current, candles, todayModeRef.current)
+        setMarkersIfChanged(
+          candleRef.current,
+          buildMarkers(signalsRef.current, candles, todayModeRef.current),
+          prevMarkerKeyRef
         );
       }
 
@@ -668,8 +685,10 @@ export default function CandleChart({
     if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
     else removeWavesIndicator();
 
-    candleRef.current.setMarkers(
-      showBubbleRef.current ? buildMarkers(signals, candles, todayModeRef.current) : []
+    setMarkersIfChanged(
+      candleRef.current,
+      showBubbleRef.current ? buildMarkers(signals, candles, todayModeRef.current) : [],
+      prevMarkerKeyRef
     );
 
     prevCountRef.current = candles.length;
@@ -708,8 +727,10 @@ export default function CandleChart({
   // ── Bubble toggle ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!candleRef.current || !candlesRef.current?.length) return;
-    candleRef.current.setMarkers(
-      showBubble ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current) : []
+    setMarkersIfChanged(
+      candleRef.current,
+      showBubble ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current) : [],
+      prevMarkerKeyRef
     );
   }, [showBubble]); // eslint-disable-line
 
@@ -723,10 +744,12 @@ export default function CandleChart({
       removeWavesIndicator();
     }
     if (candleRef.current && candlesRef.current?.length) {
-      candleRef.current.setMarkers(
+      setMarkersIfChanged(
+        candleRef.current,
         showBubbleRef.current
           ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
-          : []
+          : [],
+        prevMarkerKeyRef
       );
     }
   }, [showWaves]); // eslint-disable-line

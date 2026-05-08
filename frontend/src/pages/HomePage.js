@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useMarketStatus } from "../hooks/useMarketStatus";
 import "./HomePage.css";
 
 const NAV_ITEMS = [
@@ -13,9 +14,9 @@ const NAV_ITEMS = [
     ),
     label: "Charts",
     description: "Live candlestick charts with EMA indicators and signal overlays",
-    tag: "Market closed",
     tagColor: "green",
     stats: ["NH / NL signals", "Indicators"],
+    dynamic: true, // market-status driven
   },
   {
     id: "reports",
@@ -40,6 +41,8 @@ const NAV_ITEMS = [
 export default function HomePage() {
   const navigate = useNavigate();
   const cardRefs = useRef([]);
+  const marketStatus = useMarketStatus();
+  const isLive = marketStatus === "live";
 
   useEffect(() => {
     // Staggered entrance
@@ -68,7 +71,8 @@ export default function HomePage() {
           <span className="home-logo-version">DASHBOARD</span>
         </div>
         <div className="home-header-tag">
-          <span className="home-dot green" /> Market Closed
+          <span className={`home-dot ${isLive ? "green" : "red"}`} />
+          {isLive ? "Market Live" : "Market Closed"}
         </div>
       </header>
 
@@ -97,7 +101,7 @@ export default function HomePage() {
               <div className="home-card-top">
                 <div className="home-card-icon">{item.icon}</div>
                 <span className={`home-card-tag home-card-tag--${item.tagColor}`}>
-                  {item.tag}
+                  {item.dynamic ? (isLive ? "Market Live" : "Market Closed") : item.tag}
                 </span>
               </div>
 

@@ -80,9 +80,15 @@ function SymbolSearch({ symbol, onSelect }) {
     setQuery(val);
     if (!val) { setSuggestions([]); setShowDrop(false); return; }
     const q = val.toLowerCase();
-    const hits = SYMBOLS.filter(
-      (s) => s.name.toLowerCase().includes(q) || s.symbol.toLowerCase().includes(q)
-    ).slice(0, 10);
+    const hits = SYMBOLS
+      .filter((s) => {
+        const nameLower = s.name.toLowerCase();
+        const colonIdx = s.symbol.indexOf(":");
+        const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
+        return nameLower.startsWith(q) || ticker.startsWith(q);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 10);
     setSuggestions(hits);
     setShowDrop(hits.length > 0);
   }
