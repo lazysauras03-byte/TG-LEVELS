@@ -498,6 +498,24 @@
   background: var(--bg2);
 }
 
+.cr-row-clickable {
+  cursor: pointer;
+}
+
+.cr-row-clickable:hover {
+  background: rgba(61, 132, 255, 0.07) !important;
+  outline: 1px solid rgba(61, 132, 255, 0.18);
+  outline-offset: -1px;
+}
+
+.cr-row-clickable:hover .cr-w-num {
+  color: #3d84ff;
+}
+
+.cr-row-clickable:active {
+  background: rgba(61, 132, 255, 0.13) !important;
+}
+
 .cr-row td {
   padding: 10px 14px;
   vertical-align: middle;

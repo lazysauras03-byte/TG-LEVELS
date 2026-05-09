@@ -296,6 +296,17 @@ export default function ChartsReportPage() {
 
   const maxDelta = useMemo(() => filtered.reduce((acc, w) => Math.max(acc, w.delta), 1), [filtered]);
 
+  // ── Open wave on ChartsPage in new tab ─────────────────────────────────────
+  function handleWaveClick(w) {
+    const params = new URLSearchParams({
+      symbol,
+      resolution: String(timeframe),
+      waveFrom: String(w.col1Time),
+      waveTo: String(w.col2Time),
+    });
+    window.open(`/charts?${params.toString()}`, "_blank");
+  }
+
   // ── Sort helpers ────────────────────────────────────────────────────────────
   function handleColSort(col) {
     if (sortCol === col) {
@@ -505,7 +516,11 @@ export default function ChartsReportPage() {
                               <td colSpan={8}>— {w.date} —</td>
                             </tr>
                           )}
-                          <tr className="cr-row">
+                          <tr
+                            className="cr-row cr-row-clickable"
+                            onClick={() => handleWaveClick(w)}
+                            title="Click to open this wave on the chart"
+                          >
                             <td><span className="cr-w-num">{w.waveNum}</span></td>
                             <td><span className="cr-w-label cr-w-label-standalone">{w.label}</span></td>
                             <td>

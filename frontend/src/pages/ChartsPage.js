@@ -1,6 +1,6 @@
 // ChartsPage.js
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import StatusBar from "../components/StatusBar";
 import CandleChart from "../components/CandleChart";
 import SignalTable from "../components/SignalTable";
@@ -60,11 +60,40 @@ const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onT
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function ChartsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // ── Read wave-target URL params (from ChartsReportPage row click) ──────────
+  const waveTarget = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const waveFrom = params.get("waveFrom");
+    const waveTo = params.get("waveTo");
+    if (waveFrom && waveTo) {
+      return { fromMs: Number(waveFrom), toMs: Number(waveTo) };
+    }
+    return null;
+  }, []); // eslint-disable-line
+
+  // ── URL-overridden symbol/resolution (from ChartsReportPage) ──────────────
+  const urlSymbol = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("symbol") || null;
+  }, []); // eslint-disable-line
+
+  const urlResolution = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const r = params.get("resolution");
+    return r ? Number(r) : null;
+  }, []); // eslint-disable-line
+
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
 
-  const [symbol, setSymbol] = useState(() => loadPref("symbol", "NSE:NIFTY50-INDEX"));
-  const [resolution, setResolution] = useState(() => loadPref("resolution", 3));
-  const [todayMode, setTodayMode] = useState(() => loadPref("todayMode", true));
+  const [symbol, setSymbol] = useState(() => urlSymbol || loadPref("symbol", "NSE:NIFTY50-INDEX"));
+  const [resolution, setResolution] = useState(() => urlResolution || loadPref("resolution", 3));
+  const [todayMode, setTodayMode] = useState(() => {
+    // If we're navigating to a specific wave, disable today-only mode
+    if (urlSymbol || urlResolution) return false;
+    return loadPref("todayMode", true);
+  });
   const [sidebarOpen, setSidebarOpen] = useState(() => loadPref("sidebarOpen", true));
   const [activeTabs, setActiveTabs] = useState(() =>
     loadPref("activeTabs", { bubble: "signals", waves: "signals" })
@@ -77,9 +106,12 @@ export default function ChartsPage() {
   useEffect(() => { savePref("activeTabs", activeTabs); }, [activeTabs]);
 
   // ── Indicator state ───────────────────────────────────────────────────────
-  const [indicators, setIndicators] = useState(() =>
-    loadPref("indicators", buildDefaultIndicators())
-  );
+  const [indicators, setIndicators] = useState(() => {
+    const defaults = loadPref("indicators", buildDefaultIndicators());
+    // When navigating from wave report, ensure waves indicator is on
+    if (waveTarget) return { ...defaults, waves: true };
+    return defaults;
+  });
   useEffect(() => { savePref("indicators", indicators); }, [indicators]);
 
   const handleIndicatorChange = useCallback((id, enabled) => {
@@ -279,6 +311,8 @@ export default function ChartsPage() {
               reloadToken={reloadToken}
               onIntentionalReloadAck={handleIntentionalReloadAck}
               activeResolution={chartDataResolution}
+              symbol={symbol}
+              waveTarget={waveTarget}
             />
           )}
         </div>

@@ -373,6 +373,8 @@ export default function CandleChart({
   activeResolution,
   // symbol: active symbol — forces full reset + Y-axis rescale on symbol change
   symbol,
+  // waveTarget: { fromMs, toMs } — when set, zoom to that wave after first load
+  waveTarget = null,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -398,6 +400,7 @@ export default function CandleChart({
 
   const todayModeRef = useRef(todayMode);
   const candlesRef = useRef(candles);
+  const waveTargetRef = useRef(waveTarget);
   const signalsRef = useRef(signals);
   const emaHighsRef = useRef(emaHighs);
   const emaLowsRef = useRef(emaLows);
@@ -444,11 +447,11 @@ export default function CandleChart({
   }, []);
 
   useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
+  useEffect(() => { waveTargetRef.current = waveTarget; }, [waveTarget]);
   useEffect(() => {
     candlesRef.current = candles;
     window.__tggCandles = candles;
-  }, [candles]);
-  useEffect(() => { signalsRef.current = signals; }, [signals]);
+  }, [candles]); useEffect(() => { signalsRef.current = signals; }, [signals]);
   useEffect(() => { emaHighsRef.current = emaHighs; }, [emaHighs]);
   useEffect(() => { emaLowsRef.current = emaLows; }, [emaLows]);
   useEffect(() => { showBubbleRef.current = showBubble; }, [showBubble]);
@@ -745,7 +748,41 @@ export default function CandleChart({
       lastProcessedTokenRef.current = reloadToken;
       userScrolledRef.current = false;
       if (onIntentionalReloadAckRef.current) onIntentionalReloadAckRef.current();
-      resetView();
+
+      // If a waveTarget was passed (from charts-report click), zoom to that wave
+      const wt = waveTargetRef.current;
+      if (wt && wt.fromMs && wt.toMs && candles.length > 0) {
+        const fromSec = Math.floor(wt.fromMs / 1000);
+        const toSec = Math.floor(wt.toMs / 1000);
+
+        // Find logical indices of the wave's from/to candles
+        const candleSecs = candles.map((c) => Math.floor(c.time / 1000));
+        let fromIdx = candleSecs.findIndex((t) => t >= fromSec);
+        let toIdx = candleSecs.findIndex((t) => t >= toSec);
+        if (fromIdx < 0) fromIdx = 0;
+        if (toIdx < 0) toIdx = candles.length - 1;
+
+        // Add comfortable padding around the wave (20% on each side)
+        const waveSpan = toIdx - fromIdx;
+        const padding = Math.max(Math.round(waveSpan * 0.5), 3);
+        const from = Math.max(0, fromIdx - padding);
+        const to = Math.min(candles.length - 1, toIdx + padding);
+
+        setTimeout(() => {
+          try {
+            const tsc = chartRef.current?.timeScale();
+            if (!tsc) { resetView(); return; }
+            tsc.setVisibleLogicalRange({ from, to });
+            setTimeout(() => {
+              try { chartRef.current?.priceScale("right").applyOptions({ autoScale: true }); } catch { }
+            }, 80);
+          } catch {
+            resetView();
+          }
+        }, 50);
+      } else {
+        resetView();
+      }
     } else if (isIntentional || resolutionChanged || symbolChanged) {
       // User explicitly changed symbol / timeframe / clicked Refresh
       intentionalReloadRef.current = false;
