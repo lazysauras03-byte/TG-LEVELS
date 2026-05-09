@@ -8,11 +8,16 @@ const rateLimit = require("express-rate-limit");
 const { runSignalEngine } = require("./signalEngine");
 const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = require("./fyers");
 const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
-const { TickStream, isMarketOpen } = require("./tickStream");
+const { TickStream, isMarketOpen, isTradingDay } = require("./tickStream");
 const symbolsRouter = require("./symbolsRouter");
 
 const app = express();
 const server = http.createServer(app);
+
+// Trust the first proxy hop (needed when running behind a reverse proxy or
+// any middleware that sets X-Forwarded-For, including some local setups).
+// This silences the express-rate-limit ERR_ERL_UNEXPECTED_X_FORWARDED_FOR error.
+app.set("trust proxy", 1);
 
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
@@ -20,14 +25,27 @@ const io = new Server(server, {
 });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(cors());
+app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] }));
 app.use(express.json());
 app.use(
   rateLimit({
     windowMs: 60 * 1000,
-    max: 100,
+    max: 200,
     standardHeaders: true,
     legacyHeaders: false,
+    // Skip rate limiting for localhost and private LAN IPs
+    skip: (req) => {
+      const ip = req.ip || "";
+      return (
+        ip === "127.0.0.1" ||
+        ip === "::1" ||
+        ip.startsWith("::ffff:127.") ||
+        ip.startsWith("::ffff:192.168.") ||
+        ip.startsWith("192.168.") ||
+        ip.startsWith("10.") ||
+        ip.startsWith("172.")
+      );
+    },
   })
 );
 
@@ -44,9 +62,13 @@ const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
 const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "5000");
 // Watchdog: restart WebSocket if no tick arrives for this many ms during market hours
 const TICK_WATCHDOG_MS = parseInt(process.env.TICK_WATCHDOG_MS || "10000");
+// Grace period after a fresh WebSocket connect before watchdog starts firing.
+// Fyers can take a few seconds to start sending ticks after subscription.
+const WATCHDOG_GRACE_MS = parseInt(process.env.WATCHDOG_GRACE_MS || "30000");
 
 const socketResolutions = new Map();
-let lastTickAt = 0;   // epoch ms of the most recent tick received
+let lastTickAt = 0;      // epoch ms of the most recent tick received
+let lastConnectAt = 0;   // epoch ms of the most recent WebSocket connect
 
 // ─── Candle Builder ───────────────────────────────────────────────────────────
 const candleBuilders = new Map();
@@ -162,6 +184,11 @@ tickStream.on("tick", (tick) => {
 });
 tickStream.on("connected", () => {
   console.log("[TickStream] Fyers WebSocket connected ✓");
+  // Reset tick timer so watchdog doesn't immediately fire on reconnect.
+  // lastTickAt=0 means "no tick yet this session" — watchdog won't fire
+  // until we've received at least one real tick AND silence exceeds threshold.
+  lastTickAt = 0;
+  lastConnectAt = Date.now();
   io.emit("market_status", { tickStreamActive: true });
 });
 tickStream.on("disconnected", () => {
@@ -175,7 +202,8 @@ tickStream.on("error", (err) => {
 async function maybeStartTickStream() {
   const valid = await validateToken().catch(() => false);
   if (!valid) { console.log("[TickStream] Not authenticated — skipping tick stream."); return; }
-  if (!isMarketOpen()) { console.log("[TickStream] Market closed — tick stream not starting."); return; }
+  if (!isTradingDay()) { console.log("[TickStream] Weekend/holiday — tick stream not starting."); return; }
+  if (!isMarketOpen()) { console.log("[TickStream] Market closed (outside hours) — tick stream not starting."); return; }
   if (tickStream.isConnected()) return;
   tickStream.start([SYMBOL]);
 }
@@ -284,6 +312,7 @@ app.get("/health", (req, res) => {
     time: new Date().toISOString(),
     tickStreamActive: tickStream.isConnected(),
     marketOpen: isMarketOpen(),
+    tradingDay: isTradingDay(),
   });
 });
 
@@ -321,7 +350,11 @@ app.get("/api/chart", async (req, res) => {
   const resolution = parseInt(req.query.resolution || RESOLUTION);
   const cache = getCache(resolution);
 
-  if (cache.result && cache.candles.length > 0 && Date.now() - cache.lastFetch < 60000) {
+  // On non-trading days (weekends/holidays) serve the cache indefinitely —
+  // there's no new data to fetch and Fyers may reject calls outside market days.
+  // On trading days use a 60-second freshness window.
+  const cacheTTL = isTradingDay() ? 60_000 : 24 * 60 * 60 * 1000;
+  if (cache.result && cache.candles.length > 0 && Date.now() - cache.lastFetch < cacheTTL) {
     return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
   }
 
@@ -329,6 +362,11 @@ app.get("/api/chart", async (req, res) => {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
     res.json(buildPayload(candles, result, symbol, resolution));
   } catch (err) {
+    // If we have stale cache, return it rather than a 500 error
+    if (cache.result && cache.candles.length > 0) {
+      console.warn(`[/api/chart] Fetch failed (${err.message}), serving stale cache`);
+      return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -336,6 +374,19 @@ app.get("/api/chart", async (req, res) => {
 app.post("/api/chart/refresh", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
+
+  // On non-trading days, skip the Fyers API call entirely — return cached data.
+  // Fyers historical API works on weekends, but there's no new data to show,
+  // and hammering the API causes unnecessary failures and rate-limit errors.
+  if (!isTradingDay()) {
+    const cache = getCache(resolution);
+    if (cache.result && cache.candles.length > 0) {
+      console.log(`[/api/chart/refresh] Weekend — serving cached data (${cache.candles.length} candles)`);
+      const payload = { ...buildPayload(cache.candles, cache.result, symbol, resolution, false), success: true };
+      return res.json(payload);
+    }
+  }
+
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
     const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
@@ -343,6 +394,12 @@ app.post("/api/chart/refresh", async (req, res) => {
     io.to(room).emit("chart_update", { ...payload, isAutoRefresh: true });
     res.json(payload);
   } catch (err) {
+    // Fallback to stale cache on any error
+    const cache = getCache(resolution);
+    if (cache.result && cache.candles.length > 0) {
+      console.warn(`[/api/chart/refresh] Fetch failed (${err.message}), serving stale cache`);
+      return res.json({ ...buildPayload(cache.candles, cache.result, symbol, resolution, false), success: true });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -366,20 +423,41 @@ app.use("/api/symbols", symbolsRouter);
 // If WebSocket is "connected" but no tick arrives for TICK_WATCHDOG_MS during
 // market hours, force a reconnect. This catches silent socket stalls (Fyers
 // sometimes stops sending without firing a close event).
+//
+// Guards:
+//   1. Only fires on actual trading days (Mon–Fri) — never on weekends
+//   2. Only fires during market hours (09:15–15:30 IST)
+//   3. lastTickAt=0 means "just connected, no tick yet" — give it grace period
+//   4. Grace period (WATCHDOG_GRACE_MS) after each fresh connect before counting
 function startTickWatchdog() {
   setInterval(() => {
+    // Guard 1: Never run on weekends / holidays
+    if (!isTradingDay()) return;
+    // Guard 2: Only during live market hours
     if (!isMarketOpen()) return;
+    // Guard 3: Only when stream appears connected
     if (!tickStream.isConnected()) return;
-    const silenceMs = Date.now() - lastTickAt;
-    if (lastTickAt > 0 && silenceMs > TICK_WATCHDOG_MS) {
+
+    const now = Date.now();
+
+    // Guard 4: Give WATCHDOG_GRACE_MS after each fresh connect before firing.
+    // This prevents the "just connected, ticks haven't started yet" false alarm.
+    if (lastConnectAt > 0 && (now - lastConnectAt) < WATCHDOG_GRACE_MS) return;
+
+    // Guard 5: lastTickAt=0 means we haven't received any tick yet this session.
+    // Don't fire until at least one real tick has been seen.
+    if (lastTickAt === 0) return;
+
+    const silenceMs = now - lastTickAt;
+    if (silenceMs > TICK_WATCHDOG_MS) {
       console.warn(`[Watchdog] No tick for ${(silenceMs / 1000).toFixed(1)}s — reconnecting WebSocket`);
+      lastTickAt = 0;       // reset so watchdog won't re-fire immediately after reconnect
+      lastConnectAt = 0;
       tickStream.stop();
-      setTimeout(() => {
-        maybeStartTickStream();
-      }, 1000);
+      setTimeout(() => maybeStartTickStream(), 1000);
     }
   }, TICK_WATCHDOG_MS);
-  console.log(`[Watchdog] Tick watchdog started (timeout: ${TICK_WATCHDOG_MS / 1000}s)`);
+  console.log(`[Watchdog] Tick watchdog started (timeout: ${TICK_WATCHDOG_MS / 1000}s, grace: ${WATCHDOG_GRACE_MS / 1000}s)`);
 }
 
 // ─── Auto-refresh fallback ────────────────────────────────────────────────────
@@ -387,8 +465,8 @@ function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
 
   autoRefreshTimer = setInterval(async () => {
-    // KEY FIX: do nothing outside market hours — prevents endless fetching
-    // after 15:30 IST (the "[AUTO] Refreshing every minute" bug)
+    // Only poll during live market hours on actual trading days
+    if (!isTradingDay()) return;
     if (!isMarketOpen()) return;
 
     // Skip if tick stream is live — it keeps the candle builder current
@@ -411,6 +489,26 @@ function startAutoRefresh() {
   console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s (fallback when tick stream inactive, market hours only)`);
 }
 
+/**
+ * Fetch historical candles once on startup so the chart has data even when
+ * the market is closed (weekends, holidays, after-hours).
+ * This is a one-shot REST call — no polling, no WebSocket needed.
+ */
+async function initialRestFetch() {
+  const valid = await validateToken().catch(() => false);
+  if (!valid) {
+    console.log("[INIT] Not authenticated — skipping initial REST fetch.");
+    return;
+  }
+  console.log(`[INIT] Market closed or weekend — fetching historical candles via REST for ${SYMBOL}...`);
+  try {
+    await fetchAndBroadcast(SYMBOL, RESOLUTION, false);
+    console.log("[INIT] Historical data loaded ✓ Chart is ready.");
+  } catch (err) {
+    console.error("[INIT] Initial REST fetch failed:", err.message);
+  }
+}
+
 // ─── Socket.IO connections ────────────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log(`[WS] Client connected: ${socket.id}`);
@@ -429,6 +527,7 @@ io.on("connection", (socket) => {
   socket.emit("market_status", {
     tickStreamActive: tickStream.isConnected(),
     marketOpen: isMarketOpen(),
+    tradingDay: isTradingDay(),
   });
 
   socket.on("set_resolution", (res) => {
@@ -480,7 +579,13 @@ server.listen(PORT, async () => {
   console.log(`   Symbols : http://localhost:${PORT}/api/symbols\n`);
   startAutoRefresh();
   startTickWatchdog();
-  await maybeStartTickStream();
+  if (isMarketOpen()) {
+    // Live market — start WebSocket tick stream
+    await maybeStartTickStream();
+  } else {
+    // Weekend / after-hours / holiday — load historical data via REST once
+    await initialRestFetch();
+  }
 });
 
 module.exports = { app, server };

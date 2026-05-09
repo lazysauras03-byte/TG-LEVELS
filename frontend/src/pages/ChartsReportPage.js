@@ -9,7 +9,7 @@ import { updateWavesIndicatorPure } from "../indicators/WavesIndicator";
 import SYMBOLS from "../symbols.json";
 import "./ChartsReportPage.css";
 
-const BACKEND = process.env.REACT_APP_BACKEND_URL || "http://localhost:3299";
+import { BACKEND } from "../config";
 
 // ── Timeframes ────────────────────────────────────────────────────────────────
 const TIMEFRAMES = [
@@ -182,9 +182,17 @@ export default function ChartsReportPage() {
     setFDate("all"); setFDir("all"); setFSize("all"); setFQ("");
     setSortCol("delta"); setSortDir("asc");
     try {
-      // 1️⃣ Try POST refresh — always passes symbol so backend fetches the right stock
-      const refreshUrl = `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
-      const r = await fetch(refreshUrl, { method: "POST" });
+      // 1️⃣ Try POST refresh when market is live; GET (cached) when closed/weekend
+      const isLive = (() => {
+        const now = new Date();
+        const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % 1440;
+        const dow = new Date(now.getTime() + 330 * 60000).getUTCDay();
+        return dow !== 0 && dow !== 6 && istMin >= 555 && istMin < 931;
+      })();
+      const url = isLive
+        ? `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`
+        : `${BACKEND}/api/chart?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
+      const r = await fetch(url, { method: isLive ? "POST" : "GET" });
       const data = r.ok ? await r.json() : null;
 
       if (data?.candles?.length) {

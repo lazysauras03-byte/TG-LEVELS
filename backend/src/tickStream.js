@@ -55,15 +55,31 @@ function nowIST() {
   const d = new Date();
   const istMs = d.getTime() + 5.5 * 3600 * 1000;
   const ist = new Date(istMs);
-  return { h: ist.getUTCHours(), m: ist.getUTCMinutes() };
+  return { h: ist.getUTCHours(), m: ist.getUTCMinutes(), dow: ist.getUTCDay() };
 }
 
+/**
+ * Returns true only if it is currently a weekday (Mon–Fri) AND
+ * within NSE market hours 09:15–15:30 IST.
+ * Saturday (dow=6) and Sunday (dow=0) always return false.
+ */
 function isMarketOpen() {
-  const { h, m } = nowIST();
+  const { h, m, dow } = nowIST();
+  // Weekend check: 0 = Sunday, 6 = Saturday
+  if (dow === 0 || dow === 6) return false;
   const mins = h * 60 + m;
   const open = MARKET_OPEN.h * 60 + MARKET_OPEN.m;
   const close = MARKET_CLOSE.h * 60 + MARKET_CLOSE.m;
   return mins >= open && mins < close;
+}
+
+/**
+ * Returns true on weekdays regardless of time.
+ * Used to decide whether a REST fetch makes sense at all.
+ */
+function isTradingDay() {
+  const { dow } = nowIST();
+  return dow !== 0 && dow !== 6;
 }
 
 class TickStream extends EventEmitter {
@@ -278,4 +294,4 @@ class TickStream extends EventEmitter {
   }
 }
 
-module.exports = { TickStream, isMarketOpen };
+module.exports = { TickStream, isMarketOpen, isTradingDay };

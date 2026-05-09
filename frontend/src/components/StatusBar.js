@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, memo } from "react";
 import { useMarketStatus } from "../hooks/useMarketStatus";
 
-const BACKEND = process.env.REACT_APP_BACKEND_URL || "http://localhost:3299";
+import { BACKEND } from "../config";
 
 // Load symbols from backend API (merges symbols.json + Excel files).
 // Falls back to empty array gracefully if backend is unavailable.
