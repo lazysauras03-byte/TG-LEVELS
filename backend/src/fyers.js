@@ -1,6 +1,11 @@
 /**
  * Fyers API v3 — using fyers-api-v3 npm package
  * Token is read from fyers_access_token.txt (written by generate.js)
+ *
+ * FIXES vs previous version:
+ *   • validateToken() uses a hard 8s timeout — never hangs on weekends/after-hours
+ *   • fetchCandles() uses a hard 15s timeout per attempt — same reason
+ *   • Both use Promise.race() with a rejectAfter helper (Fyers SDK exposes no timeout option)
  */
 
 const fs = require("fs");
@@ -10,6 +15,13 @@ const { fyersModel } = require("fyers-api-v3");
 const ROOT = path.resolve(__dirname, "..");
 const TOKEN_FILE = path.join(ROOT, "fyers_access_token.txt");
 const REFRESH_FILE = path.join(ROOT, "fyers_refresh_token.txt");
+
+// ── Timeout helper ────────────────────────────────────────────────────────────
+function rejectAfter(ms, label) {
+  return new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`[Fyers] ${label} timed out after ${ms}ms`)), ms)
+  );
+}
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 function loadToken() {
@@ -76,55 +88,51 @@ async function generateToken(authCode) {
 }
 
 // ── Validate token ────────────────────────────────────────────────────────────
+// Hard 8-second timeout. Fyers profile endpoint can hang on weekends/after-hours.
+// Returns false cleanly instead of throwing — caller treats false as "not authed".
 async function validateToken() {
   const token = loadToken();
   if (!token) return false;
   try {
     const fyers = getFyersClient();
-    const res = await fyers.get_profile();
+    const res = await Promise.race([
+      fyers.get_profile(),
+      rejectAfter(8000, "validateToken"),
+    ]);
     return res && res.s === "ok";
-  } catch {
+  } catch (err) {
+    console.warn("[Fyers] validateToken failed:", err.message);
     return false;
   }
 }
 
 // ── Smart lookback calculator ─────────────────────────────────────────────────
-// Goal: always load enough data to form 50 waves, with a minimum of 3 months.
-// Wave frequency estimates per resolution (waves per trading day):
-//   1m  → ~10-15 waves/day   | 1D  → ~0.4-0.6 waves/day (2-3/week)
-//   3m  → ~6-8 waves/day     | 15m → ~3-4 waves/day
-//   5m  → ~5-6 waves/day     | 60m → ~1-2 waves/day
-// We want 50 waves ÷ waves_per_day = trading days needed.
-// 1 month ≈ 22 trading days. Add 50% buffer. Cap at 12 months for daily,
-// 3 months for intraday (Fyers limit on intraday history is 100 days).
 function calcLookbackDays(resolution) {
   const res = String(resolution).toUpperCase();
   const TARGET_WAVES = 50;
-  const TRADING_DAYS_PER_MONTH = 22;
-  const MIN_MONTHS = 3; // always fetch at least 3 months
-  const MIN_DAYS = MIN_MONTHS * 30;
+  const MIN_DAYS = 90; // always fetch at least 3 months
 
   let wavesPerDay;
   if (res === "D" || res === "1440") {
-    wavesPerDay = 0.5; // ~2-3 waves per week
+    wavesPerDay = 0.5;
   } else {
     const mins = parseInt(res, 10) || 3;
-    // Intraday session = 375 minutes. Each wave = ~2x resolution minutes minimum.
-    // Be conservative: effective waves per candle ≈ 1/8 of candles per day
     const candlesPerDay = Math.floor(375 / mins);
     wavesPerDay = candlesPerDay / 8;
   }
 
-  const tradingDaysNeeded = Math.ceil((TARGET_WAVES / wavesPerDay) * 1.5); // 50% buffer
-  const calendarDaysNeeded = Math.ceil(tradingDaysNeeded * (365 / 252)); // trading→calendar
+  const tradingDaysNeeded = Math.ceil((TARGET_WAVES / wavesPerDay) * 1.5);
+  const calendarDaysNeeded = Math.ceil(tradingDaysNeeded * (365 / 252));
 
   const isDaily = res === "D" || res === "1440";
-  const maxDays = isDaily ? 365 : 100; // Fyers intraday limit ~100 days
+  const maxDays = isDaily ? 365 : 100;
 
   return Math.min(maxDays, Math.max(MIN_DAYS, calendarDaysNeeded));
 }
 
-// ── Fetch historical candles ─────────────────────────────────────────────────
+// ── Fetch historical candles ──────────────────────────────────────────────────
+// Hard 15-second timeout per attempt. Works 24/7 — Fyers REST history is
+// available on weekends and after hours (returns the last available data).
 async function fetchCandles(symbol, resolution, count = 10000) {
   const fyers = getFyersClient();
 
@@ -133,46 +141,55 @@ async function fetchCandles(symbol, resolution, count = 10000) {
   const isDaily = resolution === 1440 || String(resolution).toUpperCase() === "D";
   const fyersResolution = isDaily ? "D" : String(resolution);
 
-  // Smart lookback: enough data for 50 waves, min 3 months
   const lookbackDays = calcLookbackDays(resolution);
   const rangeFrom = now - lookbackDays * 24 * 60 * 60;
 
-  let res = await fyers.getHistory({
-    symbol,
-    resolution: fyersResolution,
-    date_format: "0",
-    range_from: String(rangeFrom),
-    range_to: String(now),
-    cont_flag: "1",
-  });
+  const FETCH_TIMEOUT_MS = 15000;
 
-  // If the full range fails (stock may not have that history), fall back to
-  // progressively shorter ranges: 6 months → 3 months → 1 month
-  if (res && res.s !== "ok") {
-    const fallbacks = [180, 90, 30].map((d) => now - d * 24 * 60 * 60);
-    for (const fallbackFrom of fallbacks) {
-      if (fallbackFrom >= rangeFrom) continue; // no point trying a longer range
-      res = await fyers.getHistory({
+  async function tryFetch(from) {
+    return Promise.race([
+      fyers.getHistory({
         symbol,
         resolution: fyersResolution,
         date_format: "0",
-        range_from: String(fallbackFrom),
+        range_from: String(from),
         range_to: String(now),
         cont_flag: "1",
-      });
-      if (res && res.s === "ok") break;
+      }),
+      rejectAfter(FETCH_TIMEOUT_MS, `fetchCandles(${symbol} res=${fyersResolution})`),
+    ]);
+  }
+
+  let res;
+  try {
+    res = await tryFetch(rangeFrom);
+  } catch (err) {
+    console.warn(`[Fyers] Primary fetch failed (${err.message}) — trying fallback ranges`);
+    res = null;
+  }
+
+  // If primary range failed or returned error, try shorter ranges
+  if (!res || res.s !== "ok") {
+    const fallbacks = [180, 90, 30].map((d) => now - d * 24 * 60 * 60);
+    for (const fallbackFrom of fallbacks) {
+      if (fallbackFrom >= rangeFrom) continue;
+      try {
+        res = await tryFetch(fallbackFrom);
+        if (res && res.s === "ok") break;
+      } catch (err) {
+        console.warn(`[Fyers] Fallback fetch (${Math.round((now - fallbackFrom) / 86400)}d) failed:`, err.message);
+      }
     }
   }
 
   if (!res || res.s !== "ok") {
-    const msg = res?.message || res?.errmsg || JSON.stringify(res);
+    const msg = res?.message || res?.errmsg || JSON.stringify(res) || "unknown error";
     throw new Error("Fyers getHistory failed: " + msg);
   }
 
   const raw = res.candles || [];
-  // Return ALL candles in the range — no artificial slice cap
   return raw.map((c) => ({
-    time: c[0] * 1000, // milliseconds; Fyers timestamps are already IST
+    time: c[0] * 1000, // ms; Fyers timestamps are already IST epoch seconds
     open: c[1],
     high: c[2],
     low: c[3],

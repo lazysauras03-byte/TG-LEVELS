@@ -8,9 +8,7 @@ const rateLimit = require("express-rate-limit");
 const { runSignalEngine } = require("./signalEngine");
 const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = require("./fyers");
 const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
-const { TickStream, isMarketOpen: _isMarketOpen, isTradingDay } = require("./tickStream");
-// isLiveMarket = same as isMarketOpen (Mon-Fri 9:15-15:30 IST)
-const isLiveMarket = _isMarketOpen;
+const { TickStream, isMarketOpen, isLiveMarket, isTradingDay } = require("./tickStream");
 const symbolsRouter = require("./symbolsRouter");
 
 const app = express();
@@ -57,7 +55,6 @@ const WATCHDOG_GRACE_MS = parseInt(process.env.WATCHDOG_GRACE_MS || "30000");
 
 // ─── State ────────────────────────────────────────────────────────────────────
 // symbolCacheMap: "SYMBOL:resolution" → { candles, result, lastFetch }
-// Supports any symbol the user switches to, not just the default.
 const symbolCacheMap = new Map();
 let autoRefreshTimer = null;
 const socketResolutions = new Map();
@@ -78,8 +75,11 @@ function getCache(symbol, resolution) {
 }
 
 function setCache(symbol, resolution, candles, result) {
-  const k = cacheKey(symbol, resolution);
-  symbolCacheMap.set(k, { candles, result, lastFetch: Date.now() });
+  symbolCacheMap.set(cacheKey(symbol, resolution), {
+    candles,
+    result,
+    lastFetch: Date.now(),
+  });
 }
 
 // ─── Candle Builder ───────────────────────────────────────────────────────────
@@ -92,7 +92,9 @@ function getOrCreateBuilder(symbol) {
         emitCandleUpdate(symbol, formingCandles);
       },
       onFinalize: (finalizedCandle, formingCandles) => {
-        console.log(`[Builder:${symbol}] Candle finalized @ ${new Date(finalizedCandle.time).toISOString()} close=${finalizedCandle.close}`);
+        console.log(
+          `[Builder:${symbol}] Candle finalized @ ${new Date(finalizedCandle.time).toISOString()} close=${finalizedCandle.close}`
+        );
         emitCandleUpdate(symbol, formingCandles);
         emitFinalCandle(symbol, finalizedCandle);
 
@@ -101,8 +103,7 @@ function getOrCreateBuilder(symbol) {
           if (!b) return;
           for (const res of [1, 3, 5, 15, 60, 1440]) {
             const room = `res:${res}`;
-            const roomSockets = io.sockets.adapter.rooms.get(room);
-            if (!roomSockets || roomSockets.size === 0) continue;
+            if (!io.sockets.adapter.rooms.get(room)?.size) continue;
             const candles = b.getCandlesForResolution(res);
             if (candles.length === 0) continue;
             try {
@@ -137,7 +138,12 @@ function emitFinalCandle(symbol, finalizedCandle) {
   for (const res of [1, 3, 5, 15, 60, 1440]) {
     const room = `res:${res}`;
     if (!io.sockets.adapter.rooms.get(room)?.size) continue;
-    io.to(room).emit("new_candle", { symbol, resolution: res, candle: finalizedCandle, timestamp: Date.now() });
+    io.to(room).emit("new_candle", {
+      symbol,
+      resolution: res,
+      candle: finalizedCandle,
+      timestamp: Date.now(),
+    });
   }
 }
 
@@ -164,19 +170,29 @@ tickStream.on("error", (err) => {
 
 /**
  * maybeStartTickStream
- * Only starts when it is LIVE market (Mon–Fri 09:15–15:30 IST).
- * Completely safe to call at any time — guards prevent unwanted starts.
+ * Only starts on Mon–Fri between 09:15–15:30 IST.
+ * Safe to call any time — all guards are internal.
  */
 async function maybeStartTickStream() {
-  const valid = await validateToken().catch(() => false);
-  if (!valid) { console.log("[TickStream] Not authenticated — skipping."); return; }
-  if (!isTradingDay()) { console.log("[TickStream] Weekend — tick stream not needed."); return; }
-  if (!isLiveMarket()) { console.log("[TickStream] Outside 09:15–15:30 — tick stream not needed."); return; }
+  if (!isTradingDay()) {
+    console.log("[TickStream] Weekend — tick stream not needed.");
+    return;
+  }
+  if (!isLiveMarket()) {
+    console.log("[TickStream] Outside 09:15–15:30 IST — tick stream not needed.");
+    return;
+  }
   if (tickStream.isConnected()) return;
+
+  const valid = await validateToken().catch(() => false);
+  if (!valid) {
+    console.log("[TickStream] Not authenticated — skipping tick stream.");
+    return;
+  }
   tickStream.start([SYMBOL]);
 }
 
-// ─── Payload builder ─────────────────────────────────────────────────────────
+// ─── Payload builder ──────────────────────────────────────────────────────────
 function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false) {
   return {
     symbol,
@@ -197,8 +213,9 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
 // ─── Core fetch & process ─────────────────────────────────────────────────────
 /**
  * fetchAndProcess
- * Always fetches via Fyers REST — works 24/7, any symbol, any day.
- * Updates the per-symbol cache.
+ * Always uses Fyers REST — works 24/7 including weekends and after-hours.
+ * Fyers history endpoint returns the last available trading session data
+ * regardless of when you call it.
  */
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH);
@@ -207,8 +224,10 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   if (candleBuilders.has(symbol)) {
     const existing = candleBuilders.get(symbol).getOneMinHistory();
     if (existing.length > 0 && raw1m.length > 0) {
-      const ratio = existing[0].close > 0
-        ? Math.abs(raw1m[0].close - existing[0].close) / existing[0].close : 1;
+      const ratio =
+        existing[0].close > 0
+          ? Math.abs(raw1m[0].close - existing[0].close) / existing[0].close
+          : 1;
       if (ratio > 0.5) {
         console.log(`[Server] Price scale mismatch for ${symbol} — resetting builder`);
         candleBuilders.delete(symbol);
@@ -233,7 +252,9 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   setCache(symbol, resolution, candles, result);
 
   if (resolution !== 1) {
-    try { setCache(symbol, 1, raw1m, runSignalEngine(raw1m)); } catch { }
+    try {
+      setCache(symbol, 1, raw1m, runSignalEngine(raw1m));
+    } catch { }
   }
 
   return { candles, result };
@@ -268,8 +289,11 @@ app.get("/api/auth/status", async (req, res) => {
 });
 
 app.get("/api/auth/url", (req, res) => {
-  try { res.json({ url: getAuthURL() }); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    res.json({ url: getAuthURL() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post("/api/auth/token", async (req, res) => {
@@ -286,15 +310,12 @@ app.post("/api/auth/token", async (req, res) => {
 
 /**
  * GET /api/chart?symbol=X&resolution=Y
- * ─────────────────────────────────────
- * Works any time, any day, any symbol.
+ * Works any time, any day, any symbol (including Excel imports).
  *
  * Cache TTL:
- *   Live market (Mon–Fri 9:15–15:30):  60 seconds
- *   Weekday outside hours:             5 minutes
- *   Weekend:                           24 hours
- *
- * Cache miss → fetch from Fyers REST (works 24/7).
+ *   Live market (Mon–Fri 9:15–15:30):  60 seconds  (tick stream keeps it fresher)
+ *   Weekday outside hours:             5 minutes   (data is settled)
+ *   Weekend / holiday:                 24 hours    (data will not change)
  */
 app.get("/api/chart", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
@@ -302,10 +323,10 @@ app.get("/api/chart", async (req, res) => {
   const cache = getCache(symbol, resolution);
 
   const cacheTTL = isLiveMarket()
-    ? 60_000              // live market — data changes every second
+    ? 60_000
     : isTradingDay()
-      ? 5 * 60_000        // weekday after hours — data is settled
-      : 24 * 60 * 60_000; // weekend — data won't change
+      ? 5 * 60_000
+      : 24 * 60 * 60_000;
 
   if (cache.result && cache.candles.length > 0 && Date.now() - cache.lastFetch < cacheTTL) {
     return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
@@ -315,6 +336,7 @@ app.get("/api/chart", async (req, res) => {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
     res.json(buildPayload(candles, result, symbol, resolution));
   } catch (err) {
+    // Serve stale cache rather than a blank error
     if (cache.result && cache.candles.length > 0) {
       console.warn(`[/api/chart] Fetch failed (${err.message}), serving stale cache`);
       return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
@@ -326,16 +348,17 @@ app.get("/api/chart", async (req, res) => {
 
 /**
  * POST /api/chart/refresh?symbol=X&resolution=Y
- * ─────────────────────────────────────────────
- * Manual refresh — always fetches fresh data from Fyers REST.
- * Works on weekends, after hours, for any symbol.
+ * Manual refresh — always fetches fresh from Fyers REST.
+ * Works on weekends, after hours, for any symbol from Excel.
  * Broadcasts fresh data to all connected socket clients.
  */
 app.post("/api/chart/refresh", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
 
-  console.log(`[REFRESH] symbol=${symbol} res=${resolution}m liveMarket=${isLiveMarket()} tradingDay=${isTradingDay()}`);
+  console.log(
+    `[REFRESH] symbol=${symbol} res=${resolution}m liveMarket=${isLiveMarket()} tradingDay=${isTradingDay()}`
+  );
 
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
@@ -346,7 +369,10 @@ app.post("/api/chart/refresh", async (req, res) => {
     const cache = getCache(symbol, resolution);
     if (cache.result && cache.candles.length > 0) {
       console.warn(`[REFRESH] Fetch failed (${err.message}), serving stale cache`);
-      return res.json({ ...buildPayload(cache.candles, cache.result, symbol, resolution, false), success: true });
+      return res.json({
+        ...buildPayload(cache.candles, cache.result, symbol, resolution, false),
+        success: true,
+      });
     }
     console.error("[REFRESH] Error:", err.message);
     res.status(500).json({ error: err.message });
@@ -369,16 +395,17 @@ app.get("/api/signals", async (req, res) => {
 app.use("/api/symbols", symbolsRouter);
 
 // ─── Tick Watchdog ────────────────────────────────────────────────────────────
-// Restarts WebSocket only if it goes silent during LIVE market hours.
+// Only fires during live market hours. Restarts WS if silent for TICK_WATCHDOG_MS.
 function startTickWatchdog() {
   setInterval(() => {
-    if (!isTradingDay()) return;  // weekend — never fire
-    if (!isLiveMarket()) return;  // outside 9:15–15:30 — never fire
+    if (!isTradingDay()) return;   // weekend — never fire
+    if (!isLiveMarket()) return;   // outside 9:15–15:30 — never fire
     if (!tickStream.isConnected()) return;
 
     const now = Date.now();
-    if (lastConnectAt > 0 && (now - lastConnectAt) < WATCHDOG_GRACE_MS) return;
-    if (lastTickAt === 0) return;
+    // Grace period after connect — don't watchdog during initial subscription
+    if (lastConnectAt > 0 && now - lastConnectAt < WATCHDOG_GRACE_MS) return;
+    if (lastTickAt === 0) return;  // haven't seen a tick yet — wait
 
     const silenceMs = now - lastTickAt;
     if (silenceMs > TICK_WATCHDOG_MS) {
@@ -389,23 +416,29 @@ function startTickWatchdog() {
       setTimeout(() => maybeStartTickStream(), 1000);
     }
   }, TICK_WATCHDOG_MS);
-  console.log(`[Watchdog] Tick watchdog started (timeout: ${TICK_WATCHDOG_MS / 1000}s, grace: ${WATCHDOG_GRACE_MS / 1000}s)`);
+
+  console.log(
+    `[Watchdog] Started (timeout: ${TICK_WATCHDOG_MS / 1000}s, grace: ${WATCHDOG_GRACE_MS / 1000}s)`
+  );
 }
 
 // ─── Auto-refresh fallback ────────────────────────────────────────────────────
-// Only runs if tick stream is down during LIVE market hours.
+// REST fallback poll — only runs when tick stream is DOWN during live market hours.
+// On weekends / after-hours: does nothing (data is static, no point polling).
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+
   autoRefreshTimer = setInterval(async () => {
-    if (!isTradingDay()) return;  // weekend — skip
-    if (!isLiveMarket()) return;  // outside 9:15–15:30 — skip
-    if (tickStream.isConnected()) return;  // tick stream live — skip
+    if (!isTradingDay()) return;      // weekend — skip
+    if (!isLiveMarket()) return;      // outside 9:15–15:30 — skip
+    if (tickStream.isConnected()) return; // tick stream live — skip
 
     const valid = await validateToken();
     if (!valid) return;
 
     const activeResolutions = new Set(socketResolutions.values());
     activeResolutions.add(RESOLUTION);
+
     for (const res of activeResolutions) {
       console.log(`[AUTO] Refreshing ${SYMBOL} res=${res}m...`);
       fetchAndBroadcast(SYMBOL, res, true).catch((e) =>
@@ -413,29 +446,46 @@ function startAutoRefresh() {
       );
     }
   }, REFRESH_MS);
+
   console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s (live market + tick stream down only)`);
 }
 
 // ─── Initial REST fetch ───────────────────────────────────────────────────────
+// Runs at startup. Fetches historical candles via REST so the chart is populated
+// immediately — works 24/7 including weekends. Fyers REST returns the last
+// available trading session candles regardless of the current day/time.
 async function initialRestFetch() {
   const valid = await validateToken().catch(() => false);
   if (!valid) {
-    console.log("[INIT] Not authenticated — skipping initial REST fetch.");
+    console.log("[INIT] Not authenticated — skipping initial REST fetch. Chart will be empty.");
     return;
   }
-  console.log(`[INIT] Fetching historical candles via REST for ${SYMBOL}...`);
-  const maxRetries = 3;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+
+  const dayLabel = isTradingDay()
+    ? isLiveMarket()
+      ? "live market"
+      : "weekday (market closed)"
+    : "weekend/holiday";
+
+  console.log(`[INIT] Fetching historical candles via REST (${dayLabel}) for ${SYMBOL}...`);
+
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       await fetchAndBroadcast(SYMBOL, RESOLUTION, false);
-      console.log("[INIT] Historical data loaded ✓ Chart is ready.");
+      console.log("[INIT] Historical data loaded ✓  Chart is ready.");
       return;
     } catch (err) {
-      console.error(`[INIT] Attempt ${attempt}/${maxRetries} failed: ${err.message}`);
-      if (attempt < maxRetries) await new Promise((r) => setTimeout(r, 3000 * attempt));
+      console.error(`[INIT] Attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        const wait = 3000 * attempt;
+        console.log(`[INIT] Waiting ${wait / 1000}s before retry...`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
     }
   }
-  console.error("[INIT] All attempts failed — chart will be empty until manual refresh.");
+
+  console.error("[INIT] All attempts failed — chart will be empty until manual Refresh.");
 }
 
 // ─── Socket.IO connections ────────────────────────────────────────────────────
@@ -446,12 +496,13 @@ io.on("connection", (socket) => {
   socketResolutions.set(socket.id, currentResolution);
   socket.join(`res:${currentResolution}`);
 
-  // Send cached data immediately so chart appears without waiting for HTTP
+  // Send cached data immediately — chart appears without a round-trip
   const initialCache = getCache(SYMBOL, currentResolution);
   if (initialCache.result && initialCache.candles.length > 0) {
-    socket.emit("chart_update", buildPayload(
-      initialCache.candles, initialCache.result, SYMBOL, currentResolution, true
-    ));
+    socket.emit(
+      "chart_update",
+      buildPayload(initialCache.candles, initialCache.result, SYMBOL, currentResolution, true)
+    );
   }
 
   socket.emit("market_status", {
@@ -463,6 +514,7 @@ io.on("connection", (socket) => {
   socket.on("set_resolution", (res) => {
     const newRes = parseInt(res);
     if (isNaN(newRes) || newRes === currentResolution) return;
+
     socket.leave(`res:${currentResolution}`);
     currentResolution = newRes;
     socketResolutions.set(socket.id, newRes);
@@ -471,9 +523,10 @@ io.on("connection", (socket) => {
 
     const newCache = getCache(SYMBOL, newRes);
     if (newCache.result && newCache.candles.length > 0 && Date.now() - newCache.lastFetch < 120_000) {
-      socket.emit("chart_update", buildPayload(
-        newCache.candles, newCache.result, SYMBOL, newRes, true
-      ));
+      socket.emit(
+        "chart_update",
+        buildPayload(newCache.candles, newCache.result, SYMBOL, newRes, true)
+      );
     }
   });
 
@@ -508,17 +561,17 @@ server.listen(PORT, async () => {
   startAutoRefresh();
   startTickWatchdog();
 
-  // Step 1: ALWAYS seed cache from Fyers REST (works 24/7)
+  // Step 1: Always seed chart from Fyers REST (works 24/7, any symbol, any day)
   await initialRestFetch();
 
-  // Step 2: Start tick stream ONLY if market is currently live
+  // Step 2: Start tick stream only if the market is currently live
   if (isLiveMarket()) {
-    console.log("[INIT] Market is live — starting tick stream for real-time data.");
+    console.log("[INIT] Market is live — starting tick stream for real-time candles.");
     await maybeStartTickStream();
   } else if (isTradingDay()) {
-    console.log("[INIT] Weekday but outside market hours (before 9:15 or after 15:30) — REST data ready, no tick stream.");
+    console.log("[INIT] Weekday outside market hours — REST data ready. Tick stream inactive.");
   } else {
-    console.log("[INIT] Weekend/holiday — REST data ready, no tick stream needed.");
+    console.log("[INIT] Weekend/holiday — REST data loaded from last session. No tick stream.");
   }
 });
 
