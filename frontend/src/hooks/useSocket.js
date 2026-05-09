@@ -1,27 +1,16 @@
-// useSocket.js — all fixes applied:
-//  1. Auto-detects backend URL (LAN + localhost both work — no hardcoded IP)
-//  2. Weekend/after-hours: refresh() uses GET (cached) not POST (hits Fyers)
-//  3. Request-ID anti-race: stale responses from old requests are discarded
-//  4. Symbol + resolution guards on all socket events (no data crossover)
-//  5. Initial fetch errors are silent — socket delivers data when connected
+// useSocket.js
+// ─────────────────────────────────────────────────────────────────
+// RULES:
+//   • Always GET /api/chart — backend handles cache TTL and freshness
+//   • POST /api/chart/refresh — only when user explicitly clicks Refresh
+//   • Tick stream (WebSocket) is server-managed — frontend just listens
+//   • Works on weekends, after hours, any symbol from Excel/JSON
+// ─────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { io } from "socket.io-client";
 import axios from "axios";
 import { BACKEND } from "../config";
-
-const POLL_INTERVAL_MS = 70000; // 1 min 10s — REST fallback only when socket silent
-
-// ── IST market-hours check ────────────────────────────────────────────────────
-function isMarketOpen() {
-  const now = new Date();
-  const istOffset = 5 * 60 + 30;
-  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const istMin = (utcMin + istOffset) % (24 * 60);
-  const dow = new Date(now.getTime() + istOffset * 60000).getUTCDay();
-  if (dow === 0 || dow === 6) return false;
-  return istMin >= 9 * 60 + 15 && istMin < 15 * 60 + 31;
-}
 
 export function useSocket() {
   const [chartData, setChartData] = useState(null);
@@ -35,28 +24,63 @@ export function useSocket() {
   const activeSymbolRef = useRef(null);
   const latestRequestIdRef = useRef(0);
   const lastSocketUpdateRef = useRef(0);
-  const pollTimerRef = useRef(null);
+  const hasDataRef = useRef(false);
 
-  // ── REST poll fallback (market hours only) ────────────────────────────────
-  function startPollFallback() {
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    pollTimerRef.current = setInterval(async () => {
-      const res = activeResolutionRef.current;
-      const sym = activeSymbolRef.current;
-      if (!res || !sym || !isMarketOpen()) return;
-      if (Date.now() - lastSocketUpdateRef.current < POLL_INTERVAL_MS) return;
-      const reqId = ++latestRequestIdRef.current;
+  // ── matchesActive — guard against stale socket events ────────────────────
+  const matchesActive = useCallback((d) => {
+    const incomingRes = d?.resolution != null ? Number(d.resolution) : null;
+    const activeRes = activeResolutionRef.current;
+    if (activeRes !== null && incomingRes !== null && incomingRes !== activeRes) return false;
+    if (d?.symbol && activeSymbolRef.current && d.symbol !== activeSymbolRef.current) return false;
+    return true;
+  }, []);
+
+  // ── fetchChart — GET /api/chart (works any time, any day, any symbol) ────
+  // Retries with backoff if backend returns empty candles (startup race).
+  const fetchChart = useCallback(async (symbol, resolution, { retries = 5, signal } = {}) => {
+    const sym = symbol ?? activeSymbolRef.current;
+    const res = resolution ?? activeResolutionRef.current;
+    const reqId = ++latestRequestIdRef.current;
+
+    const params = {};
+    if (sym) params.symbol = sym;
+    if (res) params.resolution = res;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      if (signal?.aborted) return;
       try {
-        const r = await axios.get(`${BACKEND}/api/chart`, { params: { symbol: sym, resolution: res } });
-        if (reqId !== latestRequestIdRef.current) return;
-        if (Number(r.data?.resolution) === activeResolutionRef.current &&
-          r.data?.symbol === activeSymbolRef.current) {
-          setChartData(r.data);
-          lastSocketUpdateRef.current = Date.now();
+        const r = await axios.get(`${BACKEND}/api/chart`, { params, timeout: 15_000 });
+        if (reqId !== latestRequestIdRef.current) return; // stale — another request won
+
+        if (!r.data?.candles?.length) {
+          // Backend cache not warm yet (startup race) — wait and retry
+          if (attempt < retries) {
+            await sleep(1500 * (attempt + 1));
+            continue;
+          }
+          setLoading(false);
+          return; // give up — socket will deliver data
         }
-      } catch { /* silent */ }
-    }, POLL_INTERVAL_MS);
-  }
+
+        if (r.data.resolution != null) activeResolutionRef.current = Number(r.data.resolution);
+        if (r.data.symbol) activeSymbolRef.current = r.data.symbol;
+
+        setChartData(r.data);
+        hasDataRef.current = true;
+        lastSocketUpdateRef.current = Date.now();
+        setLoading(false);
+        setError(null);
+        return;
+      } catch {
+        if (reqId !== latestRequestIdRef.current) return;
+        if (attempt < retries) {
+          await sleep(1500 * (attempt + 1));
+          continue;
+        }
+        setLoading(false);
+      }
+    }
+  }, []); // eslint-disable-line
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -67,19 +91,28 @@ export function useSocket() {
     });
     socketRef.current = socket;
 
-    socket.on("connect", () => { setConnected(true); setError(null); });
+    socket.on("connect", () => {
+      setConnected(true);
+      setError(null);
+      // If we still don't have data, fetch now that we know backend is reachable
+      if (!hasDataRef.current) {
+        fetchChart(activeSymbolRef.current, activeResolutionRef.current, { retries: 3 });
+      }
+    });
+
     socket.on("disconnect", () => setConnected(false));
 
-    // Full chart replace
+    // Full chart update from server (after candle finalize or manual refresh)
     socket.on("chart_update", (d) => {
       if (!matchesActive(d)) return;
       lastSocketUpdateRef.current = Date.now();
       setChartData(d);
+      hasDataRef.current = true;
       setLoading(false);
       setError(null);
     });
 
-    // Live tick — update forming candle
+    // Tick-by-tick forming candle update (live market only)
     function handleCandleUpdate(d) {
       if (!matchesActive(d) || !d?.formingCandle) return;
       lastSocketUpdateRef.current = Date.now();
@@ -100,7 +133,7 @@ export function useSocket() {
     socket.on("tick_update", handleCandleUpdate);
     socket.on("candle_update", handleCandleUpdate);
 
-    // Finalized candle — append
+    // Finalized candle — append to chart
     socket.on("new_candle", (d) => {
       if (!matchesActive(d) || !d?.candle) return;
       lastSocketUpdateRef.current = Date.now();
@@ -123,42 +156,25 @@ export function useSocket() {
       if (d?.tickStreamActive != null) setTickStreamActive(!!d.tickStreamActive);
     });
 
-    // Socket-level errors — show but don't crash
-    socket.on("error", (e) => { setError(e?.message || String(e)); setLoading(false); });
+    socket.on("error", (e) => {
+      setError(e?.message || String(e));
+      setLoading(false);
+    });
 
-    startPollFallback();
-    return () => {
-      socket.disconnect();
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-
-    // ── helpers ─────────────────────────────────────────────────────────────
-    function matchesActive(d) {
-      const incomingRes = d?.resolution != null ? Number(d.resolution) : null;
-      const activeRes = activeResolutionRef.current;
-      if (activeRes !== null && incomingRes !== null && incomingRes !== activeRes) return false;
-      if (d?.symbol && activeSymbolRef.current && d.symbol !== activeSymbolRef.current) return false;
-      return true;
-    }
+    return () => { socket.disconnect(); };
   }, []); // eslint-disable-line
 
-  // ── Initial REST fetch on mount ───────────────────────────────────────────
+  // ── Initial data fetch on mount ───────────────────────────────────────────
   useEffect(() => {
     setLoading(true);
-    const reqId = ++latestRequestIdRef.current;
-    axios.get(`${BACKEND}/api/chart`)
-      .then((r) => {
-        if (reqId !== latestRequestIdRef.current) return;
-        if (r.data?.resolution != null) activeResolutionRef.current = Number(r.data.resolution);
-        if (r.data?.symbol) activeSymbolRef.current = r.data.symbol;
-        setChartData(r.data);
-        setLoading(false);
-        lastSocketUpdateRef.current = Date.now();
-      })
-      .catch(() => setLoading(false)); // silent — socket will deliver data
+    const abortCtrl = new AbortController();
+    fetchChart(null, null, { retries: 5, signal: abortCtrl.signal });
+    return () => abortCtrl.abort();
   }, []); // eslint-disable-line
 
-  // ── Refresh ───────────────────────────────────────────────────────────────
+  // ── refresh — called when user clicks Refresh, changes symbol, or TF ─────
+  // Always POSTs to /api/chart/refresh to get the absolute freshest data
+  // and broadcast to all connected clients.
   const refresh = useCallback(async (symbol, resolution) => {
     setError(null);
     setLoading(true);
@@ -175,29 +191,49 @@ export function useSocket() {
     if (symbol != null) params.symbol = symbol;
     if (resolution != null) params.resolution = resolution;
 
-    try {
-      // Market open  → POST /refresh (forces fresh Fyers fetch, broadcasts to all clients)
-      // Market closed → GET /chart   (serves cache, no Fyers call, no errors on weekends)
-      const res = isMarketOpen()
-        ? await axios.post(`${BACKEND}/api/chart/refresh`, null, { params })
-        : await axios.get(`${BACKEND}/api/chart`, { params });
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        // POST /refresh → backend fetches fresh from Fyers REST (works any day/time)
+        // and broadcasts to all socket clients in the room.
+        const res = await axios.post(`${BACKEND}/api/chart/refresh`, null, {
+          params,
+          timeout: 20_000,
+        });
 
-      if (reqId !== latestRequestIdRef.current) return; // stale — discard
+        if (reqId !== latestRequestIdRef.current) return; // stale
 
-      if (resolution == null && res.data?.resolution != null)
-        activeResolutionRef.current = Number(res.data.resolution);
-      if (res.data?.symbol)
-        activeSymbolRef.current = res.data.symbol;
+        if (!res.data?.candles?.length) {
+          // Extremely unlikely after a forced refresh, but handle gracefully
+          if (attempt < maxAttempts - 1) { await sleep(2000); continue; }
+          setLoading(false);
+          return;
+        }
 
-      setChartData(res.data);
-      setLoading(false);
-      lastSocketUpdateRef.current = Date.now();
-    } catch (e) {
-      if (reqId !== latestRequestIdRef.current) return;
-      setError(e.response?.data?.error || e.message);
-      setLoading(false);
+        if (resolution == null && res.data?.resolution != null)
+          activeResolutionRef.current = Number(res.data.resolution);
+        if (res.data?.symbol)
+          activeSymbolRef.current = res.data.symbol;
+
+        setChartData(res.data);
+        hasDataRef.current = true;
+        lastSocketUpdateRef.current = Date.now();
+        setLoading(false);
+        setError(null);
+        return;
+      } catch (e) {
+        if (reqId !== latestRequestIdRef.current) return;
+        if (attempt < maxAttempts - 1) { await sleep(2000); continue; }
+        setError(e.response?.data?.error || e.message);
+        setLoading(false);
+      }
     }
   }, []); // eslint-disable-line
 
   return { chartData, connected, loading, error, refresh, tickStreamActive };
+}
+
+// ── Utility ──────────────────────────────────────────────────────────────────
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
