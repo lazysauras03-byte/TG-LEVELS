@@ -66,9 +66,8 @@ export default function HomePage() {
       {/* Header */}
       <header className="home-header">
         <div className="home-logo">
-          <span className="home-logo-mark">◈</span>
-          <span className="home-logo-text">TG</span>
-          <span className="home-logo-version">DASHBOARD</span>
+          <img src="/tg-icon.png" alt="TG Levels" className="home-logo-img" />
+          <h1> Dashboard </h1>
         </div>
         <div className="home-header-tag">
           <span className={`home-dot ${isLive ? "green" : "red"}`} />
@@ -78,15 +77,17 @@ export default function HomePage() {
 
       {/* Hero */}
       <main className="home-main">
+
         <div className="home-hero">
-          <p className="home-eyebrow">Trading Signal Platform</p>
-          <h1 className="home-title">
-            TG.<br />
-            <span className="home-title-accent">LEVELS.</span>
-          </h1>
-          <p className="home-subtitle">
-            Real-time market signals
-          </p>
+          <img src="/tg-icon.png" alt="TG" className="home-hero-icon" />
+          <div className="home-hero-text">
+            <p className="home-subtitle">Tushar Ghone SEBI Registered Research Analyst</p>
+            <div className="home-hero-inner">
+              <p className="home-welcome">Welcome to</p>
+            </div>
+            <center><h1 className="home-title"><span className="home-title-accent"> TG Levels</span></h1></center>
+          </div>
+          <p className="home-subtitle">Real-time market analysis</p>
         </div>
 
         {/* Nav cards */}
@@ -128,16 +129,12 @@ export default function HomePage() {
             </button>
           ))}
         </div>
-      </main>
+      </main >
 
       {/* Footer */}
-      <footer className="home-footer">
-        <span className="home-footer-text">Fyers · NSE/BSE · IST</span>
-        <span className="home-footer-sep">·</span>
-        <span className="home-footer-text">LAZYSARURAS</span>
-        <span className="home-footer-sep">·</span>
-        <span className="home-footer-text">NH / NL / BC Logic</span>
-      </footer>
-    </div>
+      < footer className="home-footer" >
+        <span className="home-footer-text">Real-time stock insights at your fingertips</span>
+      </footer >
+    </div >
   );
 }

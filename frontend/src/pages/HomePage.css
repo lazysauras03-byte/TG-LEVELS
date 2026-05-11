@@ -35,30 +35,14 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  /* space between image and h1 */
 }
 
-.home-logo-mark {
-  font-size: 22px;
-  color: var(--accent);
-  line-height: 1;
-}
-
-.home-logo-text {
-  font-family: var(--font-display);
-  font-size: 20px;
-  font-weight: 800;
-  color: var(--text);
-  letter-spacing: 0.04em;
-}
-
-.home-logo-version {
-  font-size: 10px;
-  color: var(--text3);
-  font-family: var(--font-mono);
-  background: var(--bg3);
-  border: 1px solid var(--border2);
-  padding: 2px 6px;
-  border-radius: 4px;
+.home-logo-img {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+  display: block;
 }
 
 .home-header-tag {
@@ -76,15 +60,27 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
+
 .home-dot.green {
   background: var(--green);
   box-shadow: 0 0 8px var(--green);
   animation: homePulse 2s ease-in-out infinite;
 }
 
+.home-dot.red {
+  background: var(--red, #ff4560);
+}
+
 @keyframes homePulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* ─── Main ───────────────────────────────────────────── */
@@ -103,38 +99,67 @@
 /* ─── Hero ───────────────────────────────────────────── */
 .home-hero {
   text-align: center;
-  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
 }
 
-.home-eyebrow {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--accent);
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  margin-bottom: 20px;
+/* Icon + text row */
+.home-hero-inner {
+  display: flex;
+  align-items: center;
+  gap: 22px;
 }
 
+.home-hero-icon {
+  height: 110px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 18px rgba(100, 220, 180, 0.3));
+}
+
+.home-hero-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* "Welcome to" — big, same weight as title, slightly smaller */
+.home-welcome {
+  font-family: var(--font-display);
+  font-size: clamp(34px, 5vw, 85px);
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+/* "TG Levels" — largest */
 .home-title {
   font-family: var(--font-display);
-  font-size: clamp(52px, 8vw, 80px);
+  font-size: clamp(52px, 8vw, 70px);
   font-weight: 800;
   color: var(--text);
   line-height: 1.0;
-  margin-bottom: 20px;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  margin: 0;
 }
 
 .home-title-accent {
   color: var(--accent);
-  position: relative;
 }
 
+/* Subtitle */
 .home-subtitle {
   font-size: 14px;
   color: var(--text2);
   line-height: 1.7;
   font-family: var(--font-mono);
+  letter-spacing: 0.05em;
 }
 
 /* ─── Cards ──────────────────────────────────────────── */
@@ -172,8 +197,13 @@
   transition: opacity 0.2s;
 }
 
-.home-card--green::before { background: var(--green); }
-.home-card--yellow::before { background: var(--yellow); }
+.home-card--green::before {
+  background: var(--green);
+}
+
+.home-card--yellow::before {
+  background: var(--yellow);
+}
 
 .home-card:hover {
   border-color: var(--border2);
@@ -196,12 +226,19 @@
   height: 40px;
   color: var(--text2);
 }
+
 .home-card-icon svg {
   width: 100%;
   height: 100%;
 }
-.home-card--green .home-card-icon { color: var(--green); }
-.home-card--yellow .home-card-icon { color: var(--yellow); }
+
+.home-card--green .home-card-icon {
+  color: var(--green);
+}
+
+.home-card--yellow .home-card-icon {
+  color: var(--yellow);
+}
 
 .home-card-tag {
   font-size: 9px;
@@ -212,11 +249,13 @@
   border-radius: 4px;
   border: 1px solid;
 }
+
 .home-card-tag--green {
   color: var(--green);
   background: var(--green-dim);
   border-color: rgba(0, 217, 126, 0.3);
 }
+
 .home-card-tag--yellow {
   color: var(--yellow);
   background: var(--yellow-dim);
@@ -265,8 +304,14 @@
   background: var(--border2);
   flex-shrink: 0;
 }
-.home-card--green .home-card-stat-dot { background: var(--green2); }
-.home-card--yellow .home-card-stat-dot { background: var(--yellow); }
+
+.home-card--green .home-card-stat-dot {
+  background: var(--green2);
+}
+
+.home-card--yellow .home-card-stat-dot {
+  background: var(--yellow);
+}
 
 .home-card-arrow {
   width: 18px;
@@ -275,7 +320,12 @@
   align-self: flex-end;
   transition: color 0.2s, transform 0.2s;
 }
-.home-card-arrow svg { width: 100%; height: 100%; }
+
+.home-card-arrow svg {
+  width: 100%;
+  height: 100%;
+}
+
 .home-card:hover .home-card-arrow {
   color: var(--text);
   transform: translateX(3px);
@@ -295,7 +345,7 @@
 
 .home-footer-text {
   font-size: 11px;
-  color: var(--text3);
+  color: var(--text);
   font-family: var(--font-mono);
 }
 
@@ -305,15 +355,39 @@
 }
 
 /* ─── Responsive ─────────────────────────────────────── */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .home-cards {
     flex-direction: column;
   }
+
   .home-header {
     padding: 16px 20px;
   }
+
   .home-main {
     padding: 32px 20px;
     gap: 36px;
+  }
+
+  .home-hero-inner {
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .home-hero-text {
+    align-items: center;
+  }
+
+  .home-hero-icon {
+    height: 80px;
+  }
+
+  .home-welcome {
+    font-size: clamp(24px, 7vw, 36px);
+  }
+
+  .home-title {
+    font-size: clamp(40px, 11vw, 64px);
   }
 }

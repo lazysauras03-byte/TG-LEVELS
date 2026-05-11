@@ -42,7 +42,6 @@ function StatusBar({
   todayMode, onTodayToggle,
   crosshairBar,
   onSidebarToggle,
-  onReportClick,
   tickStreamActive,
 }) {
   const lastUpdate = chartData?.lastUpdate
@@ -141,8 +140,7 @@ function StatusBar({
 
       {/* Logo */}
       <div style={styles.logo}>
-        <span style={styles.logoT}>TG</span>
-        <span style={styles.logoSub}>DASHBOARD</span>
+        <img src="/tg-levels-logo.png" alt="TG Levels" style={styles.logoImg} />
       </div>
 
       {/* Symbol search */}
@@ -241,16 +239,8 @@ function StatusBar({
         )}
       </div>
 
-      {/* ── Right side: Refresh + Report + Sidebar toggle ── */}
+      {/* ── Right side: Refresh + Sidebar toggle ── */}
       <div style={styles.rightActions}>
-        {/* 📄 Report — opens Charts Report page */}
-        <button
-          onClick={onReportClick}
-          style={styles.reportBtn}
-          tabIndex={-1}
-        >
-        </button>
-
         {/* ↻ Refresh — fetches latest 1-month data from backend */}
         <button
           onClick={() => onRefresh(symbol, resolution)}
@@ -301,9 +291,8 @@ const styles = {
     background: "var(--bg2)", borderBottom: "1px solid var(--border)",
     flexShrink: 0, flexWrap: "nowrap", zIndex: 100, overflow: "visible",
   },
-  logo: { display: "flex", alignItems: "baseline", gap: 6, flexShrink: 0 },
-  logoT: { fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 18, color: "var(--text)", letterSpacing: "-0.03em" },
-  logoSub: { fontSize: 10, color: "var(--accent)", fontWeight: 600, letterSpacing: "0.05em" },
+  logo: { display: "flex", alignItems: "center", flexShrink: 0, padding: "0 4px" },
+  logoImg: { height: 32, width: "auto", objectFit: "contain", display: "block" },
   group: {
     display: "flex", alignItems: "center", gap: 8,
     padding: "0 10px", borderLeft: "1px solid var(--border)", flexShrink: 0,
@@ -346,23 +335,6 @@ const styles = {
     display: "flex", alignItems: "center", gap: 6,
     marginLeft: "auto", flexShrink: 0,
     paddingLeft: 10, borderLeft: "1px solid var(--border)",
-  },
-  reportBtn: {
-    // Invisible but functional — blends into navbar background
-    background: "var(--bg2)",
-    border: "1px solid var(--bg2)",
-    borderRadius: 5,
-    color: "var(--bg2)",
-    fontFamily: "var(--font-mono)",
-    fontSize: 11, fontWeight: 700,
-    padding: "4px 12px",
-    letterSpacing: "0.04em",
-    display: "flex", alignItems: "center", gap: 4,
-    cursor: "default",
-    flexShrink: 0,
-    userSelect: "none",
-    outline: "none",
-    boxShadow: "none",
   },
   refreshBtn: {
     background: "var(--bg3)",

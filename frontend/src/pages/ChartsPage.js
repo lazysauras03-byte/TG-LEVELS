@@ -231,7 +231,6 @@ export default function ChartsPage() {
     setActiveTabs((prev) => ({ ...prev, [indicator]: tab }));
   }, []);
 
-  const handleReportClick = useCallback(() => navigate("/charts-report"), [navigate]);
   const handleTodayToggle = useCallback(() => setTodayMode((p) => !p), []);
 
   return (
@@ -259,7 +258,6 @@ export default function ChartsPage() {
             onTodayToggle={handleTodayToggle}
             crosshairBar={crosshairBar}
             onSidebarToggle={handleSidebarToggle}
-            onReportClick={handleReportClick}
             tickStreamActive={tickStreamActive}
           />
         </div>
