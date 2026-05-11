@@ -98,23 +98,41 @@ function getOrCreateBuilder(symbol) {
         emitCandleUpdate(symbol, formingCandles);
         emitFinalCandle(symbol, finalizedCandle);
 
+        // Update cache for all resolutions immediately (silent — no emit).
+        // We already emitted tick_update/candle_update above for the forming
+        // state; sending chart_update on top of that within the same event loop
+        // turn causes the frontend to do a redundant full setData() which
+        // flashes the chart and can cause viewport jumps.
+        // Instead we schedule a single chart_update 200ms later — by then the
+        // tick_update has been processed and the chart is stable. Only rooms
+        // that are actually occupied get the broadcast.
         setImmediate(() => {
           const b = candleBuilders.get(symbol);
           if (!b) return;
           for (const res of [1, 3, 5, 15, 60, 1440]) {
-            const room = `res:${res}`;
-            if (!io.sockets.adapter.rooms.get(room)?.size) continue;
             const candles = b.getCandlesForResolution(res);
             if (candles.length === 0) continue;
             try {
               const result = runSignalEngine(candles);
               setCache(symbol, res, candles, result);
-              io.to(room).emit("chart_update", buildPayload(candles, result, symbol, res, true));
             } catch (err) {
               console.error(`[Builder:${symbol}] Signal engine error res=${res}:`, err.message);
             }
           }
         });
+        // Deferred broadcast: send chart_update once per candle finalize,
+        // but only after the incremental tick_update has settled on the client.
+        setTimeout(() => {
+          const b = candleBuilders.get(symbol);
+          if (!b) return;
+          for (const res of [1, 3, 5, 15, 60, 1440]) {
+            const room = `res:${res}`;
+            if (!io.sockets.adapter.rooms.get(room)?.size) continue;
+            const cache = getCache(symbol, res);
+            if (!cache.result || !cache.candles.length) continue;
+            io.to(room).emit("chart_update", buildPayload(cache.candles, cache.result, symbol, res, true));
+          }
+        }, 250);
       },
     });
     candleBuilders.set(symbol, builder);

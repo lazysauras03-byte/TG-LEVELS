@@ -1,8 +1,9 @@
-// CandleChart.js — production-grade fix:
+// CandleChart.js
 //   • viewport/zoom/scroll NEVER reset on background socket updates
 //   • incremental candle update (update() not setData()) when only last candle changed
 //   • intentionalReload flag drives resetView() — NOT auto-refresh
-//   • WavesIndicator continuous rAF loop removed → only redraws on actual change
+//   • WavesIndicator only redraws on actual change
+//   • Bubble markers: ZERO setMarkers calls during price ticks — only on signal/todayMode/bubble changes
 import React, { useEffect, useRef, useCallback } from "react";
 import { createChart, CrosshairMode, LineStyle } from "lightweight-charts";
 import {
@@ -51,8 +52,7 @@ function buildMarkers(signals, candles, todayModeOn) {
 }
 
 // Deduplicated setMarkers — only calls the expensive lw-charts API when the
-// marker set actually changed. Compares a cheap key string. The keyRef is
-// passed in so multiple callers share the same dedup state.
+// marker set actually changed. Compares a cheap fingerprint string.
 function setMarkersIfChanged(series, markers, keyRef) {
   const key = markers.map((m) => `${m.time}:${m.text}`).join("|");
   if (key === keyRef.current) return;
@@ -154,17 +154,6 @@ class RulerOverlay {
 
   _yToPrice(y) {
     try { return this.candleSeriesRef.current?.coordinateToPrice(y); } catch { return null; }
-  }
-
-  _candleAt(unixSec, candles) {
-    if (!candles?.length || unixSec == null) return null;
-    let best = null, bestDiff = Infinity;
-    for (const c of candles) {
-      const t = Math.floor(c.time / 1000);
-      const d = Math.abs(t - unixSec);
-      if (d < bestDiff) { bestDiff = d; best = c; }
-    }
-    return best;
   }
 
   _draw() {
@@ -364,16 +353,10 @@ export default function CandleChart({
   showWaves = false,
   onWaveData,
   onResetViewReady,
-  // reloadToken: counter that increments on every intentional reload.
-  // Replaces the old boolean intentionalReload to avoid timing races.
   reloadToken = 0,
   onIntentionalReloadAck,
-  // activeResolution: the resolution of the currently-loaded chartData.
-  // Used to detect timeframe switches even when candle count is unchanged.
   activeResolution,
-  // symbol: active symbol — forces full reset + Y-axis rescale on symbol change
   symbol,
-  // waveTarget: { fromMs, toMs } — when set, zoom to that wave after first load
   waveTarget = null,
 }) {
   const containerRef = useRef(null);
@@ -385,36 +368,60 @@ export default function CandleChart({
 
   const isFirstLoadRef = useRef(true);
   const prevCountRef = useRef(0);
-  // Track last candle's time+close to detect "only last candle updated" vs full dataset swap
   const prevLastCandleKeyRef = useRef(null);
-  // true = user scrolled away from right edge → don't auto-scroll on tick
   const userScrolledRef = useRef(false);
-  // Fingerprint of last marker array set — skip setMarkers when nothing changed
   const prevMarkerKeyRef = useRef(null);
-  // Track last processed reloadToken value to detect new intentional reloads
   const lastProcessedTokenRef = useRef(0);
-  // Track last rendered resolution to detect timeframe switches
   const prevResolutionRef = useRef(null);
-  // Track last rendered symbol to detect symbol switches (Y-axis rescale)
   const prevSymbolRef = useRef(null);
+  const intentionalReloadRef = useRef(false);
 
+  // ── All "live" values stored in refs — updated SYNCHRONOUSLY in render ──────
+  // This avoids the stale-closure problem: effects always read the current value
+  // without needing to be in the dependency array of every effect.
+  // We update these with a layout effect (useEffect with no deps isn't enough —
+  // we use the pattern of direct assignment before effects fire).
   const todayModeRef = useRef(todayMode);
   const candlesRef = useRef(candles);
-  const waveTargetRef = useRef(waveTarget);
-  const signalsRef = useRef(signals);
   const emaHighsRef = useRef(emaHighs);
   const emaLowsRef = useRef(emaLows);
+  const signalsRef = useRef(signals);
   const showBubbleRef = useRef(showBubble);
   const showWavesRef = useRef(showWaves);
   const onWaveDataRef = useRef(onWaveData);
   const onIntentionalReloadAckRef = useRef(onIntentionalReloadAck);
-  // intentionalReloadRef is now derived from reloadToken comparison (see data effect below)
-  const intentionalReloadRef = useRef(false);
+  const waveTargetRef = useRef(waveTarget);
+
+  // Update ALL refs synchronously every render — before any effects fire.
+  // This is the key pattern: refs are always current when effects read them.
+  todayModeRef.current = todayMode;
+  candlesRef.current = candles;
+  emaHighsRef.current = emaHighs;
+  emaLowsRef.current = emaLows;
+  signalsRef.current = signals;
+  showBubbleRef.current = showBubble;
+  showWavesRef.current = showWaves;
+  onWaveDataRef.current = onWaveData;
+  onIntentionalReloadAckRef.current = onIntentionalReloadAck;
+  waveTargetRef.current = waveTarget;
+
+  // Keep window.__tggCandles in sync (used by ruler overlay)
+  window.__tggCandles = candles;
+
+  // ── Single marker refresh helper — one place that calls setMarkers ─────────
+  // All code that wants to update markers calls this. The keyRef dedup ensures
+  // setMarkers only fires when content actually changed.
+  const refreshMarkers = useCallback(() => {
+    if (!candleRef.current || !candlesRef.current?.length) return;
+    const markers = showBubbleRef.current
+      ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
+      : [];
+    setMarkersIfChanged(candleRef.current, markers, prevMarkerKeyRef);
+  }, []); // no deps — reads everything from refs
 
   // ── resetView ─────────────────────────────────────────────────────────────
   const resetView = useCallback(() => {
     if (!chartRef.current || !candlesRef.current?.length) return;
-
     const chart = chartRef.current;
     const ts = chart.timeScale();
     const candles = candlesRef.current;
@@ -446,19 +453,7 @@ export default function CandleChart({
     }
   }, []);
 
-  useEffect(() => { todayModeRef.current = todayMode; }, [todayMode]);
-  useEffect(() => { waveTargetRef.current = waveTarget; }, [waveTarget]);
-  useEffect(() => {
-    candlesRef.current = candles;
-    window.__tggCandles = candles;
-  }, [candles]); useEffect(() => { signalsRef.current = signals; }, [signals]);
-  useEffect(() => { emaHighsRef.current = emaHighs; }, [emaHighs]);
-  useEffect(() => { emaLowsRef.current = emaLows; }, [emaLows]);
-  useEffect(() => { showBubbleRef.current = showBubble; }, [showBubble]);
-  useEffect(() => { showWavesRef.current = showWaves; }, [showWaves]);
-  useEffect(() => { onWaveDataRef.current = onWaveData; }, [onWaveData]);
-  useEffect(() => { onIntentionalReloadAckRef.current = onIntentionalReloadAck; }, [onIntentionalReloadAck]);
-  // Sync intentionalReloadRef from reloadToken: any new token > last processed = intentional reload
+  // Sync intentionalReloadRef from reloadToken
   useEffect(() => {
     if (reloadToken > 0 && reloadToken !== lastProcessedTokenRef.current) {
       intentionalReloadRef.current = true;
@@ -560,8 +555,7 @@ export default function CandleChart({
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range) return;
       const total = candlesRef.current?.length ?? 0;
-      const pinnedThreshold = 8;
-      userScrolledRef.current = range.to < total - 1 - pinnedThreshold;
+      userScrolledRef.current = range.to < total - 1 - 8;
     });
 
     chart.subscribeCrosshairMove((param) => {
@@ -575,7 +569,6 @@ export default function CandleChart({
     });
 
     const el = containerRef.current;
-
     const onContextMenu = (e) => {
       e.preventDefault();
       if (e.ctrlKey) return;
@@ -604,42 +597,26 @@ export default function CandleChart({
     };
   }, []); // eslint-disable-line
 
-  // ── TODAY toggle ──────────────────────────────────────────────────────────
-  // Only refresh markers — do NOT reshape the chart viewport.
-  // resetView() is intentionally omitted here so the user's zoom/scroll is preserved.
-  useEffect(() => {
-    if (!candleRef.current || !candles?.length) return;
-    setMarkersIfChanged(
-      candleRef.current,
-      showBubbleRef.current ? buildMarkers(signals, candles, todayMode) : [],
-      prevMarkerKeyRef
-    );
-  }, [todayMode]); // eslint-disable-line
-
   // ── Data update ───────────────────────────────────────────────────────────
+  // Depends ONLY on candles. EMA and signals are read from refs (always current).
+  // This is the critical fix: emaHighs/emaLows/signals changing reference on
+  // every tick no longer triggers this effect.
   useEffect(() => {
     if (!candleRef.current || !candles?.length) return;
 
     const ts = chartRef.current.timeScale();
     const isFirst = isFirstLoadRef.current;
 
-    // Build a compact key for the last candle: "time:open:high:low:close"
-    // This lets us detect "only the last candle was updated" vs a different dataset.
     const last = candles.at(-1);
     const lastKey = `${last.time}:${last.open}:${last.high}:${last.low}:${last.close}`;
     const prevCount = prevCountRef.current;
     const prevLastKey = prevLastCandleKeyRef.current;
 
-    // ── Case 1: streaming tick — last candle updated in-place OR one new candle appended ──
-    // Criteria: same count as before with last candle changed, OR count+1 with no intentional reload.
-    // In both cases we do NOT do setData(), preserving the entire viewport.
-    // Resolution change always forces full reload, even if candle count is same.
     const resolutionChanged =
       prevResolutionRef.current !== null &&
       activeResolution != null &&
       Number(activeResolution) !== prevResolutionRef.current;
 
-    // Force full reset when symbol changes — Y-axis must rescale completely
     const symbolChanged =
       prevSymbolRef.current !== null &&
       symbol != null &&
@@ -653,45 +630,44 @@ export default function CandleChart({
       candles.length === prevCount &&
       lastKey !== prevLastKey;
 
+    // Allow up to 5 candle appends as incremental (covers tick-gap recovery)
     const isNewCandleAppended =
       !isFirst &&
       !intentionalReloadRef.current &&
       !resolutionChanged &&
       !symbolChanged &&
-      candles.length === prevCount + 1;
+      candles.length > prevCount &&
+      candles.length <= prevCount + 5;
 
     if (isLastCandleUpdate || isNewCandleAppended) {
-      // Incremental update — never touches viewport
-      const lc = {
-        time: Math.floor(last.time / 1000),
-        open: last.open, high: last.high, low: last.low, close: last.close,
-      };
-      candleRef.current.update(lc);
+      // ── INCREMENTAL PATH — zero setData, zero setMarkers ──────────────────
+      // Push each new candle individually. For EMA, read from ref (always fresh).
+      const emaH = emaHighsRef.current;
+      const emaL = emaLowsRef.current;
 
-      const i = candles.length - 1;
-      if (emaHighs[i] != null && !isNaN(emaHighs[i]))
-        emaHiRef.current.update({ time: lc.time, value: emaHighs[i] });
-      if (emaLows[i] != null && !isNaN(emaLows[i]))
-        emaLoRef.current.update({ time: lc.time, value: emaLows[i] });
-
-      // Only update signals markers if something actually changed
-      // (skip on pure OHLC tick to avoid any flicker)
-      if (isNewCandleAppended && showBubbleRef.current) {
-        setMarkersIfChanged(
-          candleRef.current,
-          buildMarkers(signalsRef.current, candles, todayModeRef.current),
-          prevMarkerKeyRef
-        );
+      const startIdx = isNewCandleAppended ? prevCount : candles.length - 1;
+      for (let ni = startIdx; ni < candles.length; ni++) {
+        const nc = candles[ni];
+        const bar = { time: Math.floor(nc.time / 1000), open: nc.open, high: nc.high, low: nc.low, close: nc.close };
+        candleRef.current.update(bar);
+        if (emaH[ni] != null && !isNaN(emaH[ni])) emaHiRef.current.update({ time: bar.time, value: emaH[ni] });
+        if (emaL[ni] != null && !isNaN(emaL[ni])) emaLoRef.current.update({ time: bar.time, value: emaL[ni] });
       }
+      // Re-push last candle to handle same-minute tick updates
+      const lc = { time: Math.floor(last.time / 1000), open: last.open, high: last.high, low: last.low, close: last.close };
+      candleRef.current.update(lc);
+      const li = candles.length - 1;
+      if (emaH[li] != null && !isNaN(emaH[li])) emaHiRef.current.update({ time: lc.time, value: emaH[li] });
+      if (emaL[li] != null && !isNaN(emaL[li])) emaLoRef.current.update({ time: lc.time, value: emaL[li] });
 
-      if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
+      if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
+
       prevCountRef.current = candles.length;
       prevLastCandleKeyRef.current = lastKey;
-      // Update tracked resolution and symbol (even on incremental updates)
       if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
       if (symbol != null) prevSymbolRef.current = symbol;
 
-      // Auto-scroll only if user is pinned to right edge
+      // Auto-scroll only if pinned to right edge
       if (!userScrolledRef.current) {
         try {
           const range = ts.getVisibleLogicalRange();
@@ -700,45 +676,40 @@ export default function CandleChart({
           }
         } catch { }
       }
-      return;
+      return; // ← no marker work on price ticks
     }
 
-    // ── Case 2: full reload (first load, intentional symbol/TF/manual refresh, or large data diff) ──
-    // Save viewport BEFORE setData so we can restore it after if needed.
+    // ── FULL RELOAD PATH ──────────────────────────────────────────────────────
     const savedRange = isFirst ? null : (() => {
       try { return ts.getVisibleLogicalRange(); } catch { return null; }
     })();
-
     const isIntentional = intentionalReloadRef.current;
 
+    const emaH = emaHighsRef.current;
+    const emaL = emaLowsRef.current;
+
     candleRef.current.setData(
-      candles.map((c) => ({
-        time: Math.floor(c.time / 1000),
-        open: c.open, high: c.high, low: c.low, close: c.close,
-      }))
+      candles.map((c) => ({ time: Math.floor(c.time / 1000), open: c.open, high: c.high, low: c.low, close: c.close }))
     );
     emaHiRef.current.setData(
-      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaHighs[i] }))
+      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaH[i] }))
         .filter((d) => d.value != null && !isNaN(d.value))
     );
     emaLoRef.current.setData(
-      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaLows[i] }))
+      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaL[i] }))
         .filter((d) => d.value != null && !isNaN(d.value))
     );
 
-    if (showWavesRef.current) updateWavesIndicator(candles, emaHighs, emaLows);
+    if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
     else removeWavesIndicator();
 
-    setMarkersIfChanged(
-      candleRef.current,
-      showBubbleRef.current ? buildMarkers(signals, candles, todayModeRef.current) : [],
-      prevMarkerKeyRef
-    );
+    // After setData, markers need a full refresh (series was rebuilt)
+    // Reset the key so setMarkersIfChanged always fires after setData
+    prevMarkerKeyRef.current = null;
+    refreshMarkers();
 
     prevCountRef.current = candles.length;
     prevLastCandleKeyRef.current = lastKey;
-
-    // Always update tracked resolution and symbol after a full reload
     if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
     if (symbol != null) prevSymbolRef.current = symbol;
 
@@ -749,25 +720,19 @@ export default function CandleChart({
       userScrolledRef.current = false;
       if (onIntentionalReloadAckRef.current) onIntentionalReloadAckRef.current();
 
-      // If a waveTarget was passed (from charts-report click), zoom to that wave
       const wt = waveTargetRef.current;
       if (wt && wt.fromMs && wt.toMs && candles.length > 0) {
         const fromSec = Math.floor(wt.fromMs / 1000);
         const toSec = Math.floor(wt.toMs / 1000);
-
-        // Find logical indices of the wave's from/to candles
         const candleSecs = candles.map((c) => Math.floor(c.time / 1000));
         let fromIdx = candleSecs.findIndex((t) => t >= fromSec);
         let toIdx = candleSecs.findIndex((t) => t >= toSec);
         if (fromIdx < 0) fromIdx = 0;
         if (toIdx < 0) toIdx = candles.length - 1;
-
-        // Add comfortable padding around the wave (20% on each side)
         const waveSpan = toIdx - fromIdx;
         const padding = Math.max(Math.round(waveSpan * 0.5), 3);
         const from = Math.max(0, fromIdx - padding);
         const to = Math.min(candles.length - 1, toIdx + padding);
-
         setTimeout(() => {
           try {
             const tsc = chartRef.current?.timeScale();
@@ -776,49 +741,36 @@ export default function CandleChart({
             setTimeout(() => {
               try { chartRef.current?.priceScale("right").applyOptions({ autoScale: true }); } catch { }
             }, 80);
-          } catch {
-            resetView();
-          }
+          } catch { resetView(); }
         }, 50);
       } else {
         resetView();
       }
     } else if (isIntentional || resolutionChanged || symbolChanged) {
-      // User explicitly changed symbol / timeframe / clicked Refresh
       intentionalReloadRef.current = false;
       lastProcessedTokenRef.current = reloadToken;
       userScrolledRef.current = false;
       if (onIntentionalReloadAckRef.current) onIntentionalReloadAckRef.current();
       resetView();
     } else {
-      // Background auto-refresh with same timeframe but larger-than-tick diff
-      // (e.g. historical fill or initial socket push with more candles).
-      // Restore the exact viewport the user was looking at.
       if (savedRange) {
-        // Use setTimeout(0) so lightweight-charts finishes its internal layout
-        // before we force the range back — prevents the "jump to left" artifact.
         setTimeout(() => {
-          try {
-            chartRef.current?.timeScale().setVisibleLogicalRange(savedRange);
-          } catch {
-            resetView();
-          }
+          try { chartRef.current?.timeScale().setVisibleLogicalRange(savedRange); }
+          catch { resetView(); }
         }, 0);
       } else {
         resetView();
       }
     }
-  }, [candles, emaHighs, emaLows, signals]); // eslint-disable-line
+  }, [candles]); // eslint-disable-line
+  // ^ depends ONLY on candles. emaHighs/emaLows/signals read from refs — never trigger this effect.
 
-  // ── Bubble toggle ─────────────────────────────────────────────────────────
+  // ── Markers: refresh when signals, todayMode, or showBubble changes ────────
+  // These three are the ONLY things that should cause setMarkers to fire.
+  // Price ticks do NOT touch this effect because candles is not in the dep array here.
   useEffect(() => {
-    if (!candleRef.current || !candlesRef.current?.length) return;
-    setMarkersIfChanged(
-      candleRef.current,
-      showBubble ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current) : [],
-      prevMarkerKeyRef
-    );
-  }, [showBubble]); // eslint-disable-line
+    refreshMarkers();
+  }, [signals, todayMode, showBubble, refreshMarkers]); // eslint-disable-line
 
   // ── Waves toggle ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -829,16 +781,9 @@ export default function CandleChart({
     } else {
       removeWavesIndicator();
     }
-    if (candleRef.current && candlesRef.current?.length) {
-      setMarkersIfChanged(
-        candleRef.current,
-        showBubbleRef.current
-          ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
-          : [],
-        prevMarkerKeyRef
-      );
-    }
-  }, [showWaves]); // eslint-disable-line
+    // Waves toggle can shift marker positions — refresh
+    refreshMarkers();
+  }, [showWaves, refreshMarkers]); // eslint-disable-line
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>

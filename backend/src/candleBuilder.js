@@ -33,17 +33,17 @@
 
 // ── Constants ────────────────────────────────────────────────────
 const MARKET_OPEN_HOUR = 9;
-const MARKET_OPEN_MIN  = 15;
+const MARKET_OPEN_MIN = 15;
 const MARKET_CLOSE_HOUR = 15;
-const MARKET_CLOSE_MIN  = 30;
+const MARKET_CLOSE_MIN = 30;
 
 // Resolution → number of 1m candles per bar
 const TF_MINUTES = {
-  1:    1,
-  3:    3,
-  5:    5,
-  15:   15,
-  60:   60,
+  1: 1,
+  3: 3,
+  5: 5,
+  15: 15,
+  60: 60,
   1440: null, // "1D" — special: all candles in an IST calendar day
 };
 
@@ -77,8 +77,8 @@ class CandleBuilder {
    *                                     (finalizedCandle, formingCandles)
    */
   constructor({ onTick, onFinalize } = {}) {
-    this.onTick     = onTick     || (() => {});
-    this.onFinalize = onFinalize || (() => {});
+    this.onTick = onTick || (() => { });
+    this.onFinalize = onFinalize || (() => { });
 
     // Completed 1m candle history (oldest first)
     this._oneMinHistory = [];
@@ -97,12 +97,25 @@ class CandleBuilder {
    */
   seedHistory(candles) {
     if (!candles || candles.length === 0) return;
-    // Accept only closed candles — drop the last one if it looks like it's
-    // still forming (timestamp within the current minute).
-    const nowMinute = floorToMinute(Date.now());
-    this._oneMinHistory = candles.filter(
-      (c) => floorToMinute(c.time) < nowMinute
-    );
+    // Accept only closed candles. A REST candle is "still forming" only if
+    // its minute equals the CURRENT minute AND it's less than 30s into that
+    // minute (i.e. Fyers returned an in-progress candle). If we're already
+    // >30s into the current minute the REST candle is effectively closed and
+    // must be kept — otherwise we lose the 9:15 candle when the server starts
+    // during 9:16, creating a visible gap in the chart.
+    const nowMs = Date.now();
+    const nowMinute = floorToMinute(nowMs);
+    const secsIntoCurrentMinute = (nowMs - (nowMinute + 5.5 * 3600 * 1000 - 5.5 * 3600 * 1000)) / 1000;
+    // Simple rule: keep any candle whose floored minute is strictly before now,
+    // OR whose floored minute equals now but we're >45s into the minute
+    // (meaning Fyers already has a complete bar for it).
+    const msIntoMinute = nowMs % 60000;
+    this._oneMinHistory = candles.filter((c) => {
+      const candleMinute = floorToMinute(c.time);
+      if (candleMinute < nowMinute) return true;          // clearly closed
+      if (candleMinute === nowMinute && msIntoMinute > 45000) return true; // nearly done
+      return false; // truly forming — exclude
+    });
     console.log(
       `[CandleBuilder] Seeded ${this._oneMinHistory.length} historical 1m candles`
     );
@@ -118,7 +131,7 @@ class CandleBuilder {
     if (!price || price <= 0) return;
 
     // Fyers WS timestamps are Unix seconds; convert to ms
-    const tsMs   = (tick.timestamp || Math.floor(Date.now() / 1000)) * 1000;
+    const tsMs = (tick.timestamp || Math.floor(Date.now() / 1000)) * 1000;
     const minute = floorToMinute(tsMs);
 
     if (!this._forming1m) {
@@ -136,7 +149,7 @@ class CandleBuilder {
     } else {
       // Same minute — update forming candle
       if (price > this._forming1m.high) this._forming1m.high = price;
-      if (price < this._forming1m.low)  this._forming1m.low  = price;
+      if (price < this._forming1m.low) this._forming1m.low = price;
       this._forming1m.close = price;
     }
 
@@ -155,7 +168,7 @@ class CandleBuilder {
   getCandlesForResolution(resolution) {
     const res = Number(resolution);
     const completed = this._buildCompletedBars(res);
-    const forming   = this._buildFormingBar(res);
+    const forming = this._buildFormingBar(res);
     if (forming) return [...completed, forming];
     return completed;
   }
@@ -171,11 +184,11 @@ class CandleBuilder {
 
   _newCandle(timeMs, price) {
     return {
-      time:   timeMs,
-      open:   price,
-      high:   price,
-      low:    price,
-      close:  price,
+      time: timeMs,
+      open: price,
+      high: price,
+      low: price,
+      close: price,
       volume: 0,
     };
   }
@@ -302,11 +315,11 @@ class CandleBuilder {
     // Window start in IST
     const windowMinuteSinceMidnight = marketOpenMins + windowMinuteSinceOpen;
     const windowHour = Math.floor(windowMinuteSinceMidnight / 60);
-    const windowMin  = windowMinuteSinceMidnight % 60;
+    const windowMin = windowMinuteSinceMidnight % 60;
 
     // Build UTC ms for window start
     const dateStr = d.toISOString().slice(0, 10); // "YYYY-MM-DD"
-    const windowUtc = new Date(`${dateStr}T${String(windowHour).padStart(2,'0')}:${String(windowMin).padStart(2,'0')}:00.000Z`).getTime()
+    const windowUtc = new Date(`${dateStr}T${String(windowHour).padStart(2, '0')}:${String(windowMin).padStart(2, '0')}:00.000Z`).getTime()
       - IST_OFFSET_MS;
 
     return windowUtc;
@@ -319,11 +332,11 @@ class CandleBuilder {
   _aggregateCandles(candles, barTime) {
     if (!candles || candles.length === 0) return null;
     return {
-      time:   barTime,
-      open:   candles[0].open,
-      high:   Math.max(...candles.map((c) => c.high)),
-      low:    Math.min(...candles.map((c) => c.low)),
-      close:  candles[candles.length - 1].close,
+      time: barTime,
+      open: candles[0].open,
+      high: Math.max(...candles.map((c) => c.high)),
+      low: Math.min(...candles.map((c) => c.low)),
+      close: candles[candles.length - 1].close,
       volume: candles.reduce((s, c) => s + (c.volume || 0), 0),
     };
   }

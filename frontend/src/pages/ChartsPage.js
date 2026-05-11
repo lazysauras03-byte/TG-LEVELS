@@ -193,7 +193,13 @@ export default function ChartsPage() {
   const candles = chartData?.candles || [];
   const emaHighs = chartData?.emaHighs || [];
   const emaLows = chartData?.emaLows || [];
-  const signals = chartData?.signals || [];
+  // Stabilize signals with useMemo: only create a new array reference when
+  // signal content actually changes (new NH/NL/BC generated). Without this,
+  // every tick replaces chartData → new signals array ref → markers effect
+  // fires → setMarkers called on every price tick → choppiness.
+  // The key is cheap: just type+time of each signal.
+  const signalsRaw = chartData?.signals || [];
+  const signals = useMemo(() => signalsRaw, [signalsRaw.map((s) => `${s.type}:${s.time}`).join("|")]); // eslint-disable-line
   const currentState = chartData?.currentState ?? 0;
   const bestPrice = chartData?.bestPrice;
 

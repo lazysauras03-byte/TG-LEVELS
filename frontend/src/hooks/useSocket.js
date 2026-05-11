@@ -134,6 +134,16 @@ export function useSocket() {
 
     socket.on("chart_update", (d) => {
       if (!matchesActive(d)) return;
+      // Sync active refs from socket data — critical for page-reload tick-by-tick:
+      // on a fresh page load, activeResolutionRef is null until fetchChart completes,
+      // but chart_update arrives via socket first. Without syncing here, the first
+      // tick_update passes matchesActive (null passes everything) but handleCandleUpdate
+      // works fine. However if a chart_update arrives AFTER a tick, the candle count
+      // jump is >1 and falls into full setData — which is actually fine. The real
+      // issue was activeResolutionRef staying null causing matchesActive to always
+      // pass, then a symbol-change tick hitting the wrong series. Fix: always sync.
+      if (d.resolution != null) activeResolutionRef.current = Number(d.resolution);
+      if (d.symbol) activeSymbolRef.current = d.symbol;
       lastSocketUpdateRef.current = Date.now();
       setChartData(d);
       hasDataRef.current = true;
@@ -149,12 +159,26 @@ export function useSocket() {
         const { formingCandle: fc, timestamp } = d;
         const candles = prev.candles;
         const last = candles[candles.length - 1];
-        const fcMin = Math.floor(fc.time / 60000);
-        const lastMin = Math.floor(last.time / 60000);
+
+        // Normalize to ms — candle times may be seconds (LW format) or ms
+        const toMs = (t) => (t > 1e10 ? t : t * 1000);
+        const fcMs = toMs(fc.time);
+        const lastMs = toMs(last.time);
+        const fcMin = Math.floor(fcMs / 60000);
+        const lastMin = Math.floor(lastMs / 60000);
+
         let updated;
-        if (fcMin === lastMin) updated = [...candles.slice(0, -1), { ...last, ...fc }];
-        else if (fcMin > lastMin) updated = [...candles, fc];
-        else return prev;
+        if (fcMin === lastMin) {
+          // Tick update for the current (last) candle — update in place
+          updated = [...candles.slice(0, -1), { ...last, ...fc, time: last.time }];
+        } else if (fcMin > lastMin) {
+          // New minute started — append the forming candle
+          // Preserve time in same unit as existing candles
+          const newCandle = { ...fc, time: last.time > 1e10 ? fcMs : Math.floor(fcMs / 1000) };
+          updated = [...candles, newCandle];
+        } else {
+          return prev; // stale tick, ignore
+        }
         return { ...prev, candles: updated, lastUpdate: new Date(timestamp || Date.now()).toISOString() };
       });
     }
@@ -169,12 +193,23 @@ export function useSocket() {
         const { candle: nc, timestamp } = d;
         const candles = prev.candles;
         const last = candles[candles.length - 1];
-        const ncMin = Math.floor(nc.time / 60000);
-        const lastMin = Math.floor(last.time / 60000);
+
+        // Normalize to ms — times may be seconds or ms
+        const toMs = (t) => (t > 1e10 ? t : t * 1000);
+        const ncMs = toMs(nc.time);
+        const lastMs = toMs(last.time);
+        const ncMin = Math.floor(ncMs / 60000);
+        const lastMin = Math.floor(lastMs / 60000);
+
         let updated;
-        if (ncMin === lastMin) updated = [...candles.slice(0, -1), { ...last, ...nc }];
-        else if (ncMin > lastMin) updated = [...candles, nc];
-        else return prev;
+        if (ncMin === lastMin) {
+          updated = [...candles.slice(0, -1), { ...last, ...nc, time: last.time }];
+        } else if (ncMin > lastMin) {
+          const newCandle = { ...nc, time: last.time > 1e10 ? ncMs : Math.floor(ncMs / 1000) };
+          updated = [...candles, newCandle];
+        } else {
+          return prev;
+        }
         return { ...prev, candles: updated, lastUpdate: new Date(timestamp || Date.now()).toISOString() };
       });
     });
