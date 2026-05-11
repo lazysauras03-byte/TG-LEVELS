@@ -4,7 +4,7 @@
 //   • intentionalReload flag drives resetView() — NOT auto-refresh
 //   • WavesIndicator only redraws on actual change
 //   • Bubble markers: ZERO setMarkers calls during price ticks — only on signal/todayMode/bubble changes
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useState } from "react";
 import { createChart, CrosshairMode, LineStyle } from "lightweight-charts";
 import {
   createWavesIndicator,
@@ -530,12 +530,12 @@ export default function CandleChart({
 
     const emaHiSeries = chart.addLineSeries({
       color: "rgba(0,217,126,0.6)", lineWidth: 1.5, lineStyle: LineStyle.Solid,
-      priceLineVisible: false, lastValueVisible: true, title: "EMA9H",
+      priceLineVisible: false, lastValueVisible: false,
     });
 
     const emaLoSeries = chart.addLineSeries({
       color: "rgba(255,69,96,0.6)", lineWidth: 1.5, lineStyle: LineStyle.Solid,
-      priceLineVisible: false, lastValueVisible: true, title: "EMA9L",
+      priceLineVisible: false, lastValueVisible: false,
     });
 
     chartRef.current = chart;
@@ -785,6 +785,87 @@ export default function CandleChart({
     refreshMarkers();
   }, [showWaves, refreshMarkers]); // eslint-disable-line
 
+  // ── Candle countdown timer — pixel-tracked to last price ──────────────────
+  // timerInfo: { price, secsLeft, isBull, yPx }
+  // yPx is the canvas Y-coordinate of the last close price so the badge
+  // sits exactly on the price line and moves tick-by-tick with the market.
+  const [timerInfo, setTimerInfo] = useState(null);
+  const timerRafRef = useRef(null);
+
+  useEffect(() => {
+    let intervalId = null;
+    let secsLeft = 0;
+
+    function getPriceY(price) {
+      // candleRef is the candlestick series — it has priceToCoordinate()
+      try {
+        const y = candleRef.current?.priceToCoordinate(price);
+        return (y != null && isFinite(y)) ? y : null;
+      } catch { return null; }
+    }
+
+    function computeSecsLeft(candleStartMs, resMins) {
+      const resMs = resMins * 60 * 1000;
+      const candleEndMs = candleStartMs + resMs;
+      return Math.max(0, Math.round((candleEndMs - Date.now()) / 1000));
+    }
+
+    function update() {
+      const candles = candlesRef.current;
+      if (!candles || candles.length === 0) { setTimerInfo(null); return; }
+
+      const lastCandle = candles.at(-1);
+      const close = lastCandle.close;
+      const open = lastCandle.open;
+      const isBull = close >= open;
+      const resMins = activeResolution ? Number(activeResolution) : 1;
+
+      secsLeft = computeSecsLeft(lastCandle.time, resMins);
+      const yPx = getPriceY(close);
+
+      setTimerInfo({ price: close, secsLeft, isBull, yPx });
+    }
+
+    // Tick the countdown every second
+    function tick() {
+      const candles = candlesRef.current;
+      if (!candles || candles.length === 0) return;
+      const lastCandle = candles.at(-1);
+      const close = lastCandle.close;
+      const open = lastCandle.open;
+      const isBull = close >= open;
+      const resMins = activeResolution ? Number(activeResolution) : 1;
+      secsLeft = computeSecsLeft(lastCandle.time, resMins);
+      const yPx = getPriceY(close);
+      setTimerInfo({ price: close, secsLeft, isBull, yPx });
+    }
+
+    // Recompute Y position on each animation frame so the badge tracks
+    // vertical chart pans/zooms instantly without waiting for the 1s interval.
+    function rafLoop() {
+      const candles = candlesRef.current;
+      if (candles && candles.length > 0) {
+        const close = candles.at(-1).close;
+        const yPx = getPriceY(close);
+        setTimerInfo((prev) => {
+          if (!prev) return prev;
+          if (prev.yPx === yPx) return prev; // avoid re-render if nothing changed
+          return { ...prev, yPx };
+        });
+      }
+      timerRafRef.current = requestAnimationFrame(rafLoop);
+    }
+
+    update();
+    intervalId = setInterval(tick, 1000);
+    timerRafRef.current = requestAnimationFrame(rafLoop);
+
+    return () => {
+      clearInterval(intervalId);
+      if (timerRafRef.current) cancelAnimationFrame(timerRafRef.current);
+    };
+  }, [candles, activeResolution]); // eslint-disable-line
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
@@ -799,6 +880,37 @@ export default function CandleChart({
         <span>Right-click → latest candle</span>
         <span style={{ color: "#3a4060" }}>Hold Ctrl to measure</span>
       </div>
+
+      {/* ── Candle Timer — countdown only, sits below the native last-price axis label ── */}
+      {timerInfo && timerInfo.yPx != null && (
+        <div style={{
+          position: "absolute",
+          // ~11px below the price line so it clears the native axis label (~20px tall)
+          top: timerInfo.yPx + 11,
+          // Flush against the right edge — same width as the price scale axis
+          right: 0,
+          pointerEvents: "none",
+          userSelect: "none",
+          zIndex: 10,
+        }}>
+          <div style={{
+            background: timerInfo.isBull ? "rgba(0,160,85,0.95)" : "rgba(200,40,55,0.95)",
+            color: "#ffffff",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontWeight: 700,
+            fontSize: 11,
+            padding: "2px 0",
+            letterSpacing: "0.06em",
+            lineHeight: 1.5,
+            textAlign: "center",
+            whiteSpace: "nowrap",
+            // Match the width of the right price scale so it looks native
+            width: 68,
+          }}>
+            {String(Math.floor(timerInfo.secsLeft / 60)).padStart(2, "0")}:{String(timerInfo.secsLeft % 60).padStart(2, "0")}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
