@@ -648,17 +648,22 @@ export default function CandleChart({
       const startIdx = isNewCandleAppended ? prevCount : candles.length - 1;
       for (let ni = startIdx; ni < candles.length; ni++) {
         const nc = candles[ni];
-        const bar = { time: Math.floor(nc.time / 1000), open: nc.open, high: nc.high, low: nc.low, close: nc.close };
+        const t = Math.floor(nc.time / 1000);
+        if (!Number.isFinite(t) || t <= 0) continue; // skip invalid candles
+        const bar = { time: t, open: nc.open, high: nc.high, low: nc.low, close: nc.close };
         candleRef.current.update(bar);
         if (emaH[ni] != null && !isNaN(emaH[ni])) emaHiRef.current.update({ time: bar.time, value: emaH[ni] });
         if (emaL[ni] != null && !isNaN(emaL[ni])) emaLoRef.current.update({ time: bar.time, value: emaL[ni] });
       }
       // Re-push last candle to handle same-minute tick updates
-      const lc = { time: Math.floor(last.time / 1000), open: last.open, high: last.high, low: last.low, close: last.close };
-      candleRef.current.update(lc);
-      const li = candles.length - 1;
-      if (emaH[li] != null && !isNaN(emaH[li])) emaHiRef.current.update({ time: lc.time, value: emaH[li] });
-      if (emaL[li] != null && !isNaN(emaL[li])) emaLoRef.current.update({ time: lc.time, value: emaL[li] });
+      const lcT = Math.floor(last.time / 1000);
+      if (Number.isFinite(lcT) && lcT > 0) {
+        const lc = { time: lcT, open: last.open, high: last.high, low: last.low, close: last.close };
+        candleRef.current.update(lc);
+        const li = candles.length - 1;
+        if (emaH[li] != null && !isNaN(emaH[li])) emaHiRef.current.update({ time: lc.time, value: emaH[li] });
+        if (emaL[li] != null && !isNaN(emaL[li])) emaLoRef.current.update({ time: lc.time, value: emaL[li] });
+      }
 
       if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
 
@@ -689,15 +694,19 @@ export default function CandleChart({
     const emaL = emaLowsRef.current;
 
     candleRef.current.setData(
-      candles.map((c) => ({ time: Math.floor(c.time / 1000), open: c.open, high: c.high, low: c.low, close: c.close }))
+      candles
+        .map((c) => ({ time: Math.floor(c.time / 1000), open: c.open, high: c.high, low: c.low, close: c.close }))
+        .filter((c) => Number.isFinite(c.time) && c.time > 0)
+        .sort((a, b) => a.time - b.time)
+        .filter((c, i, arr) => i === 0 || c.time !== arr[i - 1].time)
     );
     emaHiRef.current.setData(
       candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaH[i] }))
-        .filter((d) => d.value != null && !isNaN(d.value))
+        .filter((d) => d.value != null && !isNaN(d.value) && Number.isFinite(d.time) && d.time > 0)
     );
     emaLoRef.current.setData(
       candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaL[i] }))
-        .filter((d) => d.value != null && !isNaN(d.value))
+        .filter((d) => d.value != null && !isNaN(d.value) && Number.isFinite(d.time) && d.time > 0)
     );
 
     if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);

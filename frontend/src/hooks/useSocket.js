@@ -14,10 +14,10 @@ import { io } from "socket.io-client";
 import axios from "axios";
 
 // Auto-detects hostname so it works on localhost AND LAN (192.168.x.x:3000).
-// Override by setting REACT_APP_BACKEND_URL=http://localhost:3299 in frontend/.env
+// Override by setting REACT_APP_BACKEND_URL=http://localhost:9004 in frontend/.env
 const BACKEND =
   process.env.REACT_APP_BACKEND_URL ||
-  `${window.location.protocol}//${window.location.hostname}:3299`;
+  `${window.location.protocol}//${window.location.hostname}:9004`;
 
 // ── IST live-market check (frontend guard for REST poll fallback only) ─────────
 function isLiveMarketFrontend() {

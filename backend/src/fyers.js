@@ -188,14 +188,22 @@ async function fetchCandles(symbol, resolution, count = 10000) {
   }
 
   const raw = res.candles || [];
-  return raw.map((c) => ({
-    time: c[0] * 1000, // ms; Fyers timestamps are already IST epoch seconds
-    open: c[1],
-    high: c[2],
-    low: c[3],
-    close: c[4],
-    volume: c[5],
-  }));
+  return raw
+    .map((c) => ({
+      time: c[0] * 1000, // ms; Fyers timestamps are already IST epoch seconds
+      open: c[1],
+      high: c[2],
+      low: c[3],
+      close: c[4],
+      volume: c[5],
+    }))
+    .filter((c) =>
+      Number.isFinite(c.time) && c.time > 0 &&
+      Number.isFinite(c.open) &&
+      Number.isFinite(c.high) &&
+      Number.isFinite(c.low) &&
+      Number.isFinite(c.close)
+    );
 }
 
 module.exports = { loadToken, saveToken, getAuthURL, generateToken, validateToken, fetchCandles };

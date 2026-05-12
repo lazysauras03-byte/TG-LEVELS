@@ -212,10 +212,18 @@ async function maybeStartTickStream() {
 
 // ─── Payload builder ──────────────────────────────────────────────────────────
 function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false) {
+  // Sanitize: remove candles with invalid times, deduplicate, ensure ascending order
+  const clean = (candles || [])
+    .filter((c) => Number.isFinite(c.time) && c.time > 0 &&
+      Number.isFinite(c.open) && Number.isFinite(c.high) &&
+      Number.isFinite(c.low) && Number.isFinite(c.close))
+    .sort((a, b) => a.time - b.time)
+    .filter((c, i, arr) => i === 0 || c.time !== arr[i - 1].time); // deduplicate same timestamp
+
   return {
     symbol,
     resolution: Number(resolution),
-    candles,
+    candles: clean,
     emaHighs: result.emaHighs,
     emaLows: result.emaLows,
     signals: result.signals,
@@ -568,7 +576,7 @@ io.on("connection", (socket) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-const PORT = parseInt(process.env.PORT || "3299");
+const PORT = parseInt(process.env.PORT || "9004");
 server.listen(PORT, async () => {
   console.log(`\n✅ TGG Backend running on http://localhost:${PORT}`);
   console.log(`   Health  : http://localhost:${PORT}/health`);
