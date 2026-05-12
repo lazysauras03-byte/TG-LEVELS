@@ -60,10 +60,15 @@ let autoRefreshTimer = null;
 const socketResolutions = new Map();
 let lastTickAt = 0;
 let lastConnectAt = 0;
-// Set to true once initialRestFetch() completes. Prevents GET /api/chart
-// from returning empty candles while backend is still starting up.
+// Set to true once initialRestFetch() completes.
+// GET /api/chart waits up to INIT_WAIT_MS for this before responding.
 let initialFetchDone = false;
 const initialFetchWaiters = [];
+
+// IMPORTANT: Keep this well under the frontend's 20 000 ms axios timeout.
+// 8 s gives the backend enough time to warm up while ensuring the browser
+// never times out waiting for the first GET /api/chart response.
+const INIT_WAIT_MS = 8_000;
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 function cacheKey(symbol, resolution) {
@@ -102,14 +107,6 @@ function getOrCreateBuilder(symbol) {
         emitCandleUpdate(symbol, formingCandles);
         emitFinalCandle(symbol, finalizedCandle);
 
-        // Update cache for all resolutions immediately (silent — no emit).
-        // We already emitted tick_update/candle_update above for the forming
-        // state; sending chart_update on top of that within the same event loop
-        // turn causes the frontend to do a redundant full setData() which
-        // flashes the chart and can cause viewport jumps.
-        // Instead we schedule a single chart_update 200ms later — by then the
-        // tick_update has been processed and the chart is stable. Only rooms
-        // that are actually occupied get the broadcast.
         setImmediate(() => {
           const b = candleBuilders.get(symbol);
           if (!b) return;
@@ -124,8 +121,7 @@ function getOrCreateBuilder(symbol) {
             }
           }
         });
-        // Deferred broadcast: send chart_update once per candle finalize,
-        // but only after the incremental tick_update has settled on the client.
+
         setTimeout(() => {
           const b = candleBuilders.get(symbol);
           if (!b) return;
@@ -190,11 +186,6 @@ tickStream.on("error", (err) => {
   console.error("[TickStream] Error:", err?.message || err);
 });
 
-/**
- * maybeStartTickStream
- * Only starts on Mon–Fri between 09:15–15:30 IST.
- * Safe to call any time — all guards are internal.
- */
 async function maybeStartTickStream() {
   if (!isTradingDay()) {
     console.log("[TickStream] Weekend — tick stream not needed.");
@@ -233,16 +224,9 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
 }
 
 // ─── Core fetch & process ─────────────────────────────────────────────────────
-/**
- * fetchAndProcess
- * Always uses Fyers REST — works 24/7 including weekends and after-hours.
- * Fyers history endpoint returns the last available trading session data
- * regardless of when you call it.
- */
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH);
 
-  // Reset builder if instrument changed drastically (price scale mismatch)
   if (candleBuilders.has(symbol)) {
     const existing = candleBuilders.get(symbol).getOneMinHistory();
     if (existing.length > 0 && raw1m.length > 0) {
@@ -298,6 +282,7 @@ app.get("/health", (req, res) => {
     tickStreamActive: tickStream.isConnected(),
     liveMarket: isLiveMarket(),
     tradingDay: isTradingDay(),
+    initialFetchDone,
   });
 });
 
@@ -332,22 +317,25 @@ app.post("/api/auth/token", async (req, res) => {
 
 /**
  * GET /api/chart?symbol=X&resolution=Y
- * Works any time, any day, any symbol (including Excel imports).
+ *
+ * Waits up to INIT_WAIT_MS (8 s) for the initial REST fetch to complete.
+ * This is safely under the frontend's 20 s axios timeout, so the browser
+ * will never see a "timeout of 20000ms exceeded" error on first load.
  *
  * Cache TTL:
- *   Live market (Mon–Fri 9:15–15:30):  60 seconds  (tick stream keeps it fresher)
- *   Weekday outside hours:             5 minutes   (data is settled)
- *   Weekend / holiday:                 24 hours    (data will not change)
+ *   Live market (Mon–Fri 9:15–15:30):  60 seconds
+ *   Weekday outside hours:             5 minutes
+ *   Weekend / holiday:                 24 hours
  */
 app.get("/api/chart", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
 
-  // Wait up to 30 s for startup initialRestFetch before responding.
-  // This prevents the frontend receiving 0 candles on a cold start.
+  // Wait for initial fetch — but cap at INIT_WAIT_MS so we never exceed
+  // the frontend's 20 s timeout even on very slow startup.
   if (!initialFetchDone) {
     await new Promise((resolve) => {
-      const t = setTimeout(resolve, 30_000);
+      const t = setTimeout(resolve, INIT_WAIT_MS);
       initialFetchWaiters.push(() => { clearTimeout(t); resolve(); });
     });
   }
@@ -381,8 +369,6 @@ app.get("/api/chart", async (req, res) => {
 /**
  * POST /api/chart/refresh?symbol=X&resolution=Y
  * Manual refresh — always fetches fresh from Fyers REST.
- * Works on weekends, after hours, for any symbol from Excel.
- * Broadcasts fresh data to all connected socket clients.
  */
 app.post("/api/chart/refresh", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
@@ -427,17 +413,15 @@ app.get("/api/signals", async (req, res) => {
 app.use("/api/symbols", symbolsRouter);
 
 // ─── Tick Watchdog ────────────────────────────────────────────────────────────
-// Only fires during live market hours. Restarts WS if silent for TICK_WATCHDOG_MS.
 function startTickWatchdog() {
   setInterval(() => {
-    if (!isTradingDay()) return;   // weekend — never fire
-    if (!isLiveMarket()) return;   // outside 9:15–15:30 — never fire
+    if (!isTradingDay()) return;
+    if (!isLiveMarket()) return;
     if (!tickStream.isConnected()) return;
 
     const now = Date.now();
-    // Grace period after connect — don't watchdog during initial subscription
     if (lastConnectAt > 0 && now - lastConnectAt < WATCHDOG_GRACE_MS) return;
-    if (lastTickAt === 0) return;  // haven't seen a tick yet — wait
+    if (lastTickAt === 0) return;
 
     const silenceMs = now - lastTickAt;
     if (silenceMs > TICK_WATCHDOG_MS) {
@@ -455,15 +439,13 @@ function startTickWatchdog() {
 }
 
 // ─── Auto-refresh fallback ────────────────────────────────────────────────────
-// REST fallback poll — only runs when tick stream is DOWN during live market hours.
-// On weekends / after-hours: does nothing (data is static, no point polling).
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
 
   autoRefreshTimer = setInterval(async () => {
-    if (!isTradingDay()) return;      // weekend — skip
-    if (!isLiveMarket()) return;      // outside 9:15–15:30 — skip
-    if (tickStream.isConnected()) return; // tick stream live — skip
+    if (!isTradingDay()) return;
+    if (!isLiveMarket()) return;
+    if (tickStream.isConnected()) return;
 
     const valid = await validateToken();
     if (!valid) return;
@@ -483,9 +465,6 @@ function startAutoRefresh() {
 }
 
 // ─── Initial REST fetch ───────────────────────────────────────────────────────
-// Runs at startup. Fetches historical candles via REST so the chart is populated
-// immediately — works 24/7 including weekends. Fyers REST returns the last
-// available trading session candles regardless of the current day/time.
 async function initialRestFetch() {
   const valid = await validateToken().catch(() => false);
   if (!valid) {
@@ -510,7 +489,7 @@ async function initialRestFetch() {
     } catch (err) {
       console.error(`[INIT] Attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
       if (attempt < MAX_RETRIES) {
-        const wait = 3000 * attempt;
+        const wait = 2000 * attempt;
         console.log(`[INIT] Waiting ${wait / 1000}s before retry...`);
         await new Promise((r) => setTimeout(r, wait));
       }
@@ -593,13 +572,14 @@ server.listen(PORT, async () => {
   startAutoRefresh();
   startTickWatchdog();
 
-  // Step 1: Always seed chart from Fyers REST (works 24/7, any symbol, any day)
+  // Step 1: Seed chart from Fyers REST (works 24/7)
   await initialRestFetch();
+
   // Unblock any GET /api/chart requests that arrived during startup.
   initialFetchDone = true;
   while (initialFetchWaiters.length) initialFetchWaiters.pop()();
 
-  // Step 2: Start tick stream only if the market is currently live
+  // Step 2: Start tick stream only if market is live
   if (isLiveMarket()) {
     console.log("[INIT] Market is live — starting tick stream for real-time candles.");
     await maybeStartTickStream();
