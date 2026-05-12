@@ -60,7 +60,12 @@ function computeFibLevels(segment) {
 function getLastMotherwave(candles, emaHighs, emaLows) {
   const { segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
   if (!segments.length) return null;
-  return segments[segments.length - 1];
+  // Use the largest wave by absolute delta — matches Reports page "Δ Descending" top row
+  return segments.reduce((best, seg) => {
+    const d = Math.abs(seg.toPrice - seg.fromPrice);
+    const bd = Math.abs(best.toPrice - best.fromPrice);
+    return d > bd ? seg : best;
+  }, segments[0]);
 }
 
 function getBias(segment) {
@@ -167,11 +172,17 @@ function WaveCard({ segment, tfLabel }) {
   if (!segment) return <div className="fdb-no-wave">No mother wave detected</div>;
   const isBull = segment.toSide === "high";
   const delta = Math.abs(segment.toPrice - segment.fromPrice).toFixed(1);
+  const waveNum = segment.waveNum != null ? segment.waveNum : null;
   return (
     <div className={`fdb-wave-card ${isBull ? "bull" : ""}`}>
-      <span className={`fdb-wave-dir ${isBull ? "fdb-bull-dir" : "fdb-bear-dir"}`}>
-        {isBull ? "▲ Bull" : "▼ Bear"}
-      </span>
+      <div className="fdb-wave-card-header">
+        <span className={`fdb-wave-dir ${isBull ? "fdb-bull-dir" : "fdb-bear-dir"}`}>
+          {isBull ? "▲ Bull" : "▼ Bear"}
+        </span>
+        {waveNum != null && (
+          <span className="fdb-wave-num">Wave {waveNum}</span>
+        )}
+      </div>
       <div className="fdb-wave-range">
         {fmt(segment.fromPrice)} → {fmt(segment.toPrice)}
       </div>
