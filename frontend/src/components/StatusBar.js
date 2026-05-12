@@ -121,27 +121,8 @@ function StatusBar({
   }
 
   function handleKeyDown(e) {
-    if (e.key === "Escape") { setShowDrop(false); setQuery(symbol); return; }
-    if (e.key === "Enter") {
-      setShowDrop(false);
-      // Only submit if it looks like a fully-qualified Fyers symbol (contains ":")
-      // OR exactly matches a known symbol from the list. Partial strings like
-      // "nifty" are rejected — the input resets to the last valid symbol.
-      const trimmed = query.trim();
-      const isValid =
-        trimmed.includes(":") ||
-        symbols.some((s) => s.symbol.toLowerCase() === trimmed.toLowerCase());
-      if (!isValid) {
-        // Reset input to the last committed symbol without firing a refresh
-        setQuery(symbol);
-        return;
-      }
-      const resolved = symbols.find(
-        (s) => s.symbol.toLowerCase() === trimmed.toLowerCase()
-      )?.symbol || trimmed.toUpperCase();
-      onSymbolChange(resolved);
-      onRefresh(resolved, resolution);
-    }
+    if (e.key === "Enter") { setShowDrop(false); onSymbolChange(query); onRefresh(query, resolution); }
+    if (e.key === "Escape") setShowDrop(false);
   }
 
   useEffect(() => {
@@ -171,7 +152,6 @@ function StatusBar({
             onChange={handleQueryChange}
             onKeyDown={handleKeyDown}
             onFocus={() => query && setShowDrop(suggestions.length > 0)}
-            onBlur={() => { setShowDrop(false); if (!query.includes(':')) setQuery(symbol); }}
             style={styles.input}
             placeholder="Search symbol…"
             autoComplete="off"

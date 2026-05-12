@@ -87,13 +87,10 @@ export default function ChartsPage() {
 
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
 
-  const [symbol, setSymbol] = useState(() => {
-    if (urlSymbol) return urlSymbol;
-    const saved = loadPref("symbol", "NSE:NIFTY50-INDEX");
-    return (typeof saved === "string" && saved.includes(":")) ? saved : "NSE:NIFTY50-INDEX";
-  });
+  const [symbol, setSymbol] = useState(() => urlSymbol || loadPref("symbol", "NSE:NIFTY50-INDEX"));
   const [resolution, setResolution] = useState(() => urlResolution || loadPref("resolution", 3));
   const [todayMode, setTodayMode] = useState(() => {
+    // If we're navigating to a specific wave, disable today-only mode
     if (urlSymbol || urlResolution) return false;
     return loadPref("todayMode", true);
   });
@@ -111,6 +108,7 @@ export default function ChartsPage() {
   // ── Indicator state ───────────────────────────────────────────────────────
   const [indicators, setIndicators] = useState(() => {
     const defaults = loadPref("indicators", buildDefaultIndicators());
+    // When navigating from wave report, ensure waves indicator is on
     if (waveTarget) return { ...defaults, waves: true };
     return defaults;
   });
@@ -145,6 +143,11 @@ export default function ChartsPage() {
   const chartResetRef = useRef(null);
   const handleResetViewReady = useCallback((fn) => { chartResetRef.current = fn; }, []);
 
+  // ── intentionalReload — use a counter instead of boolean so even rapid
+  //    double-clicks (same resolution) still produce a stable signal.
+  //    CandleChart reads this as "any nonzero value = do full reload".
+  //    We increment on user action, CandleChart acknowledges by calling back
+  //    via onIntentionalReloadAck, which resets it to 0.
   const [reloadToken, setReloadToken] = useState(0);
 
   const handleIntentionalReloadAck = useCallback(() => {
@@ -163,25 +166,22 @@ export default function ChartsPage() {
 
   const handleSymbolChange = useCallback((sym) => {
     setSymbol(sym);
+    // refresh() is called by StatusBar immediately after onSymbolChange
   }, []);
 
   const handleResolutionChange = useCallback((res) => {
     setResolution(res);
     triggerIntentionalReload();
+    // refresh() is called by StatusBar immediately after onResolutionChange
   }, [triggerIntentionalReload]);
 
-  // ── Initial symbol/resolution sync on mount ───────────────────────────────
-  // If the URL specified a symbol or resolution that differs from the default,
-  // tell the socket about it. We do NOT call refresh() on cold start —
-  // useSocket's own fetchChart (GET /api/chart) handles initial data loading.
-  // Calling refresh() (POST) on mount races with the backend's initialRestFetch
-  // and can cause the "Network Error" / "No Data Yet" state on first load.
-  const didSyncRef = useRef(false);
+  // ── Initial data fetch ────────────────────────────────────────────────────
+  const didInitialFetch = useRef(false);
   useEffect(() => {
-    if (!didSyncRef.current && (urlSymbol || urlResolution)) {
-      didSyncRef.current = true;
+    if (!didInitialFetch.current) {
+      didInitialFetch.current = true;
       triggerIntentionalReload();
-      refresh(urlSymbol ?? symbol, urlResolution ?? resolution);
+      refresh(symbol, resolution);
     }
   }, []); // eslint-disable-line
 
@@ -193,10 +193,19 @@ export default function ChartsPage() {
   const candles = chartData?.candles || [];
   const emaHighs = chartData?.emaHighs || [];
   const emaLows = chartData?.emaLows || [];
+  // Stabilize signals with useMemo: only create a new array reference when
+  // signal content actually changes (new NH/NL/BC generated). Without this,
+  // every tick replaces chartData → new signals array ref → markers effect
+  // fires → setMarkers called on every price tick → choppiness.
+  // The key is cheap: just type+time of each signal.
   const signalsRaw = chartData?.signals || [];
   const signals = useMemo(() => signalsRaw, [signalsRaw.map((s) => `${s.type}:${s.time}`).join("|")]); // eslint-disable-line
   const currentState = chartData?.currentState ?? 0;
   const bestPrice = chartData?.bestPrice;
+
+  // The resolution that the currently-loaded chartData actually contains.
+  // We pass this into CandleChart so it can detect a timeframe switch even
+  // when candle count happens to be the same as the previous timeframe.
   const chartDataResolution = chartData?.resolution ?? resolution;
 
   const showLoadingScreen = loading && candles.length === 0;

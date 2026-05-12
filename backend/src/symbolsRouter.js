@@ -1,18 +1,17 @@
 /**
  * symbolsRouter.js
  * ─────────────────────────────────────────────────────────────────
- * Provides a REST endpoint for the symbol search dropdown.
+ * Provides a REST endpoint that merges symbols from:
+ *   1. frontend/src/symbols.json  (curated list)
+ *   2. frontend/src/stocks.xlsx   (EQ sheet — 203 NSE equities)
+ *   3. frontend/src/NIFTY.xlsx    (same format, Nifty-specific list)
  *
- * Source of truth: frontend/src/symbols.json
- *   - 206 symbols (indices + NSE equities)
- *   - NSE:NIFTY50-INDEX is always the first entry
- *   - Maintained as a plain JSON file — no xlsx dependency needed
+ * GET /api/symbols
+ *   Returns: [{ symbol: "NSE:NIFTY50-INDEX", name: "NIFTY 50" }, ...]
+ *   Deduped by symbol string, sorted alphabetically by name.
+ *   Indices (NIFTY50-INDEX, NIFTYBANK-INDEX, SENSEX) appear first.
  *
- * GET  /api/symbols           → full list
- * GET  /api/symbols/search?q= → filtered search (max 20 results)
- * POST /api/symbols/refresh   → force reload from disk
- *
- * The list is cached in memory for 1 hour and reloaded on refresh.
+ * The merged list is cached at startup (re-read if file changes).
  * ─────────────────────────────────────────────────────────────────
  */
 
@@ -24,39 +23,73 @@ const fs = require("fs");
 
 const router = express.Router();
 
-const SYMBOLS_JSON = path.resolve(__dirname, "../../frontend/src/symbols.json");
+// Paths relative to backend/src/
+const FRONTEND_SRC = path.resolve(__dirname, "../../frontend/src");
+const SYMBOLS_JSON = path.join(FRONTEND_SRC, "symbols.json");
+const STOCKS_XLSX = path.join(FRONTEND_SRC, "stocks.xlsx");
+const NIFTY_XLSX = path.join(FRONTEND_SRC, "NIFTY.xlsx");
 
 let _cachedSymbols = null;
 let _cacheTime = 0;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-function loadSymbols() {
+function loadExcel(filePath) {
   try {
-    const raw = fs.readFileSync(SYMBOLS_JSON, "utf8");
-    const arr = JSON.parse(raw);
-    const filtered = arr
-      .filter((s) => s && s.symbol && s.name)
-      .map((s) => ({
-        symbol: String(s.symbol).trim(),
-        name: String(s.name).trim(),
+    // Dynamic require so the rest of the server doesn't hard-depend on xlsx
+    // if it isn't installed. Gracefully return [] if unavailable.
+    const XLSX = require("xlsx");
+    const wb = XLSX.readFile(filePath);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws);
+    return rows
+      .filter((r) => r.symbol && r.Name)
+      .map((r) => ({
+        symbol: String(r.symbol).trim(),
+        name: String(r.Name).trim(),
       }));
+  } catch (err) {
+    console.warn(`[Symbols] Could not read ${path.basename(filePath)}: ${err.message}`);
+    return [];
+  }
+}
 
-    // Ensure NIFTY50 is always the first result regardless of file order
-    const nifty50 = filtered.filter((s) => s.symbol === "NSE:NIFTY50-INDEX");
-    const otherIndex = filtered.filter(
-      (s) => s.symbol !== "NSE:NIFTY50-INDEX" &&
-        (s.symbol.includes("INDEX") || s.symbol.includes("SENSEX"))
-    );
-    const equities = filtered.filter(
-      (s) => !s.symbol.includes("INDEX") && !s.symbol.includes("SENSEX")
-    );
-
-    return [...nifty50, ...otherIndex, ...equities];
+function loadJson(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const arr = JSON.parse(raw);
+    return arr
+      .filter((s) => s.symbol && s.name)
+      .map((s) => ({ symbol: String(s.symbol).trim(), name: String(s.name).trim() }));
   } catch (err) {
     console.warn(`[Symbols] Could not read symbols.json: ${err.message}`);
-    // Fallback: at minimum return NIFTY50 so the app isn't broken
-    return [{ symbol: "NSE:NIFTY50-INDEX", name: "NIFTY 50" }];
+    return [];
   }
+}
+
+function buildSymbolList() {
+  const seen = new Map(); // symbol → entry
+
+  const jsonSymbols = loadJson(SYMBOLS_JSON);
+  const stocksSymbols = loadExcel(STOCKS_XLSX);
+  const niftySymbols = loadExcel(NIFTY_XLSX);
+
+  // Merge — json takes priority for naming, then excel sheets
+  for (const s of [...jsonSymbols, ...stocksSymbols, ...niftySymbols]) {
+    if (!seen.has(s.symbol)) {
+      seen.set(s.symbol, s);
+    }
+  }
+
+  const all = Array.from(seen.values());
+
+  // Indices first, then sorted alphabetically
+  const isIndex = (sym) =>
+    sym.symbol.includes("INDEX") || sym.symbol.includes("SENSEX");
+
+  const indices = all.filter(isIndex).sort((a, b) => a.name.localeCompare(b.name));
+  const equities = all.filter((s) => !isIndex(s)).sort((a, b) => a.name.localeCompare(b.name));
+
+  return [...indices, ...equities];
 }
 
 function getSymbols(forceRefresh = false) {
@@ -64,7 +97,7 @@ function getSymbols(forceRefresh = false) {
   if (!forceRefresh && _cachedSymbols && now - _cacheTime < CACHE_TTL_MS) {
     return _cachedSymbols;
   }
-  _cachedSymbols = loadSymbols();
+  _cachedSymbols = buildSymbolList();
   _cacheTime = now;
   console.log(`[Symbols] Loaded ${_cachedSymbols.length} symbols`);
   return _cachedSymbols;
@@ -75,18 +108,14 @@ function getSymbols(forceRefresh = false) {
 /** GET /api/symbols — full list */
 router.get("/", (req, res) => {
   try {
-    res.json(getSymbols());
+    const symbols = getSymbols();
+    res.json(symbols);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * GET /api/symbols/search?q=NIFTY
- * Searches both the display name and the ticker portion of the symbol.
- * NIFTY50 always appears first in results when query matches it.
- * Returns max 20 results.
- */
+/** GET /api/symbols/search?q=NIFTY — filtered search */
 router.get("/search", (req, res) => {
   const q = (req.query.q || "").toLowerCase().trim();
   if (!q) return res.json([]);
@@ -96,11 +125,7 @@ router.get("/search", (req, res) => {
       .filter((s) => {
         const colonIdx = s.symbol.indexOf(":");
         const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
-        return (
-          s.name.toLowerCase().includes(q) ||
-          ticker.startsWith(q) ||
-          ticker.includes(q)
-        );
+        return s.name.toLowerCase().startsWith(q) || ticker.startsWith(q);
       })
       .slice(0, 20);
     res.json(results);

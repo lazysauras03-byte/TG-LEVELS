@@ -24,6 +24,14 @@
         "symbol": "NSE:ABB-EQ"
     },
     {
+        "name": "APL Apollo Tubes Limited",
+        "symbol": "NSE:APLAPOLLO-EQ"
+    },
+    {
+        "name": "AU Small Finance Bank Limited",
+        "symbol": "NSE:AUBANK-EQ"
+    },
+    {
         "name": "Adani Energy Solutions Limited",
         "symbol": "NSE:ADANIENSOL-EQ"
     },
@@ -60,10 +68,6 @@
         "symbol": "NSE:ANGELONE-EQ"
     },
     {
-        "name": "APL Apollo Tubes Limited",
-        "symbol": "NSE:APLAPOLLO-EQ"
-    },
-    {
         "name": "Apollo Hospitals Enterprise Limited",
         "symbol": "NSE:APOLLOHOSP-EQ"
     },
@@ -80,10 +84,6 @@
         "symbol": "NSE:ASTRAL-EQ"
     },
     {
-        "name": "AU Small Finance Bank Limited",
-        "symbol": "NSE:AUBANK-EQ"
-    },
-    {
         "name": "Aurobindo Pharma Limited",
         "symbol": "NSE:AUROPHARMA-EQ"
     },
@@ -94,6 +94,10 @@
     {
         "name": "Axis Bank Limited",
         "symbol": "NSE:AXISBANK-EQ"
+    },
+    {
+        "name": "BSE Limited",
+        "symbol": "NSE:BSE-EQ"
     },
     {
         "name": "Bajaj Auto Limited",
@@ -160,8 +164,8 @@
         "symbol": "NSE:BRITANNIA-EQ"
     },
     {
-        "name": "BSE Limited",
-        "symbol": "NSE:BSE-EQ"
+        "name": "CG Power and Industrial Solutions Limited",
+        "symbol": "NSE:CGPOWER-EQ"
     },
     {
         "name": "Canara Bank",
@@ -170,10 +174,6 @@
     {
         "name": "Central Depository Services (India) Limited",
         "symbol": "NSE:CDSL-EQ"
-    },
-    {
-        "name": "CG Power and Industrial Solutions Limited",
-        "symbol": "NSE:CGPOWER-EQ"
     },
     {
         "name": "Cholamandalam Investment and Finance Company Limited",
@@ -212,6 +212,10 @@
         "symbol": "NSE:CUMMINSIND-EQ"
     },
     {
+        "name": "DLF Limited",
+        "symbol": "NSE:DLF-EQ"
+    },
+    {
         "name": "Dabur India Limited",
         "symbol": "NSE:DABUR-EQ"
     },
@@ -232,44 +236,40 @@
         "symbol": "NSE:DIXON-EQ"
     },
     {
-        "name": "DLF Limited",
-        "symbol": "NSE:DLF-EQ"
-    },
-    {
         "name": "Dr. Reddy's Laboratories Limited",
         "symbol": "NSE:DRREDDY-EQ"
-    },
-    {
-        "name": "Eicher Motors Limited",
-        "symbol": "NSE:EICHERMOT-EQ"
     },
     {
         "name": "ETERNAL LIMITED",
         "symbol": "NSE:ETERNAL-EQ"
     },
     {
-        "name": "Exide Industries Limited",
-        "symbol": "NSE:EXIDEIND-EQ"
+        "name": "Eicher Motors Limited",
+        "symbol": "NSE:EICHERMOT-EQ"
     },
     {
-        "name": "Fortis Healthcare Limited",
-        "symbol": "NSE:FORTIS-EQ"
+        "name": "Exide Industries Limited",
+        "symbol": "NSE:EXIDEIND-EQ"
     },
     {
         "name": "FSN E-Commerce Ventures Limited",
         "symbol": "NSE:NYKAA-EQ"
     },
     {
+        "name": "Fortis Healthcare Limited",
+        "symbol": "NSE:FORTIS-EQ"
+    },
+    {
         "name": "GAIL (India) Limited",
         "symbol": "NSE:GAIL-EQ"
     },
     {
-        "name": "Glenmark Pharmaceuticals Limited",
-        "symbol": "NSE:GLENMARK-EQ"
-    },
-    {
         "name": "GMR AIRPORTS LIMITED",
         "symbol": "NSE:GMRAIRPORT-EQ"
+    },
+    {
+        "name": "Glenmark Pharmaceuticals Limited",
+        "symbol": "NSE:GLENMARK-EQ"
     },
     {
         "name": "Godrej Consumer Products Limited",
@@ -282,10 +282,6 @@
     {
         "name": "Grasim Industries Limited",
         "symbol": "NSE:GRASIM-EQ"
-    },
-    {
-        "name": "Havells India Limited",
-        "symbol": "NSE:HAVELLS-EQ"
     },
     {
         "name": "HCL Technologies Limited",
@@ -302,6 +298,10 @@
     {
         "name": "HDFC Life Insurance Company Limited",
         "symbol": "NSE:HDFCLIFE-EQ"
+    },
+    {
+        "name": "Havells India Limited",
+        "symbol": "NSE:HAVELLS-EQ"
     },
     {
         "name": "Hero MotoCorp Limited",
@@ -352,6 +352,10 @@
         "symbol": "NSE:IDFCFIRSTB-EQ"
     },
     {
+        "name": "ITC Limited",
+        "symbol": "NSE:ITC-EQ"
+    },
+    {
         "name": "Indian Bank",
         "symbol": "NSE:INDIANB-EQ"
     },
@@ -396,16 +400,8 @@
         "symbol": "NSE:INDIGO-EQ"
     },
     {
-        "name": "ITC Limited",
-        "symbol": "NSE:ITC-EQ"
-    },
-    {
         "name": "JINDAL STEEL LIMITED",
         "symbol": "NSE:JINDALSTEL-EQ"
-    },
-    {
-        "name": "Jio Financial Services Limited",
-        "symbol": "NSE:JIOFIN-EQ"
     },
     {
         "name": "JSW Energy Limited",
@@ -416,8 +412,20 @@
         "symbol": "NSE:JSWSTEEL-EQ"
     },
     {
+        "name": "Jio Financial Services Limited",
+        "symbol": "NSE:JIOFIN-EQ"
+    },
+    {
         "name": "Jubilant Foodworks Limited",
         "symbol": "NSE:JUBLFOOD-EQ"
+    },
+    {
+        "name": "KEI Industries Limited",
+        "symbol": "NSE:KEI-EQ"
+    },
+    {
+        "name": "KPIT Technologies Limited",
+        "symbol": "NSE:KPITTECH-EQ"
     },
     {
         "name": "Kalyan Jewellers India Limited",
@@ -428,10 +436,6 @@
         "symbol": "NSE:KAYNES-EQ"
     },
     {
-        "name": "KEI Industries Limited",
-        "symbol": "NSE:KEI-EQ"
-    },
-    {
         "name": "Kfin Technologies Limited",
         "symbol": "NSE:KFINTECH-EQ"
     },
@@ -440,12 +444,16 @@
         "symbol": "NSE:KOTAKBANK-EQ"
     },
     {
-        "name": "KPIT Technologies Limited",
-        "symbol": "NSE:KPITTECH-EQ"
-    },
-    {
         "name": "L&T Finance Limited",
         "symbol": "NSE:LTF-EQ"
+    },
+    {
+        "name": "LIC Housing Finance Limited",
+        "symbol": "NSE:LICHSGFIN-EQ"
+    },
+    {
+        "name": "LTIMindtree Limited",
+        "symbol": "NSE:LTM-EQ"
     },
     {
         "name": "Larsen & Toubro Limited",
@@ -456,20 +464,12 @@
         "symbol": "NSE:LAURUSLABS-EQ"
     },
     {
-        "name": "LIC Housing Finance Limited",
-        "symbol": "NSE:LICHSGFIN-EQ"
-    },
-    {
         "name": "Life Insurance Corporation Of India",
         "symbol": "NSE:LICI-EQ"
     },
     {
         "name": "Lodha Developers Limited",
         "symbol": "NSE:LODHA-EQ"
-    },
-    {
-        "name": "LTIMindtree Limited",
-        "symbol": "NSE:LTM-EQ"
     },
     {
         "name": "Lupin Limited",
@@ -520,16 +520,8 @@
         "symbol": "NSE:MUTHOOTFIN-EQ"
     },
     {
-        "name": "National Aluminium Company Limited",
-        "symbol": "NSE:NATIONALUM-EQ"
-    },
-    {
         "name": "NBCC (India) Limited",
         "symbol": "NSE:NBCC-EQ"
-    },
-    {
-        "name": "Nestle India Limited",
-        "symbol": "NSE:NESTLEIND-EQ"
     },
     {
         "name": "NHPC Limited",
@@ -542,6 +534,14 @@
     {
         "name": "NTPC Limited",
         "symbol": "NSE:NTPC-EQ"
+    },
+    {
+        "name": "National Aluminium Company Limited",
+        "symbol": "NSE:NATIONALUM-EQ"
+    },
+    {
+        "name": "Nestle India Limited",
+        "symbol": "NSE:NESTLEIND-EQ"
     },
     {
         "name": "Nuvama Wealth Management Limited",
@@ -568,24 +568,8 @@
         "symbol": "NSE:OFSS-EQ"
     },
     {
-        "name": "Page Industries Limited",
-        "symbol": "NSE:PAGEIND-EQ"
-    },
-    {
-        "name": "Patanjali Foods Limited",
-        "symbol": "NSE:PATANJALI-EQ"
-    },
-    {
         "name": "PB Fintech Limited",
         "symbol": "NSE:POLICYBZR-EQ"
-    },
-    {
-        "name": "Persistent Systems Limited",
-        "symbol": "NSE:PERSISTENT-EQ"
-    },
-    {
-        "name": "Petronet LNG Limited",
-        "symbol": "NSE:PETRONET-EQ"
     },
     {
         "name": "PG Electroplast Limited",
@@ -596,16 +580,32 @@
         "symbol": "NSE:PIIND-EQ"
     },
     {
+        "name": "PNB Housing Finance Limited",
+        "symbol": "NSE:PNBHOUSING-EQ"
+    },
+    {
+        "name": "Page Industries Limited",
+        "symbol": "NSE:PAGEIND-EQ"
+    },
+    {
+        "name": "Patanjali Foods Limited",
+        "symbol": "NSE:PATANJALI-EQ"
+    },
+    {
+        "name": "Persistent Systems Limited",
+        "symbol": "NSE:PERSISTENT-EQ"
+    },
+    {
+        "name": "Petronet LNG Limited",
+        "symbol": "NSE:PETRONET-EQ"
+    },
+    {
         "name": "Pidilite Industries Limited",
         "symbol": "NSE:PIDILITIND-EQ"
     },
     {
         "name": "Piramal Pharma Limited",
         "symbol": "NSE:PPLPHARMA-EQ"
-    },
-    {
-        "name": "PNB Housing Finance Limited",
-        "symbol": "NSE:PNBHOUSING-EQ"
     },
     {
         "name": "Polycab India Limited",
@@ -628,10 +628,6 @@
         "symbol": "NSE:PNB-EQ"
     },
     {
-        "name": "Rail Vikas Nigam Limited",
-        "symbol": "NSE:RVNL-EQ"
-    },
-    {
         "name": "RBL Bank Limited",
         "symbol": "NSE:RBLBANK-EQ"
     },
@@ -640,16 +636,12 @@
         "symbol": "NSE:RECLTD-EQ"
     },
     {
+        "name": "Rail Vikas Nigam Limited",
+        "symbol": "NSE:RVNL-EQ"
+    },
+    {
         "name": "Reliance Industries Limited",
         "symbol": "NSE:RELIANCE-EQ"
-    },
-    {
-        "name": "Sammaan Capital Limited",
-        "symbol": "NSE:SAMMAANCAP-EQ"
-    },
-    {
-        "name": "Samvardhana Motherson International Limited",
-        "symbol": "NSE:MOTHERSON-EQ"
     },
     {
         "name": "SBI Cards and Payment Services Limited",
@@ -662,6 +654,18 @@
     {
         "name": "SHREE CEMENT LIMITED",
         "symbol": "NSE:SHREECEM-EQ"
+    },
+    {
+        "name": "SRF Limited",
+        "symbol": "NSE:SRF-EQ"
+    },
+    {
+        "name": "Sammaan Capital Limited",
+        "symbol": "NSE:SAMMAANCAP-EQ"
+    },
+    {
+        "name": "Samvardhana Motherson International Limited",
+        "symbol": "NSE:MOTHERSON-EQ"
     },
     {
         "name": "Shriram Finance Limited",
@@ -678,10 +682,6 @@
     {
         "name": "Sona BLW Precision Forgings Limited",
         "symbol": "NSE:SONACOMS-EQ"
-    },
-    {
-        "name": "SRF Limited",
-        "symbol": "NSE:SRF-EQ"
     },
     {
         "name": "State Bank of India",
@@ -708,12 +708,16 @@
         "symbol": "NSE:SYNGENE-EQ"
     },
     {
-        "name": "Tata Consultancy Services Limited",
-        "symbol": "NSE:TCS-EQ"
-    },
-    {
         "name": "TATA CONSUMER PRODUCTS LIMITED",
         "symbol": "NSE:TATACONSUM-EQ"
+    },
+    {
+        "name": "TVS Motor Company Limited",
+        "symbol": "NSE:TVSMOTOR-EQ"
+    },
+    {
+        "name": "Tata Consultancy Services Limited",
+        "symbol": "NSE:TCS-EQ"
     },
     {
         "name": "Tata Elxsi Limited",
@@ -772,8 +776,12 @@
         "symbol": "NSE:TIINDIA-EQ"
     },
     {
-        "name": "TVS Motor Company Limited",
-        "symbol": "NSE:TVSMOTOR-EQ"
+        "name": "UNO Minda Limited",
+        "symbol": "NSE:UNOMINDA-EQ"
+    },
+    {
+        "name": "UPL Limited",
+        "symbol": "NSE:UPL-EQ"
     },
     {
         "name": "UltraTech Cement Limited",
@@ -786,14 +794,6 @@
     {
         "name": "United Spirits Limited",
         "symbol": "NSE:UNITDSPR-EQ"
-    },
-    {
-        "name": "UNO Minda Limited",
-        "symbol": "NSE:UNOMINDA-EQ"
-    },
-    {
-        "name": "UPL Limited",
-        "symbol": "NSE:UPL-EQ"
     },
     {
         "name": "Varun Beverages Limited",
@@ -822,5 +822,9 @@
     {
         "name": "Zydus Lifesciences Limited",
         "symbol": "NSE:ZYDUSLIFE-EQ"
+    },
+    {
+        "name": "NIFTY50-INDEX",
+        "symbol": "NSE:NIFTY50-INDEX"
     }
 ]

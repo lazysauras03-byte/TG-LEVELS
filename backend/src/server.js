@@ -6,10 +6,9 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 
 const { runSignalEngine } = require("./signalEngine");
-const { getAuthURL, generateToken, fetchCandles,
-  validateToken, loadToken } = require("./fyers");
+const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = require("./fyers");
 const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
-const { TickStream, isLiveMarket, isTradingDay } = require("./tickStream");
+const { TickStream, isMarketOpen, isLiveMarket, isTradingDay } = require("./tickStream");
 const symbolsRouter = require("./symbolsRouter");
 
 const app = express();
@@ -17,29 +16,34 @@ const server = http.createServer(app);
 
 app.set("trust proxy", 1);
 
-// ─── CORS — allow all origins (browser direct + LAN) ─────────────────────────
-const CORS_OPTS = { origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] };
-
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 const io = new Server(server, {
-  cors: CORS_OPTS,
-  // Allow both websocket and polling transports
-  transports: ["websocket", "polling"],
+  cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(cors(CORS_OPTS));
+app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] }));
 app.use(express.json());
-app.use(rateLimit({
-  windowMs: 60_000, max: 300,
-  standardHeaders: true, legacyHeaders: false,
-  skip: req => {
-    const ip = req.ip || "";
-    return ip === "127.0.0.1" || ip === "::1" ||
-      ip.startsWith("::ffff:127.") || ip.startsWith("::ffff:192.168.") ||
-      ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.");
-  },
-}));
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => {
+      const ip = req.ip || "";
+      return (
+        ip === "127.0.0.1" ||
+        ip === "::1" ||
+        ip.startsWith("::ffff:127.") ||
+        ip.startsWith("::ffff:192.168.") ||
+        ip.startsWith("192.168.") ||
+        ip.startsWith("10.") ||
+        ip.startsWith("172.")
+      );
+    },
+  })
+);
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
@@ -47,33 +51,171 @@ const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
 const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
 const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "5000");
 const TICK_WATCHDOG_MS = parseInt(process.env.TICK_WATCHDOG_MS || "10000");
-const WATCHDOG_GRACE = parseInt(process.env.WATCHDOG_GRACE_MS || "30000");
+const WATCHDOG_GRACE_MS = parseInt(process.env.WATCHDOG_GRACE_MS || "30000");
 
 // ─── State ────────────────────────────────────────────────────────────────────
-const symbolCacheMap = new Map();   // "SYM:RES" → { candles, result, lastFetch }
-const socketResolutions = new Map();   // socketId → resolution
+// symbolCacheMap: "SYMBOL:resolution" → { candles, result, lastFetch }
+const symbolCacheMap = new Map();
 let autoRefreshTimer = null;
+const socketResolutions = new Map();
 let lastTickAt = 0;
 let lastConnectAt = 0;
-let initialFetchDone = false;       // flips true when initialRestFetch() finishes
 
-// ─── Cache helpers ─────────────────────────────────────────────────────────────
-const cacheKey = (sym, res) => `${sym}:${res}`;
+// ─── Cache helpers ────────────────────────────────────────────────────────────
+function cacheKey(symbol, resolution) {
+  return `${symbol}:${resolution}`;
+}
 
-function getCache(sym, res) {
-  const k = cacheKey(sym, res);
-  if (!symbolCacheMap.has(k)) symbolCacheMap.set(k, { candles: [], result: null, lastFetch: 0 });
+function getCache(symbol, resolution) {
+  const k = cacheKey(symbol, resolution);
+  if (!symbolCacheMap.has(k)) {
+    symbolCacheMap.set(k, { candles: [], result: null, lastFetch: 0 });
+  }
   return symbolCacheMap.get(k);
 }
 
-function setCache(sym, res, candles, result) {
-  symbolCacheMap.set(cacheKey(sym, res), { candles, result, lastFetch: Date.now() });
+function setCache(symbol, resolution, candles, result) {
+  symbolCacheMap.set(cacheKey(symbol, resolution), {
+    candles,
+    result,
+    lastFetch: Date.now(),
+  });
+}
+
+// ─── Candle Builder ───────────────────────────────────────────────────────────
+const candleBuilders = new Map();
+
+function getOrCreateBuilder(symbol) {
+  if (!candleBuilders.has(symbol)) {
+    const builder = new CandleBuilder({
+      onTick: (formingCandles) => {
+        emitCandleUpdate(symbol, formingCandles);
+      },
+      onFinalize: (finalizedCandle, formingCandles) => {
+        console.log(
+          `[Builder:${symbol}] Candle finalized @ ${new Date(finalizedCandle.time).toISOString()} close=${finalizedCandle.close}`
+        );
+        emitCandleUpdate(symbol, formingCandles);
+        emitFinalCandle(symbol, finalizedCandle);
+
+        // Update cache for all resolutions immediately (silent — no emit).
+        // We already emitted tick_update/candle_update above for the forming
+        // state; sending chart_update on top of that within the same event loop
+        // turn causes the frontend to do a redundant full setData() which
+        // flashes the chart and can cause viewport jumps.
+        // Instead we schedule a single chart_update 200ms later — by then the
+        // tick_update has been processed and the chart is stable. Only rooms
+        // that are actually occupied get the broadcast.
+        setImmediate(() => {
+          const b = candleBuilders.get(symbol);
+          if (!b) return;
+          for (const res of [1, 3, 5, 15, 60, 1440]) {
+            const candles = b.getCandlesForResolution(res);
+            if (candles.length === 0) continue;
+            try {
+              const result = runSignalEngine(candles);
+              setCache(symbol, res, candles, result);
+            } catch (err) {
+              console.error(`[Builder:${symbol}] Signal engine error res=${res}:`, err.message);
+            }
+          }
+        });
+        // Deferred broadcast: send chart_update once per candle finalize,
+        // but only after the incremental tick_update has settled on the client.
+        setTimeout(() => {
+          const b = candleBuilders.get(symbol);
+          if (!b) return;
+          for (const res of [1, 3, 5, 15, 60, 1440]) {
+            const room = `res:${res}`;
+            if (!io.sockets.adapter.rooms.get(room)?.size) continue;
+            const cache = getCache(symbol, res);
+            if (!cache.result || !cache.candles.length) continue;
+            io.to(room).emit("chart_update", buildPayload(cache.candles, cache.result, symbol, res, true));
+          }
+        }, 250);
+      },
+    });
+    candleBuilders.set(symbol, builder);
+  }
+  return candleBuilders.get(symbol);
+}
+
+function emitCandleUpdate(symbol, formingCandles) {
+  for (const [res, candle] of Object.entries(formingCandles)) {
+    const numRes = Number(res);
+    const room = `res:${numRes}`;
+    if (!io.sockets.adapter.rooms.get(room)?.size) continue;
+    if (!candle) continue;
+    const payload = { symbol, resolution: numRes, formingCandle: candle, timestamp: Date.now() };
+    io.to(room).emit("tick_update", payload);
+    io.to(room).emit("candle_update", payload);
+  }
+}
+
+function emitFinalCandle(symbol, finalizedCandle) {
+  for (const res of [1, 3, 5, 15, 60, 1440]) {
+    const room = `res:${res}`;
+    if (!io.sockets.adapter.rooms.get(room)?.size) continue;
+    io.to(room).emit("new_candle", {
+      symbol,
+      resolution: res,
+      candle: finalizedCandle,
+      timestamp: Date.now(),
+    });
+  }
+}
+
+// ─── Tick Stream ──────────────────────────────────────────────────────────────
+const tickStream = new TickStream();
+
+tickStream.on("tick", (tick) => {
+  lastTickAt = Date.now();
+  getOrCreateBuilder(tick.symbol).processTick(tick);
+});
+tickStream.on("connected", () => {
+  console.log("[TickStream] Fyers WebSocket connected ✓");
+  lastTickAt = 0;
+  lastConnectAt = Date.now();
+  io.emit("market_status", { tickStreamActive: true });
+});
+tickStream.on("disconnected", () => {
+  console.log("[TickStream] Fyers WebSocket disconnected");
+  io.emit("market_status", { tickStreamActive: false });
+});
+tickStream.on("error", (err) => {
+  console.error("[TickStream] Error:", err?.message || err);
+});
+
+/**
+ * maybeStartTickStream
+ * Only starts on Mon–Fri between 09:15–15:30 IST.
+ * Safe to call any time — all guards are internal.
+ */
+async function maybeStartTickStream() {
+  if (!isTradingDay()) {
+    console.log("[TickStream] Weekend — tick stream not needed.");
+    return;
+  }
+  if (!isLiveMarket()) {
+    console.log("[TickStream] Outside 09:15–15:30 IST — tick stream not needed.");
+    return;
+  }
+  if (tickStream.isConnected()) return;
+
+  const valid = await validateToken().catch(() => false);
+  if (!valid) {
+    console.log("[TickStream] Not authenticated — skipping tick stream.");
+    return;
+  }
+  tickStream.start([SYMBOL]);
 }
 
 // ─── Payload builder ──────────────────────────────────────────────────────────
 function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false) {
   return {
-    symbol, resolution: Number(resolution), candles,
+    symbol,
+    resolution: Number(resolution),
+    candles,
     emaHighs: result.emaHighs,
     emaLows: result.emaLows,
     signals: result.signals,
@@ -86,294 +228,299 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
   };
 }
 
-// ─── Candle Builder ───────────────────────────────────────────────────────────
-const candleBuilders = new Map();
-
-function getOrCreateBuilder(symbol) {
-  if (candleBuilders.has(symbol)) return candleBuilders.get(symbol);
-
-  const builder = new CandleBuilder({
-    onTick: (forming) => emitTickUpdate(symbol, forming),
-    onFinalize: (finalCandle, forming) => {
-      console.log(`[Builder:${symbol}] Finalized @ ${new Date(finalCandle.time).toISOString()} close=${finalCandle.close}`);
-      emitTickUpdate(symbol, forming);
-      emitNewCandle(symbol, finalCandle);
-
-      // Update cache for all resolutions
-      setImmediate(() => {
-        const b = candleBuilders.get(symbol);
-        if (!b) return;
-        for (const res of [1, 3, 5, 15, 60, 1440]) {
-          const candles = b.getCandlesForResolution(res);
-          if (!candles.length) continue;
-          try { setCache(symbol, res, candles, runSignalEngine(candles)); }
-          catch (e) { console.error(`[Builder] signal error res=${res}:`, e.message); }
-        }
-      });
-
-      // Broadcast updated chart to socket rooms
-      setTimeout(() => {
-        const b = candleBuilders.get(symbol);
-        if (!b) return;
-        for (const res of [1, 3, 5, 15, 60, 1440]) {
-          const room = `res:${res}`;
-          if (!io.sockets.adapter.rooms.get(room)?.size) continue;
-          const cache = getCache(symbol, res);
-          if (!cache.result || !cache.candles.length) continue;
-          io.to(room).emit("chart_update", buildPayload(cache.candles, cache.result, symbol, res, true));
-        }
-      }, 250);
-    },
-  });
-
-  candleBuilders.set(symbol, builder);
-  return builder;
-}
-
-function emitTickUpdate(symbol, forming) {
-  for (const [res, candle] of Object.entries(forming)) {
-    const numRes = Number(res);
-    const room = `res:${numRes}`;
-    if (!io.sockets.adapter.rooms.get(room)?.size || !candle) continue;
-    const payload = { symbol, resolution: numRes, formingCandle: candle, timestamp: Date.now() };
-    io.to(room).emit("tick_update", payload);
-    io.to(room).emit("candle_update", payload);
-  }
-}
-
-function emitNewCandle(symbol, candle) {
-  for (const res of [1, 3, 5, 15, 60, 1440]) {
-    const room = `res:${res}`;
-    if (!io.sockets.adapter.rooms.get(room)?.size) continue;
-    io.to(room).emit("new_candle", { symbol, resolution: res, candle, timestamp: Date.now() });
-  }
-}
-
-// ─── Tick Stream ──────────────────────────────────────────────────────────────
-const tickStream = new TickStream();
-
-tickStream.on("tick", tick => { lastTickAt = Date.now(); getOrCreateBuilder(tick.symbol).processTick(tick); });
-tickStream.on("connected", () => { console.log("[TickStream] ✓"); lastTickAt = 0; lastConnectAt = Date.now(); io.emit("market_status", { tickStreamActive: true }); });
-tickStream.on("disconnected", () => { console.log("[TickStream] ✗"); io.emit("market_status", { tickStreamActive: false }); });
-tickStream.on("error", err => console.error("[TickStream]", err?.message || err));
-
-async function maybeStartTickStream() {
-  if (!isTradingDay() || !isLiveMarket() || tickStream.isConnected()) return;
-  const ok = await validateToken().catch(() => false);
-  if (!ok) { console.log("[TickStream] Not authenticated"); return; }
-  tickStream.start([SYMBOL]);
-}
-
-// ─── Core data fetch ──────────────────────────────────────────────────────────
+// ─── Core fetch & process ─────────────────────────────────────────────────────
+/**
+ * fetchAndProcess
+ * Always uses Fyers REST — works 24/7 including weekends and after-hours.
+ * Fyers history endpoint returns the last available trading session data
+ * regardless of when you call it.
+ */
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH);
 
-  // Safety: reset builder if price scale looks wrong (symbol change)
+  // Reset builder if instrument changed drastically (price scale mismatch)
   if (candleBuilders.has(symbol)) {
     const existing = candleBuilders.get(symbol).getOneMinHistory();
-    if (existing.length && raw1m.length) {
-      const ratio = existing[0].close > 0
-        ? Math.abs(raw1m[0].close - existing[0].close) / existing[0].close : 1;
-      if (ratio > 0.5) { console.log(`[Server] Price mismatch for ${symbol} — resetting`); candleBuilders.delete(symbol); }
+    if (existing.length > 0 && raw1m.length > 0) {
+      const ratio =
+        existing[0].close > 0
+          ? Math.abs(raw1m[0].close - existing[0].close) / existing[0].close
+          : 1;
+      if (ratio > 0.5) {
+        console.log(`[Server] Price scale mismatch for ${symbol} — resetting builder`);
+        candleBuilders.delete(symbol);
+      }
     }
   }
 
-  getOrCreateBuilder(symbol).seedHistory(raw1m);
+  const builder = getOrCreateBuilder(symbol);
+  builder.seedHistory(raw1m);
 
-  let candles = resolution === 1 ? raw1m : deriveTimeframe(raw1m, resolution);
-  if (!candles.length) candles = await fetchCandles(symbol, resolution, CANDLES_TO_FETCH);
+  let candles;
+  if (resolution === 1) {
+    candles = raw1m;
+  } else {
+    candles = deriveTimeframe(raw1m, resolution);
+    if (candles.length === 0) {
+      candles = await fetchCandles(symbol, resolution, CANDLES_TO_FETCH);
+    }
+  }
 
   const result = runSignalEngine(candles);
   setCache(symbol, resolution, candles, result);
 
   if (resolution !== 1) {
-    try { setCache(symbol, 1, raw1m, runSignalEngine(raw1m)); } catch { }
+    try {
+      setCache(symbol, 1, raw1m, runSignalEngine(raw1m));
+    } catch { }
   }
 
   return { candles, result };
 }
 
-async function fetchAndBroadcast(symbol, resolution, isAuto = true) {
+async function fetchAndBroadcast(symbol, resolution, isAutoRefresh = true) {
   const { candles, result } = await fetchAndProcess(symbol, resolution);
-  const payload = buildPayload(candles, result, symbol, resolution, isAuto);
+  const payload = buildPayload(candles, result, symbol, resolution, isAutoRefresh);
   io.to(`res:${resolution}`).emit("chart_update", payload);
-  console.log(`[BROADCAST] ${symbol} res=${resolution}m → ${candles.length} candles`);
+  console.log(`[BROADCAST] res=${resolution}m → ${candles.length} candles → room "res:${resolution}"`);
   return { candles, result };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => res.json({
-  status: "ok", time: new Date().toISOString(),
-  tickStreamActive: tickStream.isConnected(),
-  liveMarket: isLiveMarket(), tradingDay: isTradingDay(),
-  initialFetchDone,
-}));
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    time: new Date().toISOString(),
+    tickStreamActive: tickStream.isConnected(),
+    liveMarket: isLiveMarket(),
+    tradingDay: isTradingDay(),
+  });
+});
 
 app.get("/api/auth/status", async (req, res) => {
-  try { const ok = await validateToken(); res.json({ authenticated: ok, authUrl: ok ? null : getAuthURL() }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const valid = await validateToken();
+    res.json({ authenticated: valid, authUrl: valid ? null : getAuthURL() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/auth/url", (req, res) => {
-  try { res.json({ url: getAuthURL() }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    res.json({ url: getAuthURL() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post("/api/auth/token", async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: "auth_code required" });
-  try { await generateToken(code); await maybeStartTickStream(); res.json({ success: true }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    await generateToken(code);
+    await maybeStartTickStream();
+    res.json({ success: true, message: "Token saved successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /**
  * GET /api/chart?symbol=X&resolution=Y
+ * Works any time, any day, any symbol (including Excel imports).
  *
- * NEVER blocks. Returns one of:
- *   { initializing: true }       — cache empty, backend warming up → frontend waits for socket push
- *   { candles: [...], ... }      — cached or freshly fetched data
- *   HTTP 500                     — only if cache empty AND fetch failed
- *
- * Stale-while-revalidate: if cache is stale, return it immediately and
- * trigger a background refresh (socket will push fresh data).
+ * Cache TTL:
+ *   Live market (Mon–Fri 9:15–15:30):  60 seconds  (tick stream keeps it fresher)
+ *   Weekday outside hours:             5 minutes   (data is settled)
+ *   Weekend / holiday:                 24 hours    (data will not change)
  */
 app.get("/api/chart", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
   const cache = getCache(symbol, resolution);
 
-  // ── Cache hit: serve immediately ──────────────────────────────────────────
-  if (cache.result && cache.candles.length) {
-    const ttl = isLiveMarket() ? 60_000 : isTradingDay() ? 5 * 60_000 : 24 * 60 * 60_000;
-    if (Date.now() - cache.lastFetch >= ttl && initialFetchDone) {
-      // Stale — trigger background refresh; client gets update via socket
-      fetchAndBroadcast(symbol, resolution, true).catch(e =>
-        console.error("[/api/chart] bg refresh failed:", e.message)
-      );
-    }
+  const cacheTTL = isLiveMarket()
+    ? 60_000
+    : isTradingDay()
+      ? 5 * 60_000
+      : 24 * 60 * 60_000;
+
+  if (cache.result && cache.candles.length > 0 && Date.now() - cache.lastFetch < cacheTTL) {
     return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
   }
 
-  // ── Cache miss + still initializing → tell frontend to wait for socket ────
-  if (!initialFetchDone) {
-    return res.json({ initializing: true, symbol, resolution: Number(resolution) });
-  }
-
-  // ── Cache miss + init done → fetch now (e.g. new symbol) ─────────────────
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
     res.json(buildPayload(candles, result, symbol, resolution));
-  } catch (e) {
-    const stale = getCache(symbol, resolution);
-    if (stale.result && stale.candles.length) {
-      console.warn("[/api/chart] fetch failed, serving stale cache:", e.message);
-      return res.json(buildPayload(stale.candles, stale.result, symbol, resolution));
+  } catch (err) {
+    // Serve stale cache rather than a blank error
+    if (cache.result && cache.candles.length > 0) {
+      console.warn(`[/api/chart] Fetch failed (${err.message}), serving stale cache`);
+      return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
     }
-    console.error("[/api/chart]", e.message);
-    res.status(500).json({ error: e.message });
+    console.error("[/api/chart] Error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
 /**
  * POST /api/chart/refresh?symbol=X&resolution=Y
- * Triggered by user pressing Refresh / changing symbol / changing timeframe.
- * Always fetches fresh data. Falls back to stale cache on error.
+ * Manual refresh — always fetches fresh from Fyers REST.
+ * Works on weekends, after hours, for any symbol from Excel.
+ * Broadcasts fresh data to all connected socket clients.
  */
 app.post("/api/chart/refresh", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
-  console.log(`[REFRESH] ${symbol} res=${resolution}m`);
+
+  console.log(
+    `[REFRESH] symbol=${symbol} res=${resolution}m liveMarket=${isLiveMarket()} tradingDay=${isTradingDay()}`
+  );
 
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
     const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
     io.to(`res:${resolution}`).emit("chart_update", { ...payload, isAutoRefresh: true });
     res.json(payload);
-  } catch (e) {
+  } catch (err) {
     const cache = getCache(symbol, resolution);
-    if (cache.result && cache.candles.length) {
-      console.warn("[REFRESH] failed, serving cache:", e.message);
-      return res.json({ ...buildPayload(cache.candles, cache.result, symbol, resolution, false), success: true });
+    if (cache.result && cache.candles.length > 0) {
+      console.warn(`[REFRESH] Fetch failed (${err.message}), serving stale cache`);
+      return res.json({
+        ...buildPayload(cache.candles, cache.result, symbol, resolution, false),
+        success: true,
+      });
     }
-    console.error("[REFRESH]", e.message);
-    res.status(500).json({ error: e.message });
+    console.error("[REFRESH] Error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.get("/api/signals", (req, res) => {
+app.get("/api/signals", async (req, res) => {
   const resolution = parseInt(req.query.resolution || RESOLUTION);
   const cache = getCache(SYMBOL, resolution);
-  if (!cache.result) return res.status(404).json({ error: "No data yet" });
-  res.json({ signals: cache.result.signals, currentState: cache.result.currentState, lastUpdate: new Date(cache.lastFetch).toISOString() });
+  if (!cache.result) {
+    return res.status(404).json({ error: "No data yet. Call /api/chart first." });
+  }
+  res.json({
+    signals: cache.result.signals,
+    currentState: cache.result.currentState,
+    lastUpdate: new Date(cache.lastFetch).toISOString(),
+  });
 });
 
 app.use("/api/symbols", symbolsRouter);
 
-// ─── Tick Watchdog ─────────────────────────────────────────────────────────────
+// ─── Tick Watchdog ────────────────────────────────────────────────────────────
+// Only fires during live market hours. Restarts WS if silent for TICK_WATCHDOG_MS.
 function startTickWatchdog() {
   setInterval(() => {
-    if (!isTradingDay() || !isLiveMarket() || !tickStream.isConnected()) return;
+    if (!isTradingDay()) return;   // weekend — never fire
+    if (!isLiveMarket()) return;   // outside 9:15–15:30 — never fire
+    if (!tickStream.isConnected()) return;
+
     const now = Date.now();
-    if (lastConnectAt > 0 && now - lastConnectAt < WATCHDOG_GRACE) return;
-    if (!lastTickAt) return;
-    if (now - lastTickAt > TICK_WATCHDOG_MS) {
-      console.warn(`[Watchdog] No tick for ${((now - lastTickAt) / 1000).toFixed(1)}s — reconnecting`);
-      lastTickAt = 0; lastConnectAt = 0;
+    // Grace period after connect — don't watchdog during initial subscription
+    if (lastConnectAt > 0 && now - lastConnectAt < WATCHDOG_GRACE_MS) return;
+    if (lastTickAt === 0) return;  // haven't seen a tick yet — wait
+
+    const silenceMs = now - lastTickAt;
+    if (silenceMs > TICK_WATCHDOG_MS) {
+      console.warn(`[Watchdog] No tick for ${(silenceMs / 1000).toFixed(1)}s — reconnecting WebSocket`);
+      lastTickAt = 0;
+      lastConnectAt = 0;
       tickStream.stop();
-      setTimeout(maybeStartTickStream, 1000);
+      setTimeout(() => maybeStartTickStream(), 1000);
     }
   }, TICK_WATCHDOG_MS);
-  console.log(`[Watchdog] Started (${TICK_WATCHDOG_MS / 1000}s timeout, ${WATCHDOG_GRACE / 1000}s grace)`);
+
+  console.log(
+    `[Watchdog] Started (timeout: ${TICK_WATCHDOG_MS / 1000}s, grace: ${WATCHDOG_GRACE_MS / 1000}s)`
+  );
 }
 
-// ─── Auto-refresh fallback ─────────────────────────────────────────────────────
+// ─── Auto-refresh fallback ────────────────────────────────────────────────────
+// REST fallback poll — only runs when tick stream is DOWN during live market hours.
+// On weekends / after-hours: does nothing (data is static, no point polling).
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+
   autoRefreshTimer = setInterval(async () => {
-    if (!isTradingDay() || !isLiveMarket() || tickStream.isConnected()) return;
-    const ok = await validateToken();
-    if (!ok) return;
-    const resolutions = new Set([...socketResolutions.values(), RESOLUTION]);
-    for (const res of resolutions) {
-      fetchAndBroadcast(SYMBOL, res, true).catch(e => console.error(`[AUTO] res=${res}:`, e.message));
+    if (!isTradingDay()) return;      // weekend — skip
+    if (!isLiveMarket()) return;      // outside 9:15–15:30 — skip
+    if (tickStream.isConnected()) return; // tick stream live — skip
+
+    const valid = await validateToken();
+    if (!valid) return;
+
+    const activeResolutions = new Set(socketResolutions.values());
+    activeResolutions.add(RESOLUTION);
+
+    for (const res of activeResolutions) {
+      console.log(`[AUTO] Refreshing ${SYMBOL} res=${res}m...`);
+      fetchAndBroadcast(SYMBOL, res, true).catch((e) =>
+        console.error(`[AUTO] Error res=${res}:`, e.message)
+      );
     }
   }, REFRESH_MS);
-  console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s`);
+
+  console.log(`[AUTO] Refresh every ${REFRESH_MS / 1000}s (live market + tick stream down only)`);
 }
 
-// ─── Initial REST fetch (runs in background, never blocks server start) ────────
+// ─── Initial REST fetch ───────────────────────────────────────────────────────
+// Runs at startup. Fetches historical candles via REST so the chart is populated
+// immediately — works 24/7 including weekends. Fyers REST returns the last
+// available trading session candles regardless of the current day/time.
 async function initialRestFetch() {
-  const ok = await validateToken().catch(() => false);
-  if (!ok) { console.log("[INIT] Not authenticated — chart empty until Refresh."); return; }
+  const valid = await validateToken().catch(() => false);
+  if (!valid) {
+    console.log("[INIT] Not authenticated — skipping initial REST fetch. Chart will be empty.");
+    return;
+  }
 
-  const label = isTradingDay() ? (isLiveMarket() ? "live market" : "market closed") : "weekend/holiday";
-  console.log(`[INIT] Fetching candles (${label}) for ${SYMBOL}…`);
+  const dayLabel = isTradingDay()
+    ? isLiveMarket()
+      ? "live market"
+      : "weekday (market closed)"
+    : "weekend/holiday";
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  console.log(`[INIT] Fetching historical candles via REST (${dayLabel}) for ${SYMBOL}...`);
+
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       await fetchAndBroadcast(SYMBOL, RESOLUTION, false);
-      console.log("[INIT] ✓ Historical data ready.");
+      console.log("[INIT] Historical data loaded ✓  Chart is ready.");
       return;
-    } catch (e) {
-      console.error(`[INIT] Attempt ${attempt}/3 failed: ${e.message}`);
-      if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+    } catch (err) {
+      console.error(`[INIT] Attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        const wait = 3000 * attempt;
+        console.log(`[INIT] Waiting ${wait / 1000}s before retry...`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
     }
   }
-  console.error("[INIT] All attempts failed — use Refresh button.");
+
+  console.error("[INIT] All attempts failed — chart will be empty until manual Refresh.");
 }
 
-// ─── Socket connections ────────────────────────────────────────────────────────
-io.on("connection", socket => {
-  console.log(`[WS] Connected: ${socket.id}`);
+// ─── Socket.IO connections ────────────────────────────────────────────────────
+io.on("connection", (socket) => {
+  console.log(`[WS] Client connected: ${socket.id}`);
 
-  let currentRes = RESOLUTION;
-  socketResolutions.set(socket.id, currentRes);
-  socket.join(`res:${currentRes}`);
+  let currentResolution = RESOLUTION;
+  socketResolutions.set(socket.id, currentResolution);
+  socket.join(`res:${currentResolution}`);
 
-  // Send cached data immediately if available
-  const initCache = getCache(SYMBOL, currentRes);
-  if (initCache.result && initCache.candles.length) {
-    socket.emit("chart_update", buildPayload(initCache.candles, initCache.result, SYMBOL, currentRes, true));
+  // Send cached data immediately — chart appears without a round-trip
+  const initialCache = getCache(SYMBOL, currentResolution);
+  if (initialCache.result && initialCache.candles.length > 0) {
+    socket.emit(
+      "chart_update",
+      buildPayload(initialCache.candles, initialCache.result, SYMBOL, currentResolution, true)
+    );
   }
 
   socket.emit("market_status", {
@@ -382,36 +529,48 @@ io.on("connection", socket => {
     tradingDay: isTradingDay(),
   });
 
-  socket.on("set_resolution", res => {
+  socket.on("set_resolution", (res) => {
     const newRes = parseInt(res);
-    if (isNaN(newRes) || newRes === currentRes) return;
-    socket.leave(`res:${currentRes}`);
-    currentRes = newRes;
+    if (isNaN(newRes) || newRes === currentResolution) return;
+
+    socket.leave(`res:${currentResolution}`);
+    currentResolution = newRes;
     socketResolutions.set(socket.id, newRes);
     socket.join(`res:${newRes}`);
     console.log(`[WS] ${socket.id} → res=${newRes}`);
 
-    const cache = getCache(SYMBOL, newRes);
-    if (cache.result && cache.candles.length && Date.now() - cache.lastFetch < 120_000) {
-      socket.emit("chart_update", buildPayload(cache.candles, cache.result, SYMBOL, newRes, true));
+    const newCache = getCache(SYMBOL, newRes);
+    if (newCache.result && newCache.candles.length > 0 && Date.now() - newCache.lastFetch < 120_000) {
+      socket.emit(
+        "chart_update",
+        buildPayload(newCache.candles, newCache.result, SYMBOL, newRes, true)
+      );
     }
   });
 
   socket.on("request_refresh", async () => {
-    const ok = await validateToken();
-    if (!ok) { socket.emit("error", { message: "Not authenticated." }); return; }
-    fetchAndProcess(SYMBOL, currentRes)
-      .then(({ candles, result }) => socket.emit("chart_update", buildPayload(candles, result, SYMBOL, currentRes, false)))
-      .catch(e => socket.emit("error", { message: e.message }));
+    const valid = await validateToken();
+    if (!valid) {
+      socket.emit("error", { message: "Not authenticated. Please set up Fyers token." });
+      return;
+    }
+    fetchAndProcess(SYMBOL, currentResolution)
+      .then(({ candles, result }) => {
+        socket.emit("chart_update", buildPayload(candles, result, SYMBOL, currentResolution, false));
+      })
+      .catch((e) => socket.emit("error", { message: e.message }));
   });
 
-  socket.on("disconnect", () => { socketResolutions.delete(socket.id); console.log(`[WS] Disconnected: ${socket.id}`); });
+  socket.on("disconnect", () => {
+    socketResolutions.delete(socket.id);
+    console.log(`[WS] Client disconnected: ${socket.id}`);
+  });
 });
 
-// ─── Start ─────────────────────────────────────────────────────────────────────
+// ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "3299");
-server.listen(PORT, () => {
-  console.log(`\n✅ TGG Backend → http://localhost:${PORT}`);
+server.listen(PORT, async () => {
+  console.log(`\n✅ TGG Backend running on http://localhost:${PORT}`);
   console.log(`   Health  : http://localhost:${PORT}/health`);
   console.log(`   Chart   : http://localhost:${PORT}/api/chart`);
   console.log(`   Auth    : http://localhost:${PORT}/api/auth/status`);
@@ -420,19 +579,17 @@ server.listen(PORT, () => {
   startAutoRefresh();
   startTickWatchdog();
 
-  // Kick off initial data fetch in BACKGROUND — server is immediately ready.
-  // GET /api/chart returns { initializing:true } until cache is warm.
-  // When fetchAndBroadcast() resolves, all connected sockets get chart_update.
-  initialRestFetch()
-    .then(() => { initialFetchDone = true; })
-    .catch(e => { console.error("[INIT] Fatal:", e.message); initialFetchDone = true; });
+  // Step 1: Always seed chart from Fyers REST (works 24/7, any symbol, any day)
+  await initialRestFetch();
 
-  // Start tick stream immediately if market is live (don't wait for init)
+  // Step 2: Start tick stream only if the market is currently live
   if (isLiveMarket()) {
-    console.log("[INIT] Market live — starting tick stream.");
-    maybeStartTickStream().catch(() => { });
+    console.log("[INIT] Market is live — starting tick stream for real-time candles.");
+    await maybeStartTickStream();
+  } else if (isTradingDay()) {
+    console.log("[INIT] Weekday outside market hours — REST data ready. Tick stream inactive.");
   } else {
-    console.log(`[INIT] ${isTradingDay() ? "Market closed" : "Weekend"} — tick stream not started.`);
+    console.log("[INIT] Weekend/holiday — REST data loaded from last session. No tick stream.");
   }
 });
 
