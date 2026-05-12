@@ -19,6 +19,20 @@ const NAV_ITEMS = [
     dynamic: true, // market-status driven
   },
   {
+    id: "fib-dashboard",
+    path: "/fib-dashboard",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <line x1="12" y1="2" x2="12" y2="22" />
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+      </svg>
+    ),
+    label: "Fib Dashboard",
+    description: "Wave · Fib · Entry — multi-timeframe Fibonacci analysis",
+    tagColor: "blue",
+    stats: ["Motherwave detection", "Fib levels", "Entry signals"],
+  },
+  {
     id: "reports",
     path: "/reports",
     icon: (
@@ -32,7 +46,6 @@ const NAV_ITEMS = [
     ),
     label: "Reports",
     description: "Performance analytics, Trade statistics",
-    tag: "SOON",
     tagColor: "yellow",
     stats: ["Signal accuracy", "Drawdown stats"],
   },

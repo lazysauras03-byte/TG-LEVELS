@@ -67,6 +67,21 @@ function istDateKey(tsMs) {
     .slice(0, 10);
 }
 
+/**
+ * Returns true only when the NSE market is currently live (Mon–Fri 09:15–15:30 IST).
+ * Used to decide whether the last higher-TF bar group is "still forming" (live)
+ * or "already completed" (closed/after-hours/weekend).
+ */
+function isMarketLiveNow() {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const istMs = Date.now() + IST_OFFSET_MS;
+  const d = new Date(istMs);
+  const dow = d.getUTCDay(); // 0=Sun, 6=Sat
+  if (dow === 0 || dow === 6) return false;
+  const istMin = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return istMin >= (9 * 60 + 15) && istMin < (15 * 60 + 30);
+}
+
 // ── CandleBuilder class ──────────────────────────────────────────
 class CandleBuilder {
   /**
@@ -267,8 +282,12 @@ class CandleBuilder {
       group.push(candle);
     }
 
-    // Don't include the last group — it's the current (still-open) window
-    // It will appear as the forming bar instead.
+    // When the market is live the last group is still forming — skip it
+    // (the forming bar is returned separately by _buildFormingBar).
+    // When the market is closed every group is complete — include the last one too.
+    if (group.length > 0 && !isMarketLiveNow()) {
+      bars.push(this._aggregateCandles(group, groupStart));
+    }
     return bars;
   }
 
