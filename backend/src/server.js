@@ -60,6 +60,10 @@ let autoRefreshTimer = null;
 const socketResolutions = new Map();
 let lastTickAt = 0;
 let lastConnectAt = 0;
+// Set to true once initialRestFetch() completes. Prevents GET /api/chart
+// from returning empty candles while backend is still starting up.
+let initialFetchDone = false;
+const initialFetchWaiters = [];
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 function cacheKey(symbol, resolution) {
@@ -338,6 +342,16 @@ app.post("/api/auth/token", async (req, res) => {
 app.get("/api/chart", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
+
+  // Wait up to 30 s for startup initialRestFetch before responding.
+  // This prevents the frontend receiving 0 candles on a cold start.
+  if (!initialFetchDone) {
+    await new Promise((resolve) => {
+      const t = setTimeout(resolve, 30_000);
+      initialFetchWaiters.push(() => { clearTimeout(t); resolve(); });
+    });
+  }
+
   const cache = getCache(symbol, resolution);
 
   const cacheTTL = isLiveMarket()
@@ -581,6 +595,9 @@ server.listen(PORT, async () => {
 
   // Step 1: Always seed chart from Fyers REST (works 24/7, any symbol, any day)
   await initialRestFetch();
+  // Unblock any GET /api/chart requests that arrived during startup.
+  initialFetchDone = true;
+  while (initialFetchWaiters.length) initialFetchWaiters.pop()();
 
   // Step 2: Start tick stream only if the market is currently live
   if (isLiveMarket()) {

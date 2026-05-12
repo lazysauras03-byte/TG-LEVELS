@@ -7,17 +7,27 @@
 //   • Tick stream (WebSocket) is server-managed — frontend just listens
 //   • Works on weekends, after hours, any symbol from Excel/JSON
 //   • REST poll fallback ONLY runs during live market hours
+//
+// FIXES:
+//   • No duplicate fetchChart on connect — socket chart_update handles
+//     initial data delivery; fetchChart is mount-only fallback
+//   • fetchChart retries when backend returns empty candles (backend
+//     initialRestFetch may still be in progress on startup)
+//   • loading stays true until we either get data OR exhaust all retries
+//   • refresh() errors are always surfaced — no silent swallows
+//   • matchesActive: null activeResolutionRef always passes (first load)
 // ─────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { io } from "socket.io-client";
 import axios from "axios";
 
-// Auto-detects hostname so it works on localhost AND LAN (192.168.x.x:3000).
-// Override by setting REACT_APP_BACKEND_URL=http://localhost:3299 in frontend/.env
-const BACKEND =
-  process.env.REACT_APP_BACKEND_URL ||
-  `${window.location.protocol}//${window.location.hostname}:3299`;
+// REST: relative URLs ("/api/chart") so CRA dev-server proxy forwards to localhost:3299.
+// Socket.IO: window.location.origin = "http://192.168.1.37:3000" — same server,
+// so the CRA proxy's ws:true tunnels the WebSocket to localhost:3299.
+// Neither the browser nor Windows Firewall ever touches port 3299 directly.
+const BACKEND_REST = process.env.REACT_APP_BACKEND_URL || "";
+const BACKEND_WS = process.env.REACT_APP_BACKEND_URL || window.location.origin;
 
 // ── IST live-market check (frontend guard for REST poll fallback only) ─────────
 function isLiveMarketFrontend() {
@@ -38,7 +48,7 @@ function sleep(ms) {
 export function useSocket() {
   const [chartData, setChartData] = useState(null);
   const [connected, setConnected] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tickStreamActive, setTickStreamActive] = useState(false);
 
@@ -49,18 +59,24 @@ export function useSocket() {
   const lastSocketUpdateRef = useRef(0);
   const hasDataRef = useRef(false);
   const pollTimerRef = useRef(null);
+  // Tracks whether the initial mount fetchChart is still in flight so that
+  // a fast socket chart_update doesn't race and double-set loading=false.
+  const mountFetchDoneRef = useRef(false);
 
   // ── matchesActive — drop stale socket events ──────────────────────────────
   const matchesActive = useCallback((d) => {
     const inRes = d?.resolution != null ? Number(d.resolution) : null;
     const activeRes = activeResolutionRef.current;
+    // If we haven't locked a resolution yet (first load), accept everything
     if (activeRes !== null && inRes !== null && inRes !== activeRes) return false;
     if (d?.symbol && activeSymbolRef.current && d.symbol !== activeSymbolRef.current) return false;
     return true;
   }, []);
 
   // ── fetchChart — GET /api/chart (works 24/7, any symbol, any day) ─────────
-  const fetchChart = useCallback(async (symbol, resolution, { retries = 5, signal } = {}) => {
+  // Retries up to `retries` times. Each empty-candle response gets a back-off
+  // retry because the backend may still be running its initialRestFetch.
+  const fetchChart = useCallback(async (symbol, resolution, { retries = 6, signal } = {}) => {
     const sym = symbol ?? activeSymbolRef.current;
     const res = resolution ?? activeResolutionRef.current;
     const reqId = ++latestRequestIdRef.current;
@@ -71,13 +87,21 @@ export function useSocket() {
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       if (signal?.aborted) return;
+      if (reqId !== latestRequestIdRef.current) return; // superseded by newer request
+
       try {
-        const r = await axios.get(`${BACKEND}/api/chart`, { params, timeout: 20_000 });
+        const r = await axios.get(`${BACKEND_REST}/api/chart`, { params, timeout: 20_000 });
         if (reqId !== latestRequestIdRef.current) return;
 
         if (!r.data?.candles?.length) {
-          if (attempt < retries) { await sleep(1500 * (attempt + 1)); continue; }
+          // Backend cache is not warm yet — retry with back-off
+          if (attempt < retries) {
+            await sleep(Math.min(1500 * (attempt + 1), 8000));
+            continue;
+          }
+          // Exhausted retries — leave loading=false, chart stays empty
           setLoading(false);
+          mountFetchDoneRef.current = true;
           return;
         }
 
@@ -89,11 +113,21 @@ export function useSocket() {
         lastSocketUpdateRef.current = Date.now();
         setLoading(false);
         setError(null);
+        mountFetchDoneRef.current = true;
         return;
-      } catch {
+      } catch (err) {
+        if (signal?.aborted) return;
         if (reqId !== latestRequestIdRef.current) return;
-        if (attempt < retries) { await sleep(1500 * (attempt + 1)); continue; }
+        if (attempt < retries) {
+          await sleep(Math.min(1500 * (attempt + 1), 8000));
+          continue;
+        }
+        // Only surface the error if we still have no data
+        if (!hasDataRef.current) {
+          setError(err.response?.data?.error || err.message || "Network error");
+        }
         setLoading(false);
+        mountFetchDoneRef.current = true;
       }
     }
   }, []); // eslint-disable-line
@@ -115,7 +149,7 @@ export function useSocket() {
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const socket = io(BACKEND, {
+    const socket = io(BACKEND_WS, {
       transports: ["websocket", "polling"],
       reconnectionAttempts: 15,
       reconnectionDelay: 2000,
@@ -125,7 +159,10 @@ export function useSocket() {
     socket.on("connect", () => {
       setConnected(true);
       setError(null);
-      if (!hasDataRef.current) {
+      // Do NOT re-trigger fetchChart on every reconnect — chart_update from
+      // the server (sent on connection) will deliver fresh data. Only fetch
+      // if we somehow never got any data after mount fetch completed.
+      if (mountFetchDoneRef.current && !hasDataRef.current) {
         fetchChart(activeSymbolRef.current, activeResolutionRef.current, { retries: 3 });
       }
     });
@@ -134,19 +171,13 @@ export function useSocket() {
 
     socket.on("chart_update", (d) => {
       if (!matchesActive(d)) return;
-      // Sync active refs from socket data — critical for page-reload tick-by-tick:
-      // on a fresh page load, activeResolutionRef is null until fetchChart completes,
-      // but chart_update arrives via socket first. Without syncing here, the first
-      // tick_update passes matchesActive (null passes everything) but handleCandleUpdate
-      // works fine. However if a chart_update arrives AFTER a tick, the candle count
-      // jump is >1 and falls into full setData — which is actually fine. The real
-      // issue was activeResolutionRef staying null causing matchesActive to always
-      // pass, then a symbol-change tick hitting the wrong series. Fix: always sync.
       if (d.resolution != null) activeResolutionRef.current = Number(d.resolution);
       if (d.symbol) activeSymbolRef.current = d.symbol;
       lastSocketUpdateRef.current = Date.now();
       setChartData(d);
       hasDataRef.current = true;
+      // If the mount fetchChart is still retrying, a socket chart_update means
+      // the backend is ready — we can stop showing the loading spinner.
       setLoading(false);
       setError(null);
     });
@@ -173,7 +204,6 @@ export function useSocket() {
           updated = [...candles.slice(0, -1), { ...last, ...fc, time: last.time }];
         } else if (fcMin > lastMin) {
           // New minute started — append the forming candle
-          // Preserve time in same unit as existing candles
           const newCandle = { ...fc, time: last.time > 1e10 ? fcMs : Math.floor(fcMs / 1000) };
           updated = [...candles, newCandle];
         } else {
@@ -194,7 +224,6 @@ export function useSocket() {
         const candles = prev.candles;
         const last = candles[candles.length - 1];
 
-        // Normalize to ms — times may be seconds or ms
         const toMs = (t) => (t > 1e10 ? t : t * 1000);
         const ncMs = toMs(nc.time);
         const lastMs = toMs(last.time);
@@ -232,17 +261,21 @@ export function useSocket() {
   }, []); // eslint-disable-line
 
   // ── Initial data fetch on mount ───────────────────────────────────────────
+  // One fetch on mount with generous retries. The socket chart_update that
+  // arrives on connect will also set data — whichever arrives first wins.
   useEffect(() => {
     setLoading(true);
     const abortCtrl = new AbortController();
-    fetchChart(null, null, { retries: 5, signal: abortCtrl.signal });
+    fetchChart(null, null, { retries: 6, signal: abortCtrl.signal });
     return () => abortCtrl.abort();
   }, []); // eslint-disable-line
 
   // ── refresh — user clicks Refresh, changes symbol, or changes timeframe ───
   const refresh = useCallback(async (symbol, resolution) => {
     setError(null);
-    setLoading(true);
+    // Only show loading spinner on refresh when we have no data yet.
+    // If we already have chart data, keep showing it while refreshing.
+    if (!hasDataRef.current) setLoading(true);
     const reqId = ++latestRequestIdRef.current;
 
     if (symbol != null) activeSymbolRef.current = symbol;
@@ -259,7 +292,7 @@ export function useSocket() {
     const MAX_ATTEMPTS = 3;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
-        const res = await axios.post(`${BACKEND}/api/chart/refresh`, null, {
+        const res = await axios.post(`${BACKEND_REST}/api/chart/refresh`, null, {
           params,
           timeout: 25_000,
         });
@@ -286,8 +319,24 @@ export function useSocket() {
       } catch (e) {
         if (reqId !== latestRequestIdRef.current) return;
         if (attempt < MAX_ATTEMPTS - 1) { await sleep(2000); continue; }
-        setError(e.response?.data?.error || e.message);
+        // On final attempt failure: fall back to GET /api/chart (serve stale cache)
+        try {
+          const fallback = await axios.get(`${BACKEND_REST}/api/chart`, { params, timeout: 20_000 });
+          if (reqId !== latestRequestIdRef.current) return;
+          if (fallback.data?.candles?.length) {
+            setChartData(fallback.data);
+            hasDataRef.current = true;
+            lastSocketUpdateRef.current = Date.now();
+            setLoading(false);
+            setError(null);
+            return;
+          }
+        } catch { /* ignore fallback error */ }
+        // Surface the error but keep the chart showing last-good data
+        setError(e.response?.data?.error || e.message || "Refresh failed");
         setLoading(false);
+        // Do NOT clear chartData — the chart should keep showing whatever
+        // candles it had before the failed refresh (e.g. after a bad symbol).
       }
     }
   }, []); // eslint-disable-line

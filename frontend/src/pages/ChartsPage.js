@@ -87,7 +87,13 @@ export default function ChartsPage() {
 
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
 
-  const [symbol, setSymbol] = useState(() => urlSymbol || loadPref("symbol", "NSE:NIFTY50-INDEX"));
+  const [symbol, setSymbol] = useState(() => {
+    if (urlSymbol) return urlSymbol;
+    // Validate saved symbol — must be a fully-qualified Fyers symbol with ":"
+    // Reject partial strings like "nifty" that were typed but never confirmed.
+    const saved = loadPref("symbol", "NSE:NIFTY50-INDEX");
+    return (typeof saved === "string" && saved.includes(":")) ? saved : "NSE:NIFTY50-INDEX";
+  });
   const [resolution, setResolution] = useState(() => urlResolution || loadPref("resolution", 3));
   const [todayMode, setTodayMode] = useState(() => {
     // If we're navigating to a specific wave, disable today-only mode

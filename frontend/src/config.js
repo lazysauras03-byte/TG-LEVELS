@@ -1,12 +1,12 @@
 /**
- * config.js — single source of truth for the backend URL.
+ * config.js — backend URL config.
  *
- * Auto-detects from the browser's current hostname so it works for:
- *   localhost:3000        → http://localhost:3299
- *   192.168.1.68:3000     → http://192.168.1.68:3299  (any LAN device)
+ * REST calls (axios / fetch) use BACKEND = "" (empty string) so paths like
+ * `/api/chart` are relative — the CRA dev-server proxy (package.json) forwards
+ * them to localhost:3299. This works from localhost AND any LAN IP (192.168.x.x)
+ * because the proxy runs on the dev server, not in the browser.
  *
- * To override (e.g. production), set REACT_APP_BACKEND_URL in frontend/.env
+ * For production, set REACT_APP_BACKEND_URL=https://your-api.com in frontend/.env
  */
 export const BACKEND =
-  process.env.REACT_APP_BACKEND_URL ||
-  `${window.location.protocol}//${window.location.hostname}:3299`;
+  process.env.REACT_APP_BACKEND_URL || "";
