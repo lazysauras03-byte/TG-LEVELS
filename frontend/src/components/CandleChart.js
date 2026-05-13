@@ -445,11 +445,18 @@ export default function CandleChart({
     try {
       chart.priceScale('right').applyOptions({ autoScale: false });
       ts.setVisibleLogicalRange({ from: fromIdx, to: toLogical });
+      // Always scroll to the latest candle — guarantees today's data is visible
+      // regardless of how many historical candles were loaded.
+      try { ts.scrollToRealTime(); } catch { }
       setTimeout(() => {
         try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch { }
       }, 80);
     } catch {
-      try { ts.fitContent(); } catch { }
+      try {
+        ts.scrollToRealTime();
+      } catch {
+        try { ts.fitContent(); } catch { }
+      }
     }
   }, []);
 
