@@ -125,8 +125,10 @@ function calcLookbackDays(resolution) {
   let candlesPerTradingDay;
 
   if (res === "W" || res === "10080") {
-    // 1 weekly candle = 5 trading days → 480 candles = 2400 trading days ≈ 9.5 yrs
-    // Cap at 10 years (3650 days); Fyers weekly data goes back that far
+    // 10 years = 3650 days = ~520 weekly candles → ~65 waves (well above 50 target).
+    // Going further (5000 days = 2012) pulls in real Nifty prices ~5000–6000 which,
+    // mixed with current ~24000, wrecks the price axis (giant spike candle on chart).
+    // 3650 days keeps us in the post-2015 era at the correct price scale.
     return 3650;
   }
 
@@ -137,6 +139,14 @@ function calcLookbackDays(resolution) {
   }
 
   const mins = parseInt(res, 10) || 3;
+
+  // Explicit overrides for resolutions where the formula under-delivers:
+  //   15m: formula gives 30 days (~500 candles). 60 days (~1000 candles) ensures 50+ waves.
+  //   1h : formula gives 116 days (~480 candles). 150 days gives safe buffer;
+  //        chunk size is already 90 days so this becomes 2 chunks automatically.
+  if (mins === 15) return 60;
+  if (mins === 60) return 150;
+
   candlesPerTradingDay = Math.floor(375 / mins);
 
   const tradingDaysNeeded = Math.ceil(CANDLES_NEEDED / candlesPerTradingDay);
@@ -164,9 +174,9 @@ async function fetchCandles(symbol, resolution, count = 10000) {
   // Fyers API max date range per single request:
   //   Intraday (≤ 1h) → 100 days
   //   Daily           → 365 days
-  //   Weekly          → 730 days (~2 years)
-  // We chunk slightly below the limit to stay safe.
-  const CHUNK_DAYS = isWeekly ? 700 : isDaily ? 360 : 90;
+  //   Weekly          → ~365 days (Fyers rejects ranges > ~400 days as "Invalid input")
+  // We chunk safely below each limit.
+  const CHUNK_DAYS = isWeekly ? 300 : isDaily ? 360 : 90;
 
   // Larger timeout for daily/weekly requests (more data, slower response)
   const FETCH_TIMEOUT_MS = isWeekly ? 30_000 : isDaily ? 20_000 : 15_000;
@@ -259,13 +269,35 @@ async function fetchCandles(symbol, resolution, count = 10000) {
 
   // Deduplicate by timestamp (overlap between chunks) and sort ascending
   const seen = new Set();
-  const deduped = allCandles
+  let deduped = allCandles
     .filter((c) => {
       if (seen.has(c.time)) return false;
       seen.add(c.time);
       return true;
     })
     .sort((a, b) => a.time - b.time);
+
+  // ── Recency guard for weekly data ─────────────────────────────────────────
+  // Fyers weekly endpoint returns candles going back to Nifty's inception (~1990s).
+  // We enforce a hard timestamp cutoff matching the requested lookback window.
+  // This is sufficient to prevent ancient pre-2016 candles from corrupting the
+  // chart's price axis. A separate price floor is NOT used because Fyers occasionally
+  // returns adjusted/continuous prices that may not match spot index levels exactly.
+  if (isWeekly && deduped.length > 0) {
+    const cutoffMs = (now - lookbackDays * 24 * 60 * 60) * 1000;
+    const before = deduped.length;
+    deduped = deduped.filter((c) => c.time >= cutoffMs);
+    if (deduped.length !== before) {
+      console.log(
+        `[Fyers] Weekly timestamp filter removed ${before - deduped.length} out-of-range candles (kept ${deduped.length})`
+      );
+    }
+    if (deduped.length === 0) {
+      throw new Error(
+        `[Fyers] Weekly candles all filtered out — check symbol or date range`
+      );
+    }
+  }
 
   console.log(`[Fyers] ${symbol} ${fyersResolution}: fetched ${deduped.length} candles over ${lookbackDays}d (${chunks.length} chunk${chunks.length > 1 ? "s" : ""})`);
 
