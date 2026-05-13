@@ -253,6 +253,33 @@
   position: relative;
 }
 
+.fdb-wave-card.fdb-wave-card-clickable {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.fdb-wave-card.fdb-wave-card-clickable:hover {
+  background: #12122a;
+  box-shadow: 0 0 0 1px #3a3a7a;
+}
+
+.fdb-wave-card.bull.fdb-wave-card-clickable:hover {
+  box-shadow: 0 0 0 1px #2a6a2a;
+}
+
+.fdb-wave-chart-hint {
+  font-size: 9px;
+  color: #4a4a8a;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.fdb-wave-card.fdb-wave-card-clickable:hover .fdb-wave-chart-hint {
+  color: #7a7aff;
+  opacity: 1;
+}
+
 .fdb-wave-card.bull {
   border-left-color: #44cc44;
 }

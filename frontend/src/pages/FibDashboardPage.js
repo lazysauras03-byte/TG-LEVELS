@@ -168,13 +168,17 @@ function BiasPill({ bias }) {
   return <span className="fdb-pill fdb-p-neutral">— Neutral</span>;
 }
 
-function WaveCard({ segment, tfLabel }) {
+function WaveCard({ segment, tfLabel, onClick }) {
   if (!segment) return <div className="fdb-no-wave">No mother wave detected</div>;
   const isBull = segment.toSide === "high";
   const delta = Math.abs(segment.toPrice - segment.fromPrice).toFixed(1);
   const waveNum = segment.waveNum != null ? segment.waveNum : null;
   return (
-    <div className={`fdb-wave-card ${isBull ? "bull" : ""}`}>
+    <div
+      className={`fdb-wave-card ${isBull ? "bull" : ""} ${onClick ? "fdb-wave-card-clickable" : ""}`}
+      onClick={onClick}
+      title={onClick ? "Click to open this wave on the chart" : undefined}
+    >
       <div className="fdb-wave-card-header">
         <span className={`fdb-wave-dir ${isBull ? "fdb-bull-dir" : "fdb-bear-dir"}`}>
           {isBull ? "▲ Bull" : "▼ Bear"}
@@ -182,6 +186,7 @@ function WaveCard({ segment, tfLabel }) {
         {waveNum != null && (
           <span className="fdb-wave-num">Wave {waveNum}</span>
         )}
+        {onClick && <span className="fdb-wave-chart-hint">↗ Open chart</span>}
       </div>
       <div className="fdb-wave-range">
         {fmt(segment.fromPrice)} → {fmt(segment.toPrice)}
@@ -420,6 +425,17 @@ function HtfColumn({ symbol }) {
   const bias = getBias(segment);
   const waveLabel = activeTF >= 10080 ? "Weekly wave" : activeTF >= 1440 ? "Daily wave" : "1H wave";
 
+  function handleWaveClick() {
+    if (!segment) return;
+    const params = new URLSearchParams({
+      symbol,
+      resolution: String(activeTF),
+      waveFrom: String(segment.fromTime),
+      waveTo: String(segment.toTime),
+    });
+    window.open(`/charts?${params.toString()}`, "_blank");
+  }
+
   return (
     <div className="fdb-col">
       <div className="fdb-col-head">
@@ -450,7 +466,7 @@ function HtfColumn({ symbol }) {
         {status === "loading" ? (
           <div className="fdb-state"><div className="fdb-spinner" /></div>
         ) : (
-          <WaveCard segment={segment} tfLabel={waveLabel} />
+          <WaveCard segment={segment} tfLabel={waveLabel} onClick={segment ? handleWaveClick : undefined} />
         )}
 
         <div className="fdb-sep" />
@@ -477,6 +493,17 @@ function IntradayColumn({ symbol }) {
   const activeTFDef = INTRADAY_TFS.find((t) => t.value === activeTF) || INTRADAY_TFS[0];
   const tfLabel = activeTFDef.label;
   const waveDesc = segment ? `${fmt(segment.fromPrice)} → ${fmt(segment.toPrice)}` : "—";
+
+  function handleWaveClick() {
+    if (!segment) return;
+    const params = new URLSearchParams({
+      symbol,
+      resolution: String(activeTF),
+      waveFrom: String(segment.fromTime),
+      waveTo: String(segment.toTime),
+    });
+    window.open(`/charts?${params.toString()}`, "_blank");
+  }
 
   return (
     <div className="fdb-col">
@@ -508,7 +535,7 @@ function IntradayColumn({ symbol }) {
         {status === "loading" ? (
           <div className="fdb-state"><div className="fdb-spinner" /></div>
         ) : (
-          <WaveCard segment={segment} tfLabel={`${tfLabel} wave`} />
+          <WaveCard segment={segment} tfLabel={`${tfLabel} wave`} onClick={segment ? handleWaveClick : undefined} />
         )}
 
         <div className="fdb-sep" />
