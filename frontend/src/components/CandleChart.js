@@ -646,42 +646,58 @@ export default function CandleChart({
       const emaL = emaLowsRef.current;
 
       const startIdx = isNewCandleAppended ? prevCount : candles.length - 1;
-      for (let ni = startIdx; ni < candles.length; ni++) {
-        const nc = candles[ni];
-        const t = Math.floor(nc.time / 1000);
-        if (!Number.isFinite(t) || t <= 0) continue; // skip invalid candles
-        const bar = { time: t, open: nc.open, high: nc.high, low: nc.low, close: nc.close };
-        candleRef.current.update(bar);
-        if (emaH[ni] != null && !isNaN(emaH[ni])) emaHiRef.current.update({ time: bar.time, value: emaH[ni] });
-        if (emaL[ni] != null && !isNaN(emaL[ni])) emaLoRef.current.update({ time: bar.time, value: emaL[ni] });
-      }
-      // Re-push last candle to handle same-minute tick updates
-      const lcT = Math.floor(last.time / 1000);
-      if (Number.isFinite(lcT) && lcT > 0) {
-        const lc = { time: lcT, open: last.open, high: last.high, low: last.low, close: last.close };
-        candleRef.current.update(lc);
-        const li = candles.length - 1;
-        if (emaH[li] != null && !isNaN(emaH[li])) emaHiRef.current.update({ time: lc.time, value: emaH[li] });
-        if (emaL[li] != null && !isNaN(emaL[li])) emaLoRef.current.update({ time: lc.time, value: emaL[li] });
-      }
 
-      if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
-
-      prevCountRef.current = candles.length;
-      prevLastCandleKeyRef.current = lastKey;
-      if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
-      if (symbol != null) prevSymbolRef.current = symbol;
-
-      // Auto-scroll only if pinned to right edge
-      if (!userScrolledRef.current) {
+      // Guard: if the first new candle's time is older than what the chart holds,
+      // the series would throw "Cannot update oldest data". Fall through to full reload.
+      const firstNewT = Math.floor(candles[startIdx]?.time / 1000);
+      const lastChartT = prevLastCandleKeyRef.current
+        ? Math.floor(Number(prevLastCandleKeyRef.current.split(":")[0]) / 1000)
+        : 0;
+      if (firstNewT > 0 && lastChartT > 0 && firstNewT < lastChartT) {
+        // Fall through to full setData below
+      } else {
         try {
-          const range = ts.getVisibleLogicalRange();
-          if (range && isNewCandleAppended) {
-            ts.setVisibleLogicalRange({ from: range.from + 1, to: range.to + 1 });
+          for (let ni = startIdx; ni < candles.length; ni++) {
+            const nc = candles[ni];
+            const t = Math.floor(nc.time / 1000);
+            if (!Number.isFinite(t) || t <= 0) continue;
+            const bar = { time: t, open: nc.open, high: nc.high, low: nc.low, close: nc.close };
+            candleRef.current.update(bar);
+            if (emaH[ni] != null && !isNaN(emaH[ni])) emaHiRef.current.update({ time: bar.time, value: emaH[ni] });
+            if (emaL[ni] != null && !isNaN(emaL[ni])) emaLoRef.current.update({ time: bar.time, value: emaL[ni] });
           }
-        } catch { }
+          // Re-push last candle to handle same-minute tick updates
+          const lcT = Math.floor(last.time / 1000);
+          if (Number.isFinite(lcT) && lcT > 0) {
+            const lc = { time: lcT, open: last.open, high: last.high, low: last.low, close: last.close };
+            candleRef.current.update(lc);
+            const li = candles.length - 1;
+            if (emaH[li] != null && !isNaN(emaH[li])) emaHiRef.current.update({ time: lc.time, value: emaH[li] });
+            if (emaL[li] != null && !isNaN(emaL[li])) emaLoRef.current.update({ time: lc.time, value: emaL[li] });
+          }
+
+          if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
+
+          prevCountRef.current = candles.length;
+          prevLastCandleKeyRef.current = lastKey;
+          if (activeResolution != null) prevResolutionRef.current = Number(activeResolution);
+          if (symbol != null) prevSymbolRef.current = symbol;
+
+          // Auto-scroll only if pinned to right edge
+          if (!userScrolledRef.current) {
+            try {
+              const range = ts.getVisibleLogicalRange();
+              if (range && isNewCandleAppended) {
+                ts.setVisibleLogicalRange({ from: range.from + 1, to: range.to + 1 });
+              }
+            } catch { }
+          }
+          return; // ← no marker work on price ticks
+        } catch (e) {
+          // Incremental update failed (e.g. timestamp ordering issue) — fall through to full reload
+          console.warn("[CandleChart] Incremental update failed, falling back to setData:", e.message);
+        }
       }
-      return; // ← no marker work on price ticks
     }
 
     // ── FULL RELOAD PATH ──────────────────────────────────────────────────────
@@ -693,21 +709,41 @@ export default function CandleChart({
     const emaH = emaHighsRef.current;
     const emaL = emaLowsRef.current;
 
-    candleRef.current.setData(
-      candles
-        .map((c) => ({ time: Math.floor(c.time / 1000), open: c.open, high: c.high, low: c.low, close: c.close }))
-        .filter((c) => Number.isFinite(c.time) && c.time > 0)
+    // Helper: build a clean sorted, deduplicated series from candles + parallel array
+    function makeTimedSeries(arr, valueArr) {
+      const out = [];
+      arr.forEach((c, i) => {
+        const t = Math.floor(c.time / 1000);
+        const v = valueArr[i];
+        if (Number.isFinite(t) && t > 0 && v != null && !isNaN(v)) out.push({ time: t, value: v });
+      });
+      return out
         .sort((a, b) => a.time - b.time)
-        .filter((c, i, arr) => i === 0 || c.time !== arr[i - 1].time)
-    );
-    emaHiRef.current.setData(
-      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaH[i] }))
-        .filter((d) => d.value != null && !isNaN(d.value) && Number.isFinite(d.time) && d.time > 0)
-    );
-    emaLoRef.current.setData(
-      candles.map((c, i) => ({ time: Math.floor(c.time / 1000), value: emaL[i] }))
-        .filter((d) => d.value != null && !isNaN(d.value) && Number.isFinite(d.time) && d.time > 0)
-    );
+        .filter((d, i, a) => i === 0 || d.time !== a[i - 1].time);
+    }
+
+    const cleanCandles = candles
+      .map((c) => ({ time: Math.floor(c.time / 1000), open: c.open, high: c.high, low: c.low, close: c.close }))
+      .filter((c) => Number.isFinite(c.time) && c.time > 0)
+      .sort((a, b) => a.time - b.time)
+      .filter((c, i, arr) => i === 0 || c.time !== arr[i - 1].time);
+
+    try {
+      candleRef.current.setData(cleanCandles);
+      emaHiRef.current.setData(makeTimedSeries(candles, emaH));
+      emaLoRef.current.setData(makeTimedSeries(candles, emaL));
+    } catch (e) {
+      console.error("[CandleChart] setData failed:", e.message);
+      // Last-resort: try again with only the most recent 500 candles
+      try {
+        const tail = cleanCandles.slice(-500);
+        candleRef.current.setData(tail);
+        emaHiRef.current.setData(makeTimedSeries(candles.slice(-500), emaH.slice(-500)));
+        emaLoRef.current.setData(makeTimedSeries(candles.slice(-500), emaL.slice(-500)));
+      } catch (e2) {
+        console.error("[CandleChart] setData fallback also failed:", e2.message);
+      }
+    }
 
     if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
     else removeWavesIndicator();

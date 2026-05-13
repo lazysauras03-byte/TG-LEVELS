@@ -109,7 +109,9 @@ function getOrCreateBuilder(symbol) {
         setImmediate(() => {
           const b = candleBuilders.get(symbol);
           if (!b) return;
-          for (const res of [1, 3, 5, 15, 60, 1440]) {
+          // Only resolutions that are derived from 1m history — DO NOT overwrite
+          // 1h/1D/1W which were fetched with their own long lookback from Fyers.
+          for (const res of [1, 3, 5, 15]) {
             const candles = b.getCandlesForResolution(res);
             if (candles.length === 0) continue;
             try {
@@ -119,13 +121,38 @@ function getOrCreateBuilder(symbol) {
               console.error(`[Builder:${symbol}] Signal engine error res=${res}:`, err.message);
             }
           }
+          // For 1h/1D/1W: patch the last candle in the existing cached series
+          // with the latest close/high/low from the 1m builder's forming bar.
+          for (const res of [60, 1440, 10080]) {
+            const cache = getCache(symbol, res);
+            if (!cache.candles.length) continue;
+            const forming1m = b.getCandlesForResolution(1);
+            if (!forming1m.length) continue;
+            const tick = forming1m[forming1m.length - 1];
+            const cached = cache.candles;
+            const last = cached[cached.length - 1];
+            // Only patch if the tick belongs to the same bar (same day/week/hour)
+            const updatedLast = {
+              ...last,
+              high: Math.max(last.high, tick.high),
+              low: Math.min(last.low, tick.low),
+              close: tick.close,
+            };
+            const patched = [...cached.slice(0, -1), updatedLast];
+            try {
+              const result = runSignalEngine(patched);
+              setCache(symbol, res, patched, result);
+            } catch (err) {
+              console.error(`[Builder:${symbol}] Patch error res=${res}:`, err.message);
+            }
+          }
         });
         // Deferred broadcast: send chart_update once per candle finalize,
         // but only after the incremental tick_update has settled on the client.
         setTimeout(() => {
           const b = candleBuilders.get(symbol);
           if (!b) return;
-          for (const res of [1, 3, 5, 15, 60, 1440]) {
+          for (const res of [1, 3, 5, 15, 60, 1440, 10080]) {
             const room = `res:${res}`;
             if (!io.sockets.adapter.rooms.get(room)?.size) continue;
             const cache = getCache(symbol, res);
@@ -153,7 +180,7 @@ function emitCandleUpdate(symbol, formingCandles) {
 }
 
 function emitFinalCandle(symbol, finalizedCandle) {
-  for (const res of [1, 3, 5, 15, 60, 1440]) {
+  for (const res of [1, 3, 5, 15, 60, 1440, 10080]) {
     const room = `res:${res}`;
     if (!io.sockets.adapter.rooms.get(room)?.size) continue;
     io.to(room).emit("new_candle", {
@@ -240,10 +267,14 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
 /**
  * fetchAndProcess
  * Always uses Fyers REST — works 24/7 including weekends and after-hours.
- * Fyers history endpoint returns the last available trading session data
- * regardless of when you call it.
+ *
+ * Key fix: every resolution fetches DIRECTLY from Fyers with its own lookback.
+ * Previously non-1m resolutions were derived from raw1m (only 30 days), which
+ * meant 1h got ~30d, 1D got ~30d, 1W got ~30d — nowhere near 50 waves.
+ * Now each TF uses calcLookbackDays() inside fetchCandles() to get the right range.
  */
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
+  // Always fetch 1m for the tick builder — 30-day window is fine for live ticks
   const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH);
 
   // Reset builder if instrument changed drastically (price scale mismatch)
@@ -268,10 +299,10 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   if (resolution === 1) {
     candles = raw1m;
   } else {
-    candles = deriveTimeframe(raw1m, resolution);
-    if (candles.length === 0) {
-      candles = await fetchCandles(symbol, resolution, CANDLES_TO_FETCH);
-    }
+    // Fetch directly from Fyers for all non-1m resolutions.
+    // fetchCandles() calls calcLookbackDays(resolution) internally, which returns:
+    //   3m/5m/15m → 30 days, 1h → 116 days, 1D → 730 days, 1W → 3650 days
+    candles = await fetchCandles(symbol, resolution, CANDLES_TO_FETCH);
   }
 
   const result = runSignalEngine(candles);
@@ -480,6 +511,7 @@ function startAutoRefresh() {
 // Runs at startup. Fetches historical candles via REST so the chart is populated
 // immediately — works 24/7 including weekends. Fyers REST returns the last
 // available trading session candles regardless of the current day/time.
+// Pre-warms ALL resolutions so switching TFs is instant and data is correct.
 async function initialRestFetch() {
   const valid = await validateToken().catch(() => false);
   if (!valid) {
@@ -493,25 +525,35 @@ async function initialRestFetch() {
       : "weekday (market closed)"
     : "weekend/holiday";
 
-  console.log(`[INIT] Fetching historical candles via REST (${dayLabel}) for ${SYMBOL}...`);
+  console.log(`[INIT] Pre-warming all resolutions for ${SYMBOL} (${dayLabel})...`);
 
-  const MAX_RETRIES = 3;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      await fetchAndBroadcast(SYMBOL, RESOLUTION, false);
-      console.log("[INIT] Historical data loaded ✓  Chart is ready.");
-      return;
-    } catch (err) {
-      console.error(`[INIT] Attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
-      if (attempt < MAX_RETRIES) {
-        const wait = 3000 * attempt;
-        console.log(`[INIT] Waiting ${wait / 1000}s before retry...`);
-        await new Promise((r) => setTimeout(r, wait));
+  // Fetch resolutions in order: fastest first so the default chart appears quickly,
+  // longer lookbacks (1D, 1W) follow in the background.
+  const ALL_RESOLUTIONS = [1, 3, 5, 15, 60, 1440, 10080];
+
+  for (const res of ALL_RESOLUTIONS) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await fetchAndProcess(SYMBOL, res);
+        console.log(`[INIT] res=${res} ✓`);
+        break;
+      } catch (err) {
+        console.error(`[INIT] res=${res} attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
+        if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 2000 * attempt));
       }
     }
   }
 
-  console.error("[INIT] All attempts failed — chart will be empty until manual Refresh.");
+  // Broadcast the default resolution to any clients already connected
+  try {
+    const cache = getCache(SYMBOL, RESOLUTION);
+    if (cache.result && cache.candles.length > 0) {
+      io.emit("chart_update", buildPayload(cache.candles, cache.result, SYMBOL, RESOLUTION, false));
+    }
+  } catch { }
+
+  console.log("[INIT] All resolutions loaded ✓  Chart is ready.");
 }
 
 // ─── Socket.IO connections ────────────────────────────────────────────────────

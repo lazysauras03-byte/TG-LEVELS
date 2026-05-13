@@ -259,7 +259,7 @@ function _redraw() {
     _ctx.restore();
   });
 
-  // Diagonal segment labels
+  // Diagonal segment labels — only draw if segment is wide enough to fit a label
   _segments.forEach((seg) => {
     const p1 = toXY(seg.fromTime, seg.fromPrice);
     const p2 = toXY(seg.toTime, seg.toPrice);
@@ -267,6 +267,9 @@ function _redraw() {
     // Skip if the entire segment is beyond the plot area
     if (p1.x > plotW && p2.x > plotW) return;
     const dx = p2.x - p1.x, dy = p2.y - p1.y;
+    const segPixelLen = Math.sqrt(dx * dx + dy * dy);
+    // Skip label if segment is too short — avoids overlap on zoomed-out charts
+    if (segPixelLen < 40) return;
     const angle = Math.atan2(dy, dx);
     // Clamp midpoint x so label stays inside the plot area
     const rawMx = (p1.x + p2.x) / 2;
@@ -278,6 +281,8 @@ function _redraw() {
     _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
     const tw = _ctx.measureText(text).width;
     const pad = 4, bw = tw + pad * 2, bh = 15, perpOff = -12;
+    // Only draw label if segment is wide enough to actually show the text
+    if (segPixelLen < bw) return;
     // Only clamp the label position, not the midpoint for rotation
     const mx = Math.min(rawMx, plotW - bw / 2 - 2);
     _ctx.translate(mx, my); _ctx.rotate(angle);

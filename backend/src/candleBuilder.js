@@ -44,7 +44,8 @@ const TF_MINUTES = {
   5: 5,
   15: 15,
   60: 60,
-  1440: null, // "1D" — special: all candles in an IST calendar day
+  1440: null,  // "1D" — special: all candles in an IST calendar day
+  10080: null, // "1W" — special: all candles in an IST calendar week (Mon–Fri)
 };
 
 /**
@@ -260,6 +261,10 @@ class CandleBuilder {
       return this._buildDailyBars();
     }
 
+    if (resolution === 10080) {
+      return this._buildWeeklyBars();
+    }
+
     const bars = [];
     let groupStart = null;
     let group = [];
@@ -310,11 +315,65 @@ class CandleBuilder {
   }
 
   /**
+   * Build weekly bars by grouping 1m candles into ISO week buckets (Mon–Sun in IST).
+   * Each week key is "YYYY-Www" using the IST date of the first candle in that week.
+   */
+  _buildWeeklyBars() {
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const byWeek = new Map();
+
+    for (const c of this._oneMinHistory) {
+      const istDate = new Date(c.time + IST_OFFSET_MS);
+      // ISO week: Monday = day 1. getUTCDay() returns 0=Sun … 6=Sat
+      const dow = istDate.getUTCDay(); // 0=Sun,1=Mon,...,6=Sat
+      // Days since Monday (Mon=0 … Sun=6)
+      const daysSinceMon = (dow + 6) % 7;
+      const monMs =
+        Date.UTC(
+          istDate.getUTCFullYear(),
+          istDate.getUTCMonth(),
+          istDate.getUTCDate() - daysSinceMon
+        ) - IST_OFFSET_MS; // back to UTC epoch
+      const weekKey = String(monMs); // unique per week start
+
+      if (!byWeek.has(weekKey)) byWeek.set(weekKey, { monMs, candles: [] });
+      byWeek.get(weekKey).candles.push(c);
+    }
+
+    const bars = [];
+    const sortedKeys = [...byWeek.keys()].sort((a, b) => Number(a) - Number(b));
+    for (const key of sortedKeys) {
+      const { monMs, candles } = byWeek.get(key);
+      if (candles.length > 0) {
+        // Use Monday 09:15 IST as the bar timestamp
+        const weekStart = monMs + (9 * 60 + 15) * 60 * 1000;
+        bars.push(this._aggregateCandles(candles, weekStart));
+      }
+    }
+    return bars;
+  }
+
+  /**
    * Compute the window-start timestamp for a given 1m candle time and resolution.
    * For intraday resolutions, windows are aligned to market open (09:15 IST).
    */
   _windowStartForCandle(resolution, tsMs) {
     if (resolution === 1440) return istDateKey(tsMs);
+
+    if (resolution === 10080) {
+      // Return Monday 09:15 IST of the week containing tsMs
+      const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+      const istDate = new Date(tsMs + IST_OFFSET_MS);
+      const dow = istDate.getUTCDay(); // 0=Sun … 6=Sat
+      const daysSinceMon = (dow + 6) % 7;
+      const monUtcMidnight = Date.UTC(
+        istDate.getUTCFullYear(),
+        istDate.getUTCMonth(),
+        istDate.getUTCDate() - daysSinceMon
+      );
+      // Monday 09:15 IST = Monday 03:45 UTC
+      return monUtcMidnight + (3 * 60 + 45) * 60 * 1000;
+    }
 
     const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
     const istMs = tsMs + IST_OFFSET_MS;

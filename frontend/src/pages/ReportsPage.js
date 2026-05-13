@@ -19,6 +19,7 @@ const TIMEFRAMES = [
   { label: "15m", value: 15 },
   { label: "1h", value: 60 },
   { label: "1D", value: 1440 },
+  { label: "1W", value: 10080 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

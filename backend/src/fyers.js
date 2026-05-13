@@ -107,103 +107,169 @@ async function validateToken() {
 }
 
 // ── Smart lookback calculator ─────────────────────────────────────────────────
+// Each wave needs ~8 candles on average. We target 60 waves (buffer above 50)
+// so the chart always has at least 50 visible waves.
+// Calendar days = trading days × (365 / 252).
+//
+// Fyers API limits per resolution:
+//   intraday (≤ 1h)  → max 100 days per request  (we page automatically)
+//   Daily            → max 365 days
+//   Weekly           → no documented limit; 10 years works fine
 function calcLookbackDays(resolution) {
   const res = String(resolution).toUpperCase();
-  const TARGET_WAVES = 50;
-  const MIN_DAYS = 90; // always fetch at least 3 months
+  const CANDLES_PER_WAVE = 8;   // empirical average
+  const TARGET_WAVES = 60;  // fetch 60 to reliably display 50
+  const CANDLES_NEEDED = TARGET_WAVES * CANDLES_PER_WAVE; // 480 candles
+  const CALENDAR_RATIO = 365 / 252;
 
-  let wavesPerDay;
-  if (res === "D" || res === "1440") {
-    wavesPerDay = 0.5;
-  } else {
-    const mins = parseInt(res, 10) || 3;
-    const candlesPerDay = Math.floor(375 / mins);
-    wavesPerDay = candlesPerDay / 8;
+  let candlesPerTradingDay;
+
+  if (res === "W" || res === "10080") {
+    // 1 weekly candle = 5 trading days → 480 candles = 2400 trading days ≈ 9.5 yrs
+    // Cap at 10 years (3650 days); Fyers weekly data goes back that far
+    return 3650;
   }
 
-  const tradingDaysNeeded = Math.ceil((TARGET_WAVES / wavesPerDay) * 1.5);
-  const calendarDaysNeeded = Math.ceil(tradingDaysNeeded * (365 / 252));
+  if (res === "D" || res === "1440") {
+    candlesPerTradingDay = 1;
+    // 480 trading days ≈ 696 calendar days → round up to 2 years for safety
+    return 730;
+  }
 
-  const isDaily = res === "D" || res === "1440";
-  const maxDays = isDaily ? 365 : 100;
+  const mins = parseInt(res, 10) || 3;
+  candlesPerTradingDay = Math.floor(375 / mins);
 
-  return Math.min(maxDays, Math.max(MIN_DAYS, calendarDaysNeeded));
+  const tradingDaysNeeded = Math.ceil(CANDLES_NEEDED / candlesPerTradingDay);
+  const calendarDaysNeeded = Math.ceil(tradingDaysNeeded * CALENDAR_RATIO);
+
+  // Ensure a sensible minimum even for very short timeframes
+  return Math.max(30, calendarDaysNeeded);
 }
 
 // ── Fetch historical candles ──────────────────────────────────────────────────
-// Hard 15-second timeout per attempt. Works 24/7 — Fyers REST history is
-// available on weekends and after hours (returns the last available data).
+// Fyers API limits: intraday ≤ 100 days per request, daily/weekly = no hard limit.
+// For intraday resolutions that need > 100 days we automatically page in 90-day
+// chunks and merge all results chronologically.
 async function fetchCandles(symbol, resolution, count = 10000) {
   const fyers = getFyersClient();
 
   const now = Math.floor(Date.now() / 1000);
 
+  const isWeekly = resolution === 10080 || String(resolution).toUpperCase() === "W";
   const isDaily = resolution === 1440 || String(resolution).toUpperCase() === "D";
-  const fyersResolution = isDaily ? "D" : String(resolution);
+  const fyersResolution = isWeekly ? "W" : isDaily ? "D" : String(resolution);
 
   const lookbackDays = calcLookbackDays(resolution);
-  const rangeFrom = now - lookbackDays * 24 * 60 * 60;
 
-  const FETCH_TIMEOUT_MS = 15000;
+  // Fyers API max date range per single request:
+  //   Intraday (≤ 1h) → 100 days
+  //   Daily           → 365 days
+  //   Weekly          → 730 days (~2 years)
+  // We chunk slightly below the limit to stay safe.
+  const CHUNK_DAYS = isWeekly ? 700 : isDaily ? 360 : 90;
 
-  async function tryFetch(from) {
+  // Larger timeout for daily/weekly requests (more data, slower response)
+  const FETCH_TIMEOUT_MS = isWeekly ? 30_000 : isDaily ? 20_000 : 15_000;
+
+  async function fetchChunk(from, to) {
     return Promise.race([
       fyers.getHistory({
         symbol,
         resolution: fyersResolution,
         date_format: "0",
         range_from: String(from),
-        range_to: String(now),
+        range_to: String(to),
         cont_flag: "1",
       }),
-      rejectAfter(FETCH_TIMEOUT_MS, `fetchCandles(${symbol} res=${fyersResolution})`),
+      rejectAfter(FETCH_TIMEOUT_MS, `fetchCandles(${symbol} res=${fyersResolution} chunk)`),
     ]);
   }
 
-  let res;
-  try {
-    res = await tryFetch(rangeFrom);
-  } catch (err) {
-    console.warn(`[Fyers] Primary fetch failed (${err.message}) — trying fallback ranges`);
-    res = null;
+  // IST offset: +5:30 = 330 minutes
+  const IST_OFFSET_S = 5.5 * 3600;
+  // 09:15 IST = 03:45 UTC = 225 minutes from midnight UTC
+  const MARKET_OPEN_UTC_MINS = 3 * 60 + 45;
+
+  function normalizeTimestamp(epochSec) {
+    if (isWeekly || isDaily) {
+      // Fyers daily/weekly timestamps can be midnight, 09:15, or end-of-day.
+      // Normalize all to 09:15 IST of that trading day so the chart series
+      // never gets duplicate or out-of-order timestamps.
+      const istMidnightSec = Math.floor((epochSec + IST_OFFSET_S) / 86400) * 86400 - IST_OFFSET_S;
+      return istMidnightSec + MARKET_OPEN_UTC_MINS * 60;
+    }
+    return epochSec;
   }
 
-  // If primary range failed or returned error, try shorter ranges
-  if (!res || res.s !== "ok") {
-    const fallbacks = [180, 90, 30].map((d) => now - d * 24 * 60 * 60);
-    for (const fallbackFrom of fallbacks) {
-      if (fallbackFrom >= rangeFrom) continue;
-      try {
-        res = await tryFetch(fallbackFrom);
-        if (res && res.s === "ok") break;
-      } catch (err) {
-        console.warn(`[Fyers] Fallback fetch (${Math.round((now - fallbackFrom) / 86400)}d) failed:`, err.message);
-      }
+  function parseCandles(res) {
+    if (!res || res.s !== "ok") return null;
+    return (res.candles || [])
+      .map((c) => ({
+        time: normalizeTimestamp(c[0]) * 1000,
+        open: c[1],
+        high: c[2],
+        low: c[3],
+        close: c[4],
+        volume: c[5],
+      }))
+      .filter(
+        (c) =>
+          Number.isFinite(c.time) && c.time > 0 &&
+          Number.isFinite(c.open) &&
+          Number.isFinite(c.high) &&
+          Number.isFinite(c.low) &&
+          Number.isFinite(c.close)
+      );
+  }
+
+  // Build list of [from, to] chunks covering the full lookback period
+  const chunkSizeMs = CHUNK_DAYS * 24 * 60 * 60; // seconds
+  const totalFrom = now - lookbackDays * 24 * 60 * 60;
+
+  const chunks = [];
+  let chunkEnd = now;
+  while (chunkEnd > totalFrom) {
+    const chunkStart = Math.max(totalFrom, chunkEnd - chunkSizeMs);
+    chunks.unshift({ from: chunkStart, to: chunkEnd }); // oldest first
+    chunkEnd = chunkStart - 1;
+  }
+
+  const allCandles = [];
+
+  for (const chunk of chunks) {
+    let res = null;
+    try {
+      res = await fetchChunk(chunk.from, chunk.to);
+    } catch (err) {
+      console.warn(`[Fyers] Chunk fetch failed (${err.message}) — skipping chunk`);
+      continue;
+    }
+
+    const parsed = parseCandles(res);
+    if (parsed) {
+      allCandles.push(...parsed);
+    } else {
+      console.warn(`[Fyers] Chunk returned error: ${res?.message || res?.errmsg || "unknown"}`);
     }
   }
 
-  if (!res || res.s !== "ok") {
-    const msg = res?.message || res?.errmsg || JSON.stringify(res) || "unknown error";
-    throw new Error("Fyers getHistory failed: " + msg);
+  if (allCandles.length === 0) {
+    throw new Error(`Fyers getHistory returned no candles for ${symbol} res=${fyersResolution}`);
   }
 
-  const raw = res.candles || [];
-  return raw
-    .map((c) => ({
-      time: c[0] * 1000, // ms; Fyers timestamps are already IST epoch seconds
-      open: c[1],
-      high: c[2],
-      low: c[3],
-      close: c[4],
-      volume: c[5],
-    }))
-    .filter((c) =>
-      Number.isFinite(c.time) && c.time > 0 &&
-      Number.isFinite(c.open) &&
-      Number.isFinite(c.high) &&
-      Number.isFinite(c.low) &&
-      Number.isFinite(c.close)
-    );
+  // Deduplicate by timestamp (overlap between chunks) and sort ascending
+  const seen = new Set();
+  const deduped = allCandles
+    .filter((c) => {
+      if (seen.has(c.time)) return false;
+      seen.add(c.time);
+      return true;
+    })
+    .sort((a, b) => a.time - b.time);
+
+  console.log(`[Fyers] ${symbol} ${fyersResolution}: fetched ${deduped.length} candles over ${lookbackDays}d (${chunks.length} chunk${chunks.length > 1 ? "s" : ""})`);
+
+  return deduped;
 }
 
 module.exports = { loadToken, saveToken, getAuthURL, generateToken, validateToken, fetchCandles };
