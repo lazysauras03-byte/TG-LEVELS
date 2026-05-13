@@ -171,15 +171,20 @@ async function fetchCandles(symbol, resolution, count = 10000) {
 
   const lookbackDays = calcLookbackDays(resolution);
 
-  // Fyers API max date range per single request:
+  // Fyers API max date range per single request (empirically verified):
   //   Intraday (≤ 1h) → 100 days
   //   Daily           → 365 days
-  //   Weekly          → ~365 days (Fyers rejects ranges > ~400 days as "Invalid input")
-  // We chunk safely below each limit.
-  const CHUNK_DAYS = isWeekly ? 300 : isDaily ? 360 : 90;
+  //   Weekly          → ~100 days reliably; larger ranges get "Invalid input" on
+  //                     historical dates. Use 90-day chunks (same as intraday).
+  const CHUNK_DAYS = isWeekly ? 90 : isDaily ? 360 : 90;
 
   // Larger timeout for daily/weekly requests (more data, slower response)
   const FETCH_TIMEOUT_MS = isWeekly ? 30_000 : isDaily ? 20_000 : 15_000;
+
+  // cont_flag=1 is for futures continuous contract stitching.
+  // For INDICES (spot) it causes "Invalid input" on historical chunks.
+  // Use cont_flag=0 for weekly/daily index data; keep 1 for intraday.
+  const contFlag = (isWeekly || isDaily) ? "0" : "1";
 
   async function fetchChunk(from, to) {
     return Promise.race([
@@ -189,7 +194,7 @@ async function fetchCandles(symbol, resolution, count = 10000) {
         date_format: "0",
         range_from: String(from),
         range_to: String(to),
-        cont_flag: "1",
+        cont_flag: contFlag,
       }),
       rejectAfter(FETCH_TIMEOUT_MS, `fetchCandles(${symbol} res=${fyersResolution} chunk)`),
     ]);
@@ -233,13 +238,13 @@ async function fetchCandles(symbol, resolution, count = 10000) {
   }
 
   // Build list of [from, to] chunks covering the full lookback period
-  const chunkSizeMs = CHUNK_DAYS * 24 * 60 * 60; // seconds
+  const chunkSizeS = CHUNK_DAYS * 24 * 60 * 60;
   const totalFrom = now - lookbackDays * 24 * 60 * 60;
 
   const chunks = [];
   let chunkEnd = now;
   while (chunkEnd > totalFrom) {
-    const chunkStart = Math.max(totalFrom, chunkEnd - chunkSizeMs);
+    const chunkStart = Math.max(totalFrom, chunkEnd - chunkSizeS);
     chunks.unshift({ from: chunkStart, to: chunkEnd }); // oldest first
     chunkEnd = chunkStart - 1;
   }
@@ -256,10 +261,38 @@ async function fetchCandles(symbol, resolution, count = 10000) {
     }
 
     const parsed = parseCandles(res);
-    if (parsed) {
+    if (parsed && parsed.length > 0) {
       allCandles.push(...parsed);
     } else {
-      console.warn(`[Fyers] Chunk returned error: ${res?.message || res?.errmsg || "unknown"}`);
+      // Chunk returned an API error (not a throw). For weekly, retry with
+      // smaller 30-day sub-chunks — Fyers can be picky about historical ranges.
+      if (isWeekly) {
+        const SUB_DAYS = 30;
+        const subSize = SUB_DAYS * 86400;
+        let subEnd = chunk.to;
+        let recovered = 0;
+        while (subEnd > chunk.from) {
+          const subStart = Math.max(chunk.from, subEnd - subSize);
+          try {
+            const subRes = await fetchChunk(subStart, subEnd);
+            const subParsed = parseCandles(subRes);
+            if (subParsed && subParsed.length > 0) {
+              allCandles.push(...subParsed);
+              recovered += subParsed.length;
+            }
+          } catch (subErr) {
+            // sub-chunk also failed — skip silently
+          }
+          subEnd = subStart - 1;
+        }
+        if (recovered > 0) {
+          console.log(`[Fyers] Weekly sub-chunk retry recovered ${recovered} candles for ${new Date(chunk.from * 1000).toISOString().slice(0, 10)}`);
+        } else {
+          console.warn(`[Fyers] Weekly chunk ${new Date(chunk.from * 1000).toISOString().slice(0, 10)} → ${new Date(chunk.to * 1000).toISOString().slice(0, 10)}: no data even after sub-chunk retry`);
+        }
+      } else {
+        console.warn(`[Fyers] Chunk returned error: ${res?.message || res?.errmsg || "unknown"}`);
+      }
     }
   }
 
