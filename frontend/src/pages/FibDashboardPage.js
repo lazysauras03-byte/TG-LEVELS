@@ -294,7 +294,7 @@ function useColData(symbol, tfValue) {
           data.emaHighs || [],
           data.emaLows || []
         );
-        setState({ status: "done", segment });
+        setState({ status: "done", segment, candles: data.candles, emaHighsData: data.emaHighs || [], emaLowsData: data.emaLows || [] });
       } else {
         setState({ status: "error", segment: null });
       }
@@ -482,70 +482,159 @@ function HtfColumn({ symbol }) {
   );
 }
 
-// ── Column 2 — Intraday ──────────────────────────────────────────────────────
 
-function IntradayColumn({ symbol }) {
-  const [activeTF, setActiveTF] = useState(60);
+// ── Support / Resistance computation ────────────────────────────────────────
 
-  const { status, segment } = useColData(symbol, activeTF);
-  const fibLevels = computeFibLevels(segment);
-  const bias = getBias(segment);
-  const activeTFDef = INTRADAY_TFS.find((t) => t.value === activeTF) || INTRADAY_TFS[0];
-  const tfLabel = activeTFDef.label;
-  const waveDesc = segment ? `${fmt(segment.fromPrice)} → ${fmt(segment.toPrice)}` : "—";
+function computeSRLevels(candles, emaHighs, emaLows) {
+  if (!candles?.length) return null;
+  const { pivots } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
+  if (!pivots.length) return null;
 
-  function handleWaveClick() {
-    if (!segment) return;
-    const params = new URLSearchParams({
-      symbol,
-      resolution: String(activeTF),
-      waveFrom: String(segment.fromTime),
-      waveTo: String(segment.toTime),
-    });
-    window.open(`/charts?${params.toString()}`, "_blank");
+  const lastClose = candles[candles.length - 1].close;
+  const tolerance = lastClose * 0.0018;
+
+  function cluster(prices) {
+    const sorted = [...prices].sort((a, b) => a - b);
+    const clusters = [];
+    for (const p of sorted) {
+      const last = clusters[clusters.length - 1];
+      if (last && Math.abs(p - last.avg) <= tolerance * 2) {
+        last.prices.push(p);
+        last.avg = last.prices.reduce((s, x) => s + x, 0) / last.prices.length;
+        last.count = last.prices.length;
+      } else {
+        clusters.push({ avg: p, prices: [p], count: 1 });
+      }
+    }
+    return clusters;
+  }
+
+  const highPivots = pivots.filter((p) => p.side === "high").map((p) => p.price);
+  const lowPivots = pivots.filter((p) => p.side === "low").map((p) => p.price);
+
+  const resClusters = cluster(highPivots).filter((c) => c.avg > lastClose).sort((a, b) => a.avg - b.avg);
+  const supClusters = cluster(lowPivots).filter((c) => c.avg < lastClose).sort((a, b) => b.avg - a.avg);
+
+  function strongest(clusters) {
+    if (!clusters.length) return null;
+    return clusters.reduce((best, c) => c.count >= best.count ? c : best, clusters[0]);
+  }
+
+  const copRes = cluster(lowPivots).filter((c) => c.avg > lastClose).sort((a, b) => a.avg - b.avg)[0] || null;
+  const copSup = cluster(highPivots).filter((c) => c.avg < lastClose).sort((a, b) => b.avg - a.avg)[0] || null;
+
+  return {
+    r2: resClusters[1] || null,
+    r1: resClusters[0] || null,
+    current: lastClose,
+    s1: supClusters[0] || null,
+    s2: supClusters[1] || null,
+    strongestRes: strongest(resClusters),
+    strongestSup: strongest(supClusters),
+    copRes,
+    copSup,
+  };
+}
+
+// ── SR Panel component ───────────────────────────────────────────────────────
+
+function SRPanel({ sr, status }) {
+  if (status === "loading") return <div className="fdb-state"><div className="fdb-spinner" /></div>;
+  if (!sr) return <div className="fdb-no-wave">No pivot data available</div>;
+
+  const { r2, r1, current, s1, s2, strongestRes, strongestSup, copRes, copSup } = sr;
+
+  function LevelRow({ label, cluster, type, extra }) {
+    if (!cluster) return null;
+    const isStrongestRes = strongestRes && Math.abs(cluster.avg - strongestRes.avg) < 0.01;
+    const isStrongestSup = strongestSup && Math.abs(cluster.avg - strongestSup.avg) < 0.01;
+    const isStrongest = isStrongestRes || isStrongestSup;
+    const isCopR = copRes && Math.abs(cluster.avg - copRes.avg) < 0.01;
+    const isCopS = copSup && Math.abs(cluster.avg - copSup.avg) < 0.01;
+    const isCoP = isCopR || isCopS;
+    return (
+      <div className={`sr-row sr-row-${type}`}>
+        <div className="sr-label-wrap">
+          <span className="sr-label">{label}</span>
+          {isStrongest && <span className="sr-badge sr-strongest">&#128293; Strongest</span>}
+          {isCoP && <span className="sr-badge sr-cop">&#x27F3; CoP</span>}
+        </div>
+        <div className="sr-right">
+          <span className={`sr-price sr-price-${type}`}>{fmt(cluster.avg)}</span>
+          <span className="sr-touches">{cluster.count}&times; touch{cluster.count !== 1 ? "es" : ""}</span>
+          {extra && <span className="sr-extra">{extra}</span>}
+        </div>
+      </div>
+    );
   }
 
   return (
+    <div className="sr-panel">
+      <LevelRow label="R2" cluster={r2} type="res" extra="2nd resistance" />
+      <LevelRow label="R1" cluster={r1} type="res" extra="nearest high" />
+      <div className="sr-row sr-row-current">
+        <span className="sr-label sr-label-current">&#9654; Current</span>
+        <span className="sr-price sr-price-current">{fmt(current)}</span>
+      </div>
+      <LevelRow label="S1" cluster={s1} type="sup" extra="nearest low" />
+      <LevelRow label="S2" cluster={s2} type="sup" extra="2nd support" />
+      {(copRes || copSup) && (
+        <div className="sr-cop-note">
+          {copRes && (
+            <div className="sr-cop-row sr-cop-res">
+              <span className="sr-cop-icon">&#x27F3;</span>
+              <span>CoP Resistance &mdash; ex-support @ {fmt(copRes.avg)} (price fell below)</span>
+            </div>
+          )}
+          {copSup && (
+            <div className="sr-cop-row sr-cop-sup">
+              <span className="sr-cop-icon">&#x27F3;</span>
+              <span>CoP Support &mdash; ex-resistance @ {fmt(copSup.avg)} (price broke above)</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Column 2 — Intraday ──────────────────────────────────────────────────────
+
+// ── Single-TF SR sub-panel ───────────────────────────────────────────────────
+
+function SRSubPanel({ symbol, tfValue, tfLabel }) {
+  const { status, segment, candles, emaHighsData, emaLowsData } = useColData(symbol, tfValue);
+  const bias = getBias(segment);
+
+  const sr = (status === "done" && candles?.length)
+    ? computeSRLevels(candles, emaHighsData, emaLowsData)
+    : null;
+
+  return (
+    <div className="sr-subpanel">
+      <div className="sr-subpanel-head">
+        <span className="sr-tf-label">{tfLabel}</span>
+        <BiasPill bias={status === "done" ? bias : "neutral"} />
+
+      </div>
+      {status === "loading" ? (
+        <div className="fdb-state" style={{ minHeight: 60 }}><div className="fdb-spinner" /></div>
+      ) : (
+        <SRPanel sr={sr} status={status} />
+      )}
+    </div>
+  );
+}
+
+function IntradayColumn({ symbol }) {
+  return (
     <div className="fdb-col">
       <div className="fdb-col-head">
-        Intraday — 1H timeframe<span>Mother wave · Fib</span>
+        Intraday · Support &amp; Resistance<span>15Min pivot levels</span>
       </div>
 
-      <div className="fdb-tf-row">
-        {INTRADAY_TFS.map((tf) => (
-          <button
-            key={tf.value}
-            className={`fdb-tf ${activeTF === tf.value ? "on" : ""}`}
-            onClick={() => setActiveTF(tf.value)}
-          >
-            {tf.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="fdb-bias-line">
-        <span>{tfLabel} bias</span>
-        <BiasPill bias={status === "done" ? bias : "neutral"} />
-      </div>
-
-      <div className="fdb-sep" />
-
-      <div className="fdb-col-body">
-        <div className="fdb-sec-title">▸ {tfLabel} mother wave</div>
-        {status === "loading" ? (
-          <div className="fdb-state"><div className="fdb-spinner" /></div>
-        ) : (
-          <WaveCard segment={segment} tfLabel={`${tfLabel} wave`} onClick={segment ? handleWaveClick : undefined} />
-        )}
-
-        <div className="fdb-sep" />
-
-        <div className="fdb-sec-title">▸ Fib — {tfLabel} wave ({waveDesc})</div>
-        {status === "loading" ? (
-          <div className="fdb-state"><div className="fdb-spinner" /></div>
-        ) : (
-          <FibTable fibLevels={fibLevels} />
-        )}
+      <div className="fdb-col-body fdb-sr-body">
+        <SRSubPanel symbol={symbol} tfValue={15} tfLabel="15Min" />
       </div>
     </div>
   );

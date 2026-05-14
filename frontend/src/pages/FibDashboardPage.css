@@ -575,3 +575,203 @@
   background: #2a2a4a;
   border-radius: 2px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Support / Resistance Panel
+══════════════════════════════════════════════════════════════════════════════ */
+
+.fdb-sr-body {
+  padding-top: 0;
+}
+
+/* Sub-panel (one per TF) */
+.sr-subpanel {
+  padding: 10px 0 4px;
+}
+
+.sr-subpanel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sr-tf-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8080cc;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sr-chart-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid #2a2a4a;
+  border-radius: 3px;
+  color: #4a4a8a;
+  font-size: 11px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.sr-chart-btn:hover {
+  color: #7a7aff;
+  border-color: #5a5aaa;
+}
+
+/* ── SR Panel rows ── */
+.sr-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sr-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+  gap: 6px;
+}
+
+.sr-row-res {
+  background: rgba(255, 68, 68, 0.07);
+  border-left-color: #ff4444;
+}
+
+.sr-row-sup {
+  background: rgba(68, 204, 68, 0.07);
+  border-left-color: #44cc44;
+}
+
+.sr-row-current {
+  background: rgba(100, 100, 200, 0.12);
+  border-left-color: #6060cc;
+  margin: 3px 0;
+}
+
+.sr-label-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sr-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8888bb;
+  min-width: 22px;
+  letter-spacing: 0.02em;
+}
+
+.sr-label-current {
+  color: #aaaaee;
+  font-size: 11px;
+}
+
+.sr-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sr-price {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sr-price-res {
+  color: #ff7777;
+}
+
+.sr-price-sup {
+  color: #55cc55;
+}
+
+.sr-price-current {
+  color: #ccccff;
+  font-size: 16px;
+}
+
+.sr-touches {
+  font-size: 10px;
+  color: #5a5a8a;
+  background: #0e0e22;
+  border: 1px solid #2a2a4a;
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.sr-extra {
+  font-size: 9px;
+  color: #44446a;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* ── Badges ── */
+.sr-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.sr-strongest {
+  background: #2a1a08;
+  color: #ffaa44;
+  border: 1px solid #4a3010;
+}
+
+.sr-cop {
+  background: #0e1a2a;
+  color: #44aaff;
+  border: 1px solid #1a3a5a;
+}
+
+/* ── Change of Polarity note block ── */
+.sr-cop-note {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sr-cop-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  line-height: 1.4;
+}
+
+.sr-cop-res {
+  background: rgba(255, 68, 68, 0.08);
+  border: 1px solid rgba(255, 68, 68, 0.18);
+  color: #ff8888;
+}
+
+.sr-cop-sup {
+  background: rgba(68, 204, 68, 0.08);
+  border: 1px solid rgba(68, 204, 68, 0.18);
+  color: #77dd77;
+}
+
+.sr-cop-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
