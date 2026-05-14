@@ -11,6 +11,7 @@ import {
   updateWavesIndicator,
   removeWavesIndicator,
 } from "../indicators/WavesIndicator";
+import DrawingOverlay from "./DrawingOverlay";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -364,6 +365,8 @@ export default function CandleChart({
   symbol,
   waveTarget = null,
   selectedTool = "cursor",
+  setSelectedTool = () => { },
+  drawingsHidden = false,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -371,6 +374,7 @@ export default function CandleChart({
   const emaHiRef = useRef(null);
   const emaLoRef = useRef(null);
   const rulerRef = useRef(null);
+  const drawingOverlayRef = useRef(null);
 
   const isFirstLoadRef = useRef(true);
   const prevCountRef = useRef(0);
@@ -830,6 +834,14 @@ export default function CandleChart({
   // When any drawing tool is active → disable scroll so clicks don't pan
   useEffect(() => {
     if (!chartRef.current) return;
+
+    // Trash: clear all drawings and snap back to cursor
+    if (selectedTool === "trash") {
+      drawingOverlayRef.current?.clearAll();
+      setSelectedTool("cursor");
+      return;
+    }
+
     const isPanMode = selectedTool === "cursor";
     chartRef.current.applyOptions({
       handleScroll: isPanMode,
@@ -839,7 +851,7 @@ export default function CandleChart({
     if (containerRef.current) {
       containerRef.current.style.cursor = isPanMode ? "" : "crosshair";
     }
-  }, [selectedTool]);
+  }, [selectedTool, setSelectedTool]);
 
   // ── Markers: refresh when signals, todayMode, or showBubble changes ────────
   // These three are the ONLY things that should cause setMarkers to fire.
@@ -945,6 +957,17 @@ export default function CandleChart({
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+
+      {/* ── Drawing overlay — SVG on top of chart canvas ── */}
+      <DrawingOverlay
+        ref={drawingOverlayRef}
+        chartRef={chartRef}
+        candleSeriesRef={candleRef}
+        selectedTool={selectedTool}
+        setSelectedTool={setSelectedTool}
+        containerRef={containerRef}
+        hidden={drawingsHidden}
+      />
 
       {/* Hint labels */}
       <div style={{
