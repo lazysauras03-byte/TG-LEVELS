@@ -105,7 +105,10 @@ class RulerOverlay {
   }
 
   _onKeyDown(e) {
-    if (e.key !== "Control" || this.active) return;
+    // Activate ruler only when BOTH Ctrl AND Shift are held
+    if (!e.ctrlKey || !e.shiftKey) return;
+    if (this.active) return;
+    e.preventDefault();
     this.active = true;
     this.container.style.cursor = "crosshair";
     this.startPt = this._lastMouse ? { ...this._lastMouse } : null;
@@ -114,7 +117,9 @@ class RulerOverlay {
   }
 
   _onKeyUp(e) {
-    if (e.key !== "Control") return;
+    // Deactivate as soon as Ctrl OR Shift is released
+    if (e.key !== "Control" && e.key !== "Shift") return;
+    if (!this.active) return;
     this.active = false;
     this.startPt = null;
     this.endPt = null;
@@ -358,6 +363,7 @@ export default function CandleChart({
   activeResolution,
   symbol,
   waveTarget = null,
+  selectedTool = "cursor",
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -391,6 +397,7 @@ export default function CandleChart({
   const onWaveDataRef = useRef(onWaveData);
   const onIntentionalReloadAckRef = useRef(onIntentionalReloadAck);
   const waveTargetRef = useRef(waveTarget);
+  const selectedToolRef = useRef(selectedTool);
 
   // Update ALL refs synchronously every render — before any effects fire.
   // This is the key pattern: refs are always current when effects read them.
@@ -404,6 +411,7 @@ export default function CandleChart({
   onWaveDataRef.current = onWaveData;
   onIntentionalReloadAckRef.current = onIntentionalReloadAck;
   waveTargetRef.current = waveTarget;
+  selectedToolRef.current = selectedTool;
 
   // Keep window.__tggCandles in sync (used by ruler overlay)
   window.__tggCandles = candles;
@@ -817,6 +825,22 @@ export default function CandleChart({
   }, [candles]); // eslint-disable-line
   // ^ depends ONLY on candles. emaHighs/emaLows/signals read from refs — never trigger this effect.
 
+  // ── Cursor/Tool mode: toggle chart pan vs drawing mode ───────────────────
+  // When selectedTool is "cursor" → normal pan/scroll (handleScroll: true)
+  // When any drawing tool is active → disable scroll so clicks don't pan
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const isPanMode = selectedTool === "cursor";
+    chartRef.current.applyOptions({
+      handleScroll: isPanMode,
+      handleScale: isPanMode,
+    });
+    // Update cursor style on the container
+    if (containerRef.current) {
+      containerRef.current.style.cursor = isPanMode ? "" : "crosshair";
+    }
+  }, [selectedTool]);
+
   // ── Markers: refresh when signals, todayMode, or showBubble changes ────────
   // These three are the ONLY things that should cause setMarkers to fire.
   // Price ticks do NOT touch this effect because candles is not in the dep array here.
@@ -929,8 +953,8 @@ export default function CandleChart({
         pointerEvents: "none", userSelect: "none",
         display: "flex", gap: 16,
       }}>
-        <span>Right-click → latest candle</span>
-        <span style={{ color: "#3a4060" }}>Hold Ctrl to measure</span>
+        <span>Right-click → reset view</span>
+        <span style={{ color: "#3a4060" }}>Ctrl+Shift = ruler</span>
       </div>
 
       {/* ── Candle Timer — countdown only, sits below the native last-price axis label ── */}

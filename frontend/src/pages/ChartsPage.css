@@ -46,12 +46,26 @@
   min-width: 0;
 }
 
+/* ─── Main content — contains toolbar + chart + sidebar ─ */
+.main-content {
+  position: relative;
+  /* toolbar uses position: absolute inside here */
+}
+
+/* ─── Chart area — shifted right to clear the toolbar ─── */
+.chart-area {
+  position: relative;
+  /* 44px toolbar width + 4px left gap + 4px breathing room = 52px */
+  padding-left: 52px;
+}
+
 /* ─── Floating Indicator Panel ───────────────────────── */
-/* Sits inside .chart-area (position: relative) */
+/* Sits inside .chart-area, offset right of toolbar */
 .chart-indicator-float {
   position: absolute;
   top: 10px;
-  left: 10px;
+  left: 62px;
+  /* 52px chart padding + 10px from edge */
   z-index: 50;
 }
 
@@ -84,7 +98,6 @@
 
 /* ─────────────────────────────────────────────────────── */
 /* REPORT button — completely invisible, no hover effect  */
-/* Covers all possible class names the button might have  */
 /* ─────────────────────────────────────────────────────── */
 .charts-report-btn,
 .report-btn,

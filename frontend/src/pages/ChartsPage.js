@@ -9,6 +9,7 @@ import WaveSignalTable from "../components/WaveSignalTable";
 import WaveStatsPanel from "../components/WaveStatsPanel";
 import IndicatorPanel from "../components/IndicatorPanel";
 import EmaFloatPanel from "../components/EmaFloatPanel";
+import TradingToolbar from "../components/TradingToolbar";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import "./ChartsPage.css";
@@ -90,7 +91,6 @@ export default function ChartsPage() {
   const [symbol, setSymbol] = useState(() => urlSymbol || loadPref("symbol", "NSE:NIFTY50-INDEX"));
   const [resolution, setResolution] = useState(() => urlResolution || loadPref("resolution", 3));
   const [todayMode, setTodayMode] = useState(() => {
-    // If we're navigating to a specific wave, disable today-only mode
     if (urlSymbol || urlResolution) return false;
     return loadPref("todayMode", true);
   });
@@ -105,10 +105,21 @@ export default function ChartsPage() {
   useEffect(() => { savePref("sidebarOpen", sidebarOpen); }, [sidebarOpen]);
   useEffect(() => { savePref("activeTabs", activeTabs); }, [activeTabs]);
 
+  // ── Toolbar selected tool ─────────────────────────────────────────────────
+  const [selectedTool, setSelectedTool] = useState("cursor");
+
+  // Escape always snaps back to cursor/pan mode (TradingView behaviour)
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") setSelectedTool("cursor");
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // ── Indicator state ───────────────────────────────────────────────────────
   const [indicators, setIndicators] = useState(() => {
     const defaults = loadPref("indicators", buildDefaultIndicators());
-    // When navigating from wave report, ensure waves indicator is on
     if (waveTarget) return { ...defaults, waves: true };
     return defaults;
   });
@@ -143,11 +154,6 @@ export default function ChartsPage() {
   const chartResetRef = useRef(null);
   const handleResetViewReady = useCallback((fn) => { chartResetRef.current = fn; }, []);
 
-  // ── intentionalReload — use a counter instead of boolean so even rapid
-  //    double-clicks (same resolution) still produce a stable signal.
-  //    CandleChart reads this as "any nonzero value = do full reload".
-  //    We increment on user action, CandleChart acknowledges by calling back
-  //    via onIntentionalReloadAck, which resets it to 0.
   const [reloadToken, setReloadToken] = useState(0);
 
   const handleIntentionalReloadAck = useCallback(() => {
@@ -166,13 +172,11 @@ export default function ChartsPage() {
 
   const handleSymbolChange = useCallback((sym) => {
     setSymbol(sym);
-    // refresh() is called by StatusBar immediately after onSymbolChange
   }, []);
 
   const handleResolutionChange = useCallback((res) => {
     setResolution(res);
     triggerIntentionalReload();
-    // refresh() is called by StatusBar immediately after onResolutionChange
   }, [triggerIntentionalReload]);
 
   // ── Initial data fetch ────────────────────────────────────────────────────
@@ -193,19 +197,11 @@ export default function ChartsPage() {
   const candles = chartData?.candles || [];
   const emaHighs = chartData?.emaHighs || [];
   const emaLows = chartData?.emaLows || [];
-  // Stabilize signals with useMemo: only create a new array reference when
-  // signal content actually changes (new NH/NL/BC generated). Without this,
-  // every tick replaces chartData → new signals array ref → markers effect
-  // fires → setMarkers called on every price tick → choppiness.
-  // The key is cheap: just type+time of each signal.
   const signalsRaw = chartData?.signals || [];
   const signals = useMemo(() => signalsRaw, [signalsRaw.map((s) => `${s.type}:${s.time}`).join("|")]); // eslint-disable-line
   const currentState = chartData?.currentState ?? 0;
   const bestPrice = chartData?.bestPrice;
 
-  // The resolution that the currently-loaded chartData actually contains.
-  // We pass this into CandleChart so it can detect a timeframe switch even
-  // when candle count happens to be the same as the previous timeframe.
   const chartDataResolution = chartData?.resolution ?? resolution;
 
   const showLoadingScreen = loading && candles.length === 0;
@@ -266,10 +262,17 @@ export default function ChartsPage() {
       {/* ── Main content ─────────────────────────────────────────────────── */}
       <div className="main-content">
 
+        {/* ── Trading Toolbar — left side, overlaid on chart ────────────── */}
+        <TradingToolbar
+          selectedTool={selectedTool}
+          setSelectedTool={setSelectedTool}
+        />
+
         {/* Chart area */}
         <div className="chart-area">
           {error && <div className="error-bar">⚠ {error}</div>}
 
+          {/* Indicator panel — floated top-left, offset right of toolbar */}
           <div className="chart-indicator-float">
             <IndicatorPanel indicators={indicators} onChange={handleIndicatorChange} />
           </div>
@@ -317,6 +320,7 @@ export default function ChartsPage() {
               activeResolution={chartDataResolution}
               symbol={symbol}
               waveTarget={waveTarget}
+              selectedTool={selectedTool}
             />
           )}
         </div>

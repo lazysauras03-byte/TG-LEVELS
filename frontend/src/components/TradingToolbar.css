@@ -1,0 +1,230 @@
+/* ─── Toolbar Container ───────────────────────────────────────────────────── */
+.tv-toolbar {
+  position: absolute;
+  left: 4px;
+  top: 50px;
+
+  width: 44px;
+
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+
+  padding: 4px 0;
+
+  z-index: 999999;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+
+  user-select: none;
+}
+
+/* ─── Divider ─────────────────────────────────────────────────────────────── */
+.tv-toolbar-divider {
+  height: 1px;
+  background: #2a2e39;
+  margin: 3px 6px;
+  flex-shrink: 0;
+}
+
+/* ─── Tool Wrap (button + chevron together) ───────────────────────────────── */
+.tv-tool-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.tv-tool-wrap:hover .tv-tool-btn,
+.tv-tool-wrap.drawer-open .tv-tool-btn {
+  background: #2a2e39;
+  color: #d1d4dc;
+}
+
+/* ─── Main Tool Button ────────────────────────────────────────────────────── */
+.tv-tool-btn {
+  flex: 1;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #787b86;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  padding-left: 4px;
+  transition: background 0.1s, color 0.1s;
+  min-width: 0;
+  border-radius: 4px 0 0 4px;
+}
+
+.tv-tool-btn:hover {
+  background: #2a2e39;
+  color: #d1d4dc;
+}
+
+.tv-tool-btn.active {
+  color: #2962ff;
+  background: rgba(41, 98, 255, 0.12);
+}
+
+.tv-tool-btn.active:hover {
+  background: rgba(41, 98, 255, 0.2);
+}
+
+.tv-tool-btn.danger {
+  color: #787b86;
+}
+
+.tv-tool-btn.danger:hover {
+  color: #f23645;
+  background: rgba(242, 54, 69, 0.12);
+}
+
+/* ─── Tool Icon ───────────────────────────────────────────────────────────── */
+.tv-tool-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tv-tool-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ─── Chevron Button ──────────────────────────────────────────────────────── */
+.tv-chevron-btn {
+  width: 10px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #4a4f60;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  padding-right: 1px;
+  transition: color 0.1s, background 0.1s;
+  flex-shrink: 0;
+  border-radius: 0 4px 4px 0;
+}
+
+.tv-chevron-btn svg {
+  width: 8px;
+  height: 8px;
+}
+
+.tv-chevron-btn:hover,
+.tv-tool-wrap:hover .tv-chevron-btn {
+  color: #787b86;
+  background: #2a2e39;
+}
+
+.tv-chevron-btn.open {
+  color: #2962ff;
+}
+
+/* ─── Sub-drawer Flyout ───────────────────────────────────────────────────── */
+.tv-subdrawer {
+  position: absolute;
+  left: 50px;
+  /* just right of toolbar */
+  width: 180px;
+
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
+  z-index: 1000000;
+  padding: 4px 0;
+
+  animation: tvDrawerIn 0.1s ease;
+}
+
+@keyframes tvDrawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ─── Drawer Label / Header ───────────────────────────────────────────────── */
+.tv-subdrawer-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #4a4f60;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 10px 6px;
+  border-bottom: 1px solid #2a2e39;
+  margin-bottom: 3px;
+}
+
+/* ─── Drawer Tool Button ──────────────────────────────────────────────────── */
+.tv-subdrawer-btn {
+  width: 100%;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: #787b86;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  transition: background 0.1s, color 0.1s;
+  text-align: left;
+}
+
+.tv-subdrawer-btn:hover {
+  background: #2a2e39;
+  color: #d1d4dc;
+}
+
+.tv-subdrawer-btn.active {
+  color: #d1d4dc;
+}
+
+.tv-subdrawer-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.tv-subdrawer-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.tv-subdrawer-text {
+  flex: 1;
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", sans-serif;
+  white-space: nowrap;
+}
+
+.tv-subdrawer-check {
+  font-size: 11px;
+  color: #2962ff;
+  margin-left: auto;
+}
