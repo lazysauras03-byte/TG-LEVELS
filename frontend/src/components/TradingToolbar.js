@@ -8,20 +8,6 @@ const icons = {
       <path d="M3 1l12 7-5.5 1.5L8 15 3 1z" />
     </svg>
   ),
-  crosshair: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="9" y1="1" x2="9" y2="5" />
-      <line x1="9" y1="13" x2="9" y2="17" />
-      <line x1="1" y1="9" x2="5" y2="9" />
-      <line x1="13" y1="9" x2="17" y2="9" />
-      <circle cx="9" cy="9" r="3.5" />
-    </svg>
-  ),
-  dot: (
-    <svg viewBox="0 0 18 18" fill="currentColor">
-      <circle cx="9" cy="9" r="2.5" />
-    </svg>
-  ),
   trendline: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <line x1="2" y1="15" x2="16" y2="3" strokeLinecap="round" />
@@ -29,78 +15,9 @@ const icons = {
       <circle cx="16" cy="3" r="1.5" fill="currentColor" stroke="none" />
     </svg>
   ),
-  ray: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="2" y1="15" x2="16" y2="3" strokeLinecap="round" />
-      <circle cx="2" cy="15" r="1.5" fill="currentColor" stroke="none" />
-      <polygon points="16,3 13,4.5 14.5,6" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  extendedline: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="1" y1="15" x2="17" y2="3" strokeLinecap="round" strokeDasharray="2,1" />
-    </svg>
-  ),
-  infoLine: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="2" y1="14" x2="16" y2="4" strokeLinecap="round" />
-      <circle cx="9" cy="9" r="2" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  trendAngle: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="2" y1="15" x2="16" y2="5" strokeLinecap="round" />
-      <path d="M5,15 A5,5,0,0,1,9,11" strokeDasharray="1.5,1" />
-    </svg>
-  ),
   horizontal: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <line x1="1" y1="9" x2="17" y2="9" strokeLinecap="round" />
-    </svg>
-  ),
-  hRay: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="1" y1="9" x2="17" y2="9" strokeLinecap="round" />
-      <polygon points="17,9 14,7.5 14,10.5" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  hSegment: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="4" y1="9" x2="14" y2="9" strokeLinecap="round" />
-      <circle cx="4" cy="9" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="14" cy="9" r="1.5" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  vertical: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="9" y1="1" x2="9" y2="17" strokeLinecap="round" />
-    </svg>
-  ),
-  crossLine: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="1" y1="9" x2="17" y2="9" strokeLinecap="round" />
-      <line x1="9" y1="1" x2="9" y2="17" strokeLinecap="round" />
-    </svg>
-  ),
-  channel: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="2" y1="12" x2="16" y2="5" strokeLinecap="round" />
-      <line x1="2" y1="16" x2="16" y2="9" strokeLinecap="round" strokeDasharray="2,1" />
-      <line x1="2" y1="12" x2="2" y2="16" strokeLinecap="round" />
-      <line x1="16" y1="5" x2="16" y2="9" strokeLinecap="round" />
-    </svg>
-  ),
-  parallelChannel: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="2" y1="14" x2="16" y2="7" strokeLinecap="round" />
-      <line x1="2" y1="10" x2="16" y2="3" strokeLinecap="round" />
-    </svg>
-  ),
-  pitchfork: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="3" y1="14" x2="15" y2="4" strokeLinecap="round" />
-      <line x1="3" y1="14" x2="3" y2="4" strokeLinecap="round" />
-      <line x1="3" y1="9" x2="15" y2="9" strokeLinecap="round" strokeDasharray="1.5,1" />
     </svg>
   ),
   fibRetracement: (
@@ -134,112 +51,18 @@ const icons = {
       <line x1="17" y1="2" x2="17" y2="16" strokeLinecap="round" strokeDasharray="2,1" />
     </svg>
   ),
-  rectangle: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="2" y="4" width="14" height="10" rx="1" />
-    </svg>
-  ),
-  ellipse: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <ellipse cx="9" cy="9" rx="7" ry="5" />
-    </svg>
-  ),
-  triangle: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <polygon points="9,2 16,15 2,15" />
-    </svg>
-  ),
-  polygon: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <polygon points="9,2 16,7 13,15 5,15 2,7" />
-    </svg>
-  ),
-  brush: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M3,14 Q5,8 9,5 Q13,2 15,4" strokeLinecap="round" />
-      <path d="M3,14 Q4,16 5,15" strokeLinecap="round" />
-    </svg>
-  ),
-  highlighter: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M4,13 Q8,5 14,4" strokeWidth="4" strokeLinecap="round" opacity="0.4" />
-      <path d="M4,13 Q8,5 14,4" strokeLinecap="round" />
-    </svg>
-  ),
-  path: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M2,14 C4,8 8,6 9,9 C10,12 14,10 16,4" strokeLinecap="round" />
-    </svg>
-  ),
-  text: (
-    <svg viewBox="0 0 18 18" fill="currentColor">
-      <text x="3" y="14" fontSize="13" fontWeight="700" fontFamily="serif">T</text>
-    </svg>
-  ),
-  note: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="2" y="2" width="14" height="11" rx="1.5" />
-      <line x1="5" y1="6" x2="13" y2="6" strokeLinecap="round" />
-      <line x1="5" y1="9" x2="10" y2="9" strokeLinecap="round" />
-      <path d="M12,13 L12,17 L16,13 Z" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  callout: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="1" y="2" width="13" height="9" rx="1.5" />
-      <path d="M5,11 L3,15 L8,11" strokeLinejoin="round" />
-    </svg>
-  ),
-  arrow: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="3" y1="15" x2="15" y2="3" strokeLinecap="round" />
-      <polygon points="15,3 10,4.5 13.5,8" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  balloonUp: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="9" cy="7" r="5" />
-      <path d="M7,12 L9,17 L11,12" strokeLinejoin="round" />
-    </svg>
-  ),
-  price: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="1" y="6" width="11" height="6" rx="1" />
-      <line x1="12" y1="9" x2="17" y2="9" strokeLinecap="round" />
-      <line x1="5" y1="9" x2="7" y2="9" strokeLinecap="round" />
-    </svg>
-  ),
-  measure: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <line x1="2" y1="9" x2="16" y2="9" strokeLinecap="round" />
-      <line x1="2" y1="6" x2="2" y2="12" strokeLinecap="round" />
-      <line x1="16" y1="6" x2="16" y2="12" strokeLinecap="round" />
-    </svg>
-  ),
-  zoom: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="1" y="3" width="12" height="9" rx="1" />
-      <line x1="13" y1="7" x2="17" y2="7" strokeLinecap="round" />
-      <line x1="13" y1="10" x2="17" y2="10" strokeLinecap="round" />
-    </svg>
-  ),
-  magnet: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M3,9 L3,5 A6,6,0,0,1,15,5 L15,9" strokeLinecap="round" />
-      <line x1="1" y1="9" x2="5" y2="9" strokeLinecap="round" />
-      <line x1="13" y1="9" x2="17" y2="9" strokeLinecap="round" />
-    </svg>
-  ),
-  lock: (
-    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="3" y="8" width="12" height="9" rx="1.5" />
-      <path d="M6,8 L6,5 A3,3,0,0,1,12,5 L12,8" strokeLinecap="round" />
-    </svg>
-  ),
-  hide: (
+  // Eye open (visible state)
+  eye: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M1,9 Q4,4 9,4 Q14,4 17,9 Q14,14 9,14 Q4,14 1,9Z" />
       <circle cx="9" cy="9" r="2.5" />
+    </svg>
+  ),
+  // Eye closed (hidden state)
+  eyeOff: (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M1,9 Q4,4 9,4 Q14,4 17,9 Q14,14 9,14 Q4,14 1,9Z" />
+      <line x1="3" y1="3" x2="15" y2="15" strokeLinecap="round" />
     </svg>
   ),
   trash: (
@@ -258,22 +81,18 @@ const icons = {
   ),
 };
 
-// ─── Tool Group Definitions ────────────────────────────────────────────────────
-// Each group has a primary tool and optional sub-tools in a flyout drawer
-// ─── Keyboard shortcut map (TradingView-style) ────────────────────────────────
-// Alt+key → tool id
+// ─── Keyboard shortcut map ────────────────────────────────────────────────────
 export const TOOLBAR_SHORTCUTS = {
-  "alt+a": "cursor",         // cursor / pan   (TradingView: Escape)
+  "alt+a": "cursor",
   "escape": "cursor",
-  "alt+t": "trendline",      // Trend Line
-  "alt+h": "horizontal",     // Horizontal Line
-  "alt+j": "trendline",      // alias (TradingView alt+j = trend line)
-  "alt+f": "fibRetracement", // Fib Retracement
-  "alt+c": "channel",        // Channel
-  "alt+r": "rectangle",      // Rectangle
-  "alt+b": "text",           // Text / label
+  "alt+t": "trendline",
+  "alt+h": "horizontal",
+  "alt+j": "trendline",
+  "alt+f": "fibRetracement",
 };
 
+// ─── Tool Group Definitions ────────────────────────────────────────────────────
+// trendline and horizontal have NO subtools — direct select only
 const TOOL_GROUPS = [
   {
     id: "cursor",
@@ -284,36 +103,14 @@ const TOOL_GROUPS = [
   {
     id: "trendline",
     icon: icons.trendline,
-    label: "Trend Line  (Alt+T / Alt+J)",
-    subtools: [
-      { id: "trendline", icon: icons.trendline, label: "Trend Line" },
-      { id: "ray", icon: icons.ray, label: "Ray" },
-      { id: "extendedline", icon: icons.extendedline, label: "Extended Line" },
-      { id: "trendAngle", icon: icons.trendAngle, label: "Trend Angle" },
-      { id: "infoLine", icon: icons.infoLine, label: "Info Line" },
-    ],
+    label: "Trend Line  (Alt+T)",
+    subtools: [], // NO dropdown
   },
   {
     id: "horizontal",
     icon: icons.horizontal,
     label: "Horizontal Line  (Alt+H)",
-    subtools: [
-      { id: "horizontal", icon: icons.horizontal, label: "Horizontal Line" },
-      { id: "hRay", icon: icons.hRay, label: "Horizontal Ray" },
-      { id: "hSegment", icon: icons.hSegment, label: "Horizontal Segment" },
-      { id: "vertical", icon: icons.vertical, label: "Vertical Line" },
-      { id: "crossLine", icon: icons.crossLine, label: "Cross Line" },
-    ],
-  },
-  {
-    id: "channel",
-    icon: icons.channel,
-    label: "Channel  (Alt+C)",
-    subtools: [
-      { id: "channel", icon: icons.channel, label: "Parallel Channel" },
-      { id: "parallelChannel", icon: icons.parallelChannel, label: "Flat Top/Bottom" },
-      { id: "pitchfork", icon: icons.pitchfork, label: "Pitchfork" },
-    ],
+    subtools: [], // NO dropdown
   },
   {
     id: "fibRetracement",
@@ -326,43 +123,11 @@ const TOOL_GROUPS = [
       { id: "fibTime", icon: icons.fibTime, label: "Fib Time Zones" },
     ],
   },
-  // ── brush & measure removed per user request ──
-  {
-    id: "rectangle",
-    icon: icons.rectangle,
-    label: "Rectangle  (Alt+R)",
-    subtools: [
-      { id: "rectangle", icon: icons.rectangle, label: "Rectangle" },
-      { id: "ellipse", icon: icons.ellipse, label: "Ellipse" },
-      { id: "triangle", icon: icons.triangle, label: "Triangle" },
-      { id: "polygon", icon: icons.polygon, label: "Polyline" },
-    ],
-  },
-  {
-    id: "text",
-    icon: icons.text,
-    label: "Text  (Alt+B)",
-    subtools: [], // no dropdown — single text tool
-  },
   { id: "divider1", divider: true },
   {
-    id: "magnet",
-    icon: icons.magnet,
-    label: "Magnet Mode",
-    toggle: true,
-    subtools: [],
-  },
-  {
-    id: "lock",
-    icon: icons.lock,
-    label: "Lock All Drawings",
-    action: true,
-    subtools: [],
-  },
-  {
     id: "hide",
-    icon: icons.hide,
-    label: "Hide All Drawings",
+    icon: icons.eye,        // icon swaps based on toggle state in render
+    label: "Hide / Show All Drawings",
     toggle: true,
     subtools: [],
   },
@@ -420,9 +185,16 @@ function SubDrawer({ group, position, selectedTool, onSelect, onClose }) {
 }
 
 // ─── Main Toolbar ──────────────────────────────────────────────────────────────
-export default function TradingToolbar({ selectedTool, setSelectedTool }) {
+export default function TradingToolbar({
+  selectedTool,
+  setSelectedTool,
+  drawingsHidden,
+  onToggleHide,
+  onTrashAll,
+}) {
   const [openDrawer, setOpenDrawer] = useState(null);
   const [drawerPos, setDrawerPos] = useState(0);
+
   // Track which tool is "primary" for each group (shown as the group icon)
   const [groupPrimary, setGroupPrimary] = useState(() => {
     const map = {};
@@ -433,54 +205,43 @@ export default function TradingToolbar({ selectedTool, setSelectedTool }) {
     });
     return map;
   });
-  const [toggleStates, setToggleStates] = useState({
-    magnet: false,
-    hide: false,
-    lock: false,
-  });
 
   const btnRefs = useRef({});
   const toolbarRef = useRef(null);
 
-  // ── Keyboard shortcuts (TradingView-style) ────────────────────────────────
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e) {
-      // Skip if typing in an input/textarea
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-
       const key = e.key.toLowerCase();
       let toolId = null;
-
       if (key === "escape") {
         toolId = "cursor";
       } else if (e.altKey && !e.ctrlKey && !e.shiftKey) {
         const combo = "alt+" + key;
         toolId = TOOLBAR_SHORTCUTS[combo] || null;
       }
-
       if (!toolId) return;
       e.preventDefault();
 
-      // Find the group this tool belongs to
       const group = TOOL_GROUPS.find(
         (g) => !g.divider && (g.id === toolId || g.subtools?.some((s) => s.id === toolId))
       );
       if (!group) return;
 
-      // If shortcut maps to a subtool, set that subtool as primary
       if (group.id !== toolId) {
         setGroupPrimary((prev) => ({ ...prev, [group.id]: toolId }));
       }
-      setSelectedTool(toolId === group.id && group.subtools?.length > 0
-        ? (groupPrimary[group.id] || group.subtools[0].id)
-        : toolId
+      setSelectedTool(
+        toolId === group.id && group.subtools?.length > 0
+          ? (groupPrimary[group.id] || group.subtools[0].id)
+          : toolId
       );
       setOpenDrawer(null);
     }
-
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [setSelectedTool, groupPrimary]); // eslint-disable-line
+  }, [setSelectedTool, groupPrimary]);
 
   // Find which group a tool belongs to
   const findGroupForTool = useCallback((toolId) => {
@@ -489,9 +250,13 @@ export default function TradingToolbar({ selectedTool, setSelectedTool }) {
     );
   }, []);
 
-  // The icon to display for a group button (last selected sub-tool)
+  // The icon to display for a group button
   const getGroupIcon = useCallback(
     (group) => {
+      // Eye icon swaps based on hide state
+      if (group.id === "hide") {
+        return drawingsHidden ? icons.eyeOff : icons.eye;
+      }
       const primaryId = groupPrimary[group.id];
       if (primaryId) {
         const st = group.subtools.find((s) => s.id === primaryId);
@@ -499,58 +264,58 @@ export default function TradingToolbar({ selectedTool, setSelectedTool }) {
       }
       return group.icon;
     },
-    [groupPrimary]
+    [groupPrimary, drawingsHidden]
   );
 
   // Is this group's tool currently active?
   const isGroupActive = useCallback(
     (group) => {
-      if (group.toggle) return toggleStates[group.id];
-      // For groups with no subtools (cursor), match group.id directly
+      if (group.id === "hide") return drawingsHidden;
       if (!group.subtools || group.subtools.length === 0) {
         return selectedTool === group.id;
       }
       const primaryId = groupPrimary[group.id] || group.subtools?.[0]?.id;
       return selectedTool === primaryId;
     },
-    [selectedTool, groupPrimary, toggleStates]
+    [selectedTool, groupPrimary, drawingsHidden]
   );
 
   const handleMainClick = useCallback(
     (group, e) => {
       if (group.divider) return;
 
-      // Toggle tools
-      if (group.toggle) {
-        setToggleStates((prev) => ({ ...prev, [group.id]: !prev[group.id] }));
+      // Eye toggle
+      if (group.id === "hide") {
+        if (onToggleHide) onToggleHide();
         setOpenDrawer(null);
         return;
       }
 
-      // Action tools (no sub-drawer)
-      if (group.action) {
+      // Trash action
+      if (group.id === "trash") {
+        if (onTrashAll) onTrashAll();
         setOpenDrawer(null);
         return;
       }
 
-      // Tools with no subtools (like cursor) — just select them directly
+      // Tools with no subtools — direct select
       if (group.subtools.length === 0) {
         setSelectedTool(group.id);
         setOpenDrawer(null);
         return;
       }
 
-      // Open/close sub-drawer
+      // Toggle open/close sub-drawer
       if (openDrawer === group.id) {
         setOpenDrawer(null);
         return;
       }
 
-      // Selecting main button also activates the group's current primary tool
+      // Activate primary tool of the group
       const primaryToolId = groupPrimary[group.id] || group.subtools?.[0]?.id;
       if (primaryToolId) setSelectedTool(primaryToolId);
 
-      // Compute vertical position for drawer
+      // Compute drawer vertical position
       const btn = btnRefs.current[group.id];
       const toolbar = toolbarRef.current;
       if (btn && toolbar) {
@@ -560,7 +325,7 @@ export default function TradingToolbar({ selectedTool, setSelectedTool }) {
       }
       setOpenDrawer(group.id);
     },
-    [openDrawer]
+    [openDrawer, onToggleHide, onTrashAll, groupPrimary, setSelectedTool]
   );
 
   const handleChevronClick = useCallback(

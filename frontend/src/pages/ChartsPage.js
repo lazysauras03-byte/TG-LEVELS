@@ -108,6 +108,16 @@ export default function ChartsPage() {
   // ── Toolbar selected tool ─────────────────────────────────────────────────
   const [selectedTool, setSelectedTool] = useState("cursor");
 
+  // ── Drawings hide/show state ──────────────────────────────────────────────
+  const [drawingsHidden, setDrawingsHidden] = useState(false);
+  const handleToggleHide = useCallback(() => setDrawingsHidden((v) => !v), []);
+
+  // Ref so CandleChart can call clearAll on the overlay
+  const drawingOverlayExtRef = useRef(null);
+  const handleTrashAll = useCallback(() => {
+    drawingOverlayExtRef.current?.clearAll();
+  }, []);
+
   // Escape always snaps back to cursor/pan mode (TradingView behaviour)
   useEffect(() => {
     function onKey(e) {
@@ -266,6 +276,9 @@ export default function ChartsPage() {
         <TradingToolbar
           selectedTool={selectedTool}
           setSelectedTool={setSelectedTool}
+          drawingsHidden={drawingsHidden}
+          onToggleHide={handleToggleHide}
+          onTrashAll={handleTrashAll}
         />
 
         {/* Chart area */}
@@ -321,6 +334,9 @@ export default function ChartsPage() {
               symbol={symbol}
               waveTarget={waveTarget}
               selectedTool={selectedTool}
+              setSelectedTool={setSelectedTool}
+              drawingsHidden={drawingsHidden}
+              drawingOverlayExtRef={drawingOverlayExtRef}
             />
           )}
         </div>

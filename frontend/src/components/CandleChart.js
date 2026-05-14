@@ -367,6 +367,7 @@ export default function CandleChart({
   selectedTool = "cursor",
   setSelectedTool = () => { },
   drawingsHidden = false,
+  drawingOverlayExtRef = null,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -375,6 +376,13 @@ export default function CandleChart({
   const emaLoRef = useRef(null);
   const rulerRef = useRef(null);
   const drawingOverlayRef = useRef(null);
+
+  // Forward overlay ref to parent so it can call clearAll
+  useEffect(() => {
+    if (drawingOverlayExtRef && typeof drawingOverlayExtRef === "object") {
+      drawingOverlayExtRef.current = drawingOverlayRef.current;
+    }
+  });
 
   const isFirstLoadRef = useRef(true);
   const prevCountRef = useRef(0);
