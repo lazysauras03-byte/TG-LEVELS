@@ -1,6 +1,6 @@
 // DrawingOverlay.js
 // SVG drawing overlay for lightweight-charts.
-// Tools: trendline, horizontal, fibRetracement
+// Tools: trendline, horizontal, fibRetracement, text
 // Features: delete on hover-click, localStorage persistence, hide/show all
 
 import React, {
@@ -16,14 +16,12 @@ import React, {
 const DRAW_COLOR = "#2962ff";
 const HOVER_COLOR = "#5b8fff";
 const FIB_COLOR = "#f0c040";
+const TEXT_COLOR = "#e0e3eb";
 const HANDLE_R = 5;
 const HIT_SLOP = 10;
 const LS_KEY = "tgg_drawings_v2";
 
-// Fibonacci levels to draw — full extended set matching FibDashboardPage
-// p1=drag start (origin), p2=drag end (tip). For a bull drag: p1=low, p2=high
-// Level 0 = p1 (origin/start), Level 1 = p2 (tip/end)
-// price = p1.price + (p2.price - p1.price) * level
+// Fibonacci levels
 const FIB_LEVELS = [
   { ratio: -1.618, label: "-1.618", color: "#26a69a", zoneColor: null, dash: "6 3", width: 1.2 },
   { ratio: -1.000, label: "-1", color: "#ef5350", zoneColor: null, dash: "4 3", width: 1.4 },
@@ -38,18 +36,17 @@ const FIB_LEVELS = [
   { ratio: 1.618, label: "1.618", color: "#26a69a", zoneColor: null, dash: "6 3", width: 1.2 },
 ];
 
-// Zone fill bands between consecutive fib levels (colors from Image 1)
 const FIB_ZONE_FILLS = [
-  { from: -1.618, to: -1.000, color: "#26a69a", opacity: 0.10 }, // teal — ext target zone
-  { from: -1.000, to: -0.236, color: "#ef9a9a", opacity: 0.10 }, // red — above 0 (extension)
-  { from: -0.236, to: 0.000, color: "#ffcc80", opacity: 0.12 }, // orange — trap top zone
-  { from: 0.000, to: 0.236, color: "#fff9c4", opacity: 0.08 }, // yellow — near 0 zone
-  { from: 0.236, to: 0.382, color: "#ffab91", opacity: 0.10 }, // orange-red
-  { from: 0.382, to: 0.500, color: "#b2dfdb", opacity: 0.10 }, // teal-light
-  { from: 0.500, to: 0.618, color: "#c8e6c9", opacity: 0.10 }, // green-light
-  { from: 0.618, to: 0.786, color: "#fff9c4", opacity: 0.10 }, // golden zone
-  { from: 0.786, to: 1.000, color: "#b2dfdb", opacity: 0.10 }, // caution zone
-  { from: 1.000, to: 1.618, color: "#cfd8dc", opacity: 0.08 }, // below 1 (deep retrace)
+  { from: -1.618, to: -1.000, color: "#26a69a", opacity: 0.10 },
+  { from: -1.000, to: -0.236, color: "#ef9a9a", opacity: 0.10 },
+  { from: -0.236, to: 0.000, color: "#ff9800", opacity: 0.28 }, // Trap zone upper — vivid orange
+  { from: 0.000, to: 0.236, color: "#ff9800", opacity: 0.28 }, // Trap zone lower — vivid orange
+  { from: 0.236, to: 0.382, color: "#ffab91", opacity: 0.10 },
+  { from: 0.382, to: 0.500, color: "#b2dfdb", opacity: 0.10 },
+  { from: 0.500, to: 0.618, color: "#c8e6c9", opacity: 0.10 },
+  { from: 0.618, to: 0.786, color: "#fff9c4", opacity: 0.10 },
+  { from: 0.786, to: 1.000, color: "#b2dfdb", opacity: 0.10 },
+  { from: 1.000, to: 1.618, color: "#cfd8dc", opacity: 0.08 },
 ];
 
 // ─── Persistence helpers ──────────────────────────────────────────────────────
@@ -72,8 +69,7 @@ function saveDrawings(drawings) {
 
 // ─── Geometry ─────────────────────────────────────────────────────────────────
 function distToSegment(px, py, x1, y1, x2, y2) {
-  const dx = x2 - x1,
-    dy = y2 - y1;
+  const dx = x2 - x1, dy = y2 - y1;
   const lenSq = dx * dx + dy * dy;
   if (lenSq === 0) return Math.hypot(px - x1, py - y1);
   const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
@@ -82,9 +78,7 @@ function distToSegment(px, py, x1, y1, x2, y2) {
 
 // ─── UID ──────────────────────────────────────────────────────────────────────
 let _uid = Date.now();
-function uid() {
-  return ++_uid;
-}
+function uid() { return ++_uid; }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 const DrawingOverlay = forwardRef(function DrawingOverlay(
@@ -92,9 +86,15 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   ref
 ) {
   const svgRef = useRef(null);
+  const wrapRef = useRef(null); // wrapper div for positioning text inputs
 
   const drawingsRef = useRef(loadDrawings());
   const [drawings, setDrawings] = useState(drawingsRef.current);
+
+  // Pending text input: { id, x, y } — when user clicks in text mode before typing
+  const [pendingText, setPendingText] = useState(null);
+  const pendingTextRef = useRef(null);
+  const textInputRef = useRef(null);
 
   const commitDrawings = useCallback((next) => {
     drawingsRef.current = next;
@@ -134,7 +134,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     [chartRef, candleSeriesRef]
   );
 
-  // Repaint when chart scrolls/zooms so pixel positions stay accurate
+  // Repaint when chart scrolls/zooms
   useEffect(() => {
     if (!chartRef.current) return;
     const repaint = () => setDrawings((d) => [...d]);
@@ -153,12 +153,13 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     clearAll() {
       hoveredIdRef.current = null;
       setHoveredId(null);
+      setPendingText(null);
+      pendingTextRef.current = null;
       commitDrawings([]);
     },
     getDrawings() {
       return drawingsRef.current;
     },
-    // Add a fib retracement drawing programmatically from p1Price → p2Price
     addFibDrawing({ p1Price, p2Price }) {
       if (p1Price == null || p2Price == null) return;
       const newDrawing = {
@@ -167,13 +168,12 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         p1: { price: p1Price, time: null },
         p2: { price: p2Price, time: null },
       };
-      const updated = [...drawingsRef.current, newDrawing];
-      commitDrawings(updated);
+      commitDrawings([...drawingsRef.current, newDrawing]);
     },
   }));
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  const DRAWING_TOOLS = ["trendline", "horizontal", "fibRetracement"];
+  const DRAWING_TOOLS = ["trendline", "horizontal", "fibRetracement", "text"];
 
   const relCoord = useCallback((e) => {
     const r = svgRef.current?.getBoundingClientRect();
@@ -196,7 +196,6 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
           return Math.abs(py - c.y) < HIT_SLOP;
         }
         if (drawing.type === "fibRetracement") {
-          // Hit test: check if mouse Y is near any fib level line
           const priceRange = drawing.p2.price - drawing.p1.price;
           for (const lvl of FIB_LEVELS) {
             const price = drawing.p1.price + priceRange * lvl.ratio;
@@ -204,6 +203,16 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
             if (c.y != null && Math.abs(py - c.y) < HIT_SLOP) return true;
           }
           return false;
+        }
+        if (drawing.type === "text") {
+          const c = dataToCoord(drawing.time, drawing.price);
+          const cx = c.x ?? drawing.x;
+          const cy = c.y ?? drawing.y;
+          if (cx == null || cy == null) return false;
+          // Hit area: bounding box of text label
+          const textW = (drawing.content?.length ?? 4) * 8 + 16;
+          const textH = 22;
+          return px >= cx - 4 && px <= cx + textW && py >= cy - textH && py <= cy + 4;
         }
       } catch { }
       return false;
@@ -214,10 +223,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   // ── Delete ───────────────────────────────────────────────────────────────
   const deleteDrawing = useCallback(
     (id, e) => {
-      if (e) {
-        e.stopPropagation();
-        e.preventDefault();
-      }
+      if (e) { e.stopPropagation(); e.preventDefault(); }
       const next = drawingsRef.current.filter((d) => d.id !== id);
       hoveredIdRef.current = null;
       setHoveredId(null);
@@ -226,15 +232,43 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     [commitDrawings]
   );
 
-  // ── Window mousemove for hover/delete detection in drawing-tool mode ────────
-  // Hover (and delete button) only activates when a drawing tool is selected,
-  // NOT in cursor mode — in cursor mode drawings are locked and chart pans freely.
+  // ── Text input commit ─────────────────────────────────────────────────────
+  const commitTextInput = useCallback(
+    (value) => {
+      const pt = pendingTextRef.current;
+      if (!pt) return;
+      setPendingText(null);
+      pendingTextRef.current = null;
+      if (!value || !value.trim()) return;
+      const newDrawing = {
+        id: uid(),
+        type: "text",
+        content: value.trim(),
+        price: pt.price,
+        time: pt.time,
+        x: pt.x,  // fallback pixel coords
+        y: pt.y,
+        fontSize: 13,
+        color: TEXT_COLOR,
+      };
+      commitDrawings([...drawingsRef.current, newDrawing]);
+    },
+    [commitDrawings]
+  );
+
+  // Focus the input when pendingText appears
+  useEffect(() => {
+    if (pendingText && textInputRef.current) {
+      setTimeout(() => textInputRef.current?.focus(), 30);
+    }
+  }, [pendingText]);
+
+  // ── Window mousemove for hover/delete ────────────────────────────────────
   useEffect(() => {
     function onWindowMouseMove(e) {
       if (dragRef.current.active) return;
       if (hidden) return;
 
-      // In cursor mode: clear any hover and do nothing (drawings are locked)
       if (!DRAWING_TOOLS.includes(selectedTool)) {
         if (hoveredIdRef.current !== null) {
           hoveredIdRef.current = null;
@@ -243,14 +277,12 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         return;
       }
 
-      // In drawing-tool mode: track active drag + detect hover for delete
       const svgEl = svgRef.current;
       if (!svgEl) return;
       const r = svgEl.getBoundingClientRect();
       const x = e.clientX - r.left;
       const y = e.clientY - r.top;
 
-      // Update active drag position (handles mouse outside SVG bounds)
       if (dragRef.current.active) {
         dragRef.current.current = coordToData(x, y);
         setDrawings((d) => [...d]);
@@ -284,13 +316,27 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       if (!DRAWING_TOOLS.includes(selectedTool)) return;
       if (e.button !== 0) return;
       e.stopPropagation();
-      // Capture pointer so drag tracks even when mouse leaves SVG bounds
-      try { svgRef.current?.setPointerCapture(e.pointerId); } catch { }
+
       const { x, y } = relCoord(e);
       const pt = coordToData(x, y);
+
+      // Text tool: single-click to place, show inline input
+      if (selectedTool === "text") {
+        // If there's a pending text being typed, commit it first (empty = discard)
+        if (pendingTextRef.current) {
+          const val = textInputRef.current?.value ?? "";
+          commitTextInput(val);
+        }
+        const newPt = { x, y, price: pt.price, time: pt.time };
+        pendingTextRef.current = newPt;
+        setPendingText({ ...newPt });
+        return;
+      }
+
+      try { svgRef.current?.setPointerCapture(e.pointerId); } catch { }
       dragRef.current = { active: true, tool: selectedTool, start: pt, current: { ...pt } };
     },
-    [selectedTool, relCoord, coordToData] // eslint-disable-line
+    [selectedTool, relCoord, coordToData, commitTextInput] // eslint-disable-line
   );
 
   const onPointerMove = useCallback(
@@ -304,21 +350,16 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         return;
       }
 
-      // Hover detection in cursor mode — always run regardless of SVG pointer-events
       if (!DRAWING_TOOLS.includes(selectedTool)) {
         let hitId = null;
         for (const d of drawingsRef.current) {
-          if (hitTest(d, x, y)) {
-            hitId = d.id;
-            break;
-          }
+          if (hitTest(d, x, y)) { hitId = d.id; break; }
         }
         if (hitId !== hoveredIdRef.current) {
           hoveredIdRef.current = hitId;
           setHoveredId(hitId);
         }
       } else {
-        // In drawing mode, clear hover
         if (hoveredIdRef.current !== null) {
           hoveredIdRef.current = null;
           setHoveredId(null);
@@ -338,7 +379,6 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       const d = buildDrawing(drag);
       if (d) commitDrawings([...drawingsRef.current, d]);
 
-      // Stay on selected tool — user must manually press Esc or click Cursor to switch
       dragRef.current = { active: false, tool: null, start: null, current: null };
     },
     [relCoord, coordToData, commitDrawings]
@@ -349,51 +389,118 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const svgW = containerRef.current?.clientWidth ?? 800;
   const svgH = containerRef.current?.clientHeight ?? 500;
   const isDrawing = DRAWING_TOOLS.includes(selectedTool);
-  // Cursor mode → pointerEvents:none on SVG → chart pans/scrolls freely, drawings locked
-  // Drawing-tool mode → pointerEvents:all → capture clicks for drawing + hover for delete
   const needsPointerEvents = !hidden && isDrawing;
 
+  // Compute pixel position for pending text input
+  let pendingInputX = 0, pendingInputY = 0;
+  if (pendingText) {
+    const c = dataToCoord(pendingText.time, pendingText.price);
+    pendingInputX = c.x ?? pendingText.x ?? 100;
+    pendingInputY = c.y ?? pendingText.y ?? 100;
+  }
+
   return (
-    <svg
-      ref={svgRef}
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        zIndex: 25,
-        pointerEvents: needsPointerEvents ? "all" : "none",
-        cursor: isDrawing ? (hoveredId ? "pointer" : "crosshair") : "default",
-        overflow: "visible",
-        visibility: hidden ? "hidden" : "visible",
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
+    <div
+      ref={wrapRef}
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 25 }}
     >
-      {/* In drawing mode, transparent full-overlay rect captures all pointer events */}
-      {isDrawing && (
-        <rect x={0} y={0} width={svgW} height={svgH} fill="transparent" style={{ pointerEvents: "all" }} />
-      )}
+      <svg
+        ref={svgRef}
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: needsPointerEvents ? "all" : "none",
+          cursor: isDrawing
+            ? (selectedTool === "text" ? "text" : (hoveredId ? "pointer" : "crosshair"))
+            : "default",
+          overflow: "visible",
+          visibility: hidden ? "hidden" : "visible",
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      >
+        {isDrawing && (
+          <rect x={0} y={0} width={svgW} height={svgH} fill="transparent" style={{ pointerEvents: "all" }} />
+        )}
 
-      {!hidden &&
-        drawings.map((d) => (
-          <DrawingShape
-            key={d.id}
-            drawing={d}
-            dataToCoord={dataToCoord}
-            svgW={svgW}
-            svgH={svgH}
-            hovered={hoveredId === d.id}
-            onDelete={deleteDrawing}
-            interactive={isDrawing}
+        {!hidden &&
+          drawings.map((d) => (
+            <DrawingShape
+              key={d.id}
+              drawing={d}
+              dataToCoord={dataToCoord}
+              svgW={svgW}
+              svgH={svgH}
+              hovered={hoveredId === d.id}
+              onDelete={deleteDrawing}
+              interactive={isDrawing}
+            />
+          ))}
+
+        {drag.active && drag.start && drag.current && (
+          <LivePreview drag={drag} svgW={svgW} dataToCoord={dataToCoord} />
+        )}
+      </svg>
+
+      {/* Inline text input — renders on top of SVG at click position */}
+      {pendingText && !hidden && (
+        <div
+          style={{
+            position: "absolute",
+            left: pendingInputX,
+            top: pendingInputY - 18,
+            pointerEvents: "all",
+            zIndex: 30,
+          }}
+        >
+          <input
+            ref={textInputRef}
+            type="text"
+            placeholder="Type text…"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitTextInput(e.target.value);
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                pendingTextRef.current = null;
+                setPendingText(null);
+              }
+              e.stopPropagation(); // prevent toolbar shortcuts while typing
+            }}
+            onBlur={(e) => {
+              // Commit on blur (clicked elsewhere)
+              commitTextInput(e.target.value);
+            }}
+            style={{
+              background: "#1e222d",
+              border: "1px solid #2962ff",
+              borderRadius: 3,
+              color: TEXT_COLOR,
+              fontSize: 13,
+              fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', sans-serif",
+              padding: "2px 6px",
+              outline: "none",
+              minWidth: 120,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+            }}
           />
-        ))}
-
-      {drag.active && drag.start && drag.current && (
-        <LivePreview drag={drag} svgW={svgW} dataToCoord={dataToCoord} />
+          <div style={{
+            fontSize: 10,
+            color: "#4a4f60",
+            marginTop: 2,
+            fontFamily: "sans-serif",
+            pointerEvents: "none",
+          }}>
+            Enter to confirm · Esc to cancel
+          </div>
+        </div>
       )}
-    </svg>
+    </div>
   );
 });
 
@@ -437,38 +544,13 @@ function DeleteBtn({ cx, cy, color, drawingId, onDelete }) {
   return (
     <g
       style={{ cursor: "pointer", pointerEvents: "all" }}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-      }}
-      onClick={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        onDelete(drawingId, e);
-      }}
+      onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+      onClick={(e) => { e.stopPropagation(); e.preventDefault(); onDelete(drawingId, e); }}
     >
-      {/* Generous transparent hit area */}
       <circle cx={cx} cy={cy} r={18} fill="transparent" style={{ pointerEvents: "all" }} />
-      {/* Visible ✕ circle */}
       <circle cx={cx} cy={cy} r={9} fill="#141722" stroke={color} strokeWidth={1.5} />
-      <line
-        x1={cx - 4}
-        y1={cy - 4}
-        x2={cx + 4}
-        y2={cy + 4}
-        stroke={color}
-        strokeWidth={1.8}
-        strokeLinecap="round"
-      />
-      <line
-        x1={cx + 4}
-        y1={cy - 4}
-        x2={cx - 4}
-        y2={cy + 4}
-        stroke={color}
-        strokeWidth={1.8}
-        strokeLinecap="round"
-      />
+      <line x1={cx - 4} y1={cy - 4} x2={cx + 4} y2={cy + 4} stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+      <line x1={cx + 4} y1={cy - 4} x2={cx - 4} y2={cy + 4} stroke={color} strokeWidth={1.8} strokeLinecap="round" />
     </g>
   );
 }
@@ -483,7 +565,6 @@ const numFmt = new Intl.NumberFormat("en-IN", {
 function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, interactive }) {
   const color = hovered ? HOVER_COLOR : DRAW_COLOR;
   const strokeW = hovered ? 2.5 : 1.8;
-  // In cursor mode (interactive=false) all hit areas are disabled so chart pans freely
   const pe = interactive ? "all" : "none";
 
   // ── Trend Line ──────────────────────────────────────────────────────────
@@ -495,37 +576,11 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
     const my = (c1.y + c2.y) / 2;
     return (
       <g style={{ pointerEvents: pe }}>
-        {/* Fat invisible hit strip */}
-        <line
-          x1={c1.x}
-          y1={c1.y}
-          x2={c2.x}
-          y2={c2.y}
-          stroke="transparent"
-          strokeWidth={18}
-          style={{ pointerEvents: pe }}
-        />
-        {/* Visible line */}
-        <line
-          x1={c1.x}
-          y1={c1.y}
-          x2={c2.x}
-          y2={c2.y}
-          stroke={color}
-          strokeWidth={strokeW}
-          style={{ pointerEvents: "none" }}
-        />
+        <line x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y} stroke="transparent" strokeWidth={18} style={{ pointerEvents: pe }} />
+        <line x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y} stroke={color} strokeWidth={strokeW} style={{ pointerEvents: "none" }} />
         <circle cx={c1.x} cy={c1.y} r={HANDLE_R} fill={color} opacity={hovered ? 1 : 0.6} style={{ pointerEvents: "none" }} />
         <circle cx={c2.x} cy={c2.y} r={HANDLE_R} fill={color} opacity={hovered ? 1 : 0.6} style={{ pointerEvents: "none" }} />
-        {hovered && (
-          <DeleteBtn
-            cx={mx}
-            cy={my - 16}
-            color={color}
-            drawingId={drawing.id}
-            onDelete={onDelete}
-          />
-        )}
+        {hovered && <DeleteBtn cx={mx} cy={my - 16} color={color} drawingId={drawing.id} onDelete={onDelete} />}
       </g>
     );
   }
@@ -534,75 +589,24 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
   if (drawing.type === "horizontal") {
     const c = dataToCoord(null, drawing.price);
     if (c.y == null) return null;
-
     const label = numFmt.format(drawing.price);
-    const badgeW = 72,
-      badgeH = 18;
+    const badgeW = 72, badgeH = 18;
     const badgeX = svgW - badgeW - 2;
-
     return (
       <g style={{ pointerEvents: pe }}>
-        {/* Fat invisible hit strip */}
-        <line
-          x1={0}
-          y1={c.y}
-          x2={svgW}
-          y2={c.y}
-          stroke="transparent"
-          strokeWidth={18}
-          style={{ pointerEvents: pe }}
-        />
-        {/* Visible line */}
-        <line
-          x1={0}
-          y1={c.y}
-          x2={svgW}
-          y2={c.y}
-          stroke={color}
-          strokeWidth={strokeW}
-          strokeDasharray={hovered ? "0" : "7 4"}
-          style={{ pointerEvents: "none" }}
-        />
-        {/* Price badge */}
-        <rect
-          x={badgeX}
-          y={c.y - badgeH / 2}
-          width={badgeW}
-          height={badgeH}
-          rx={3}
-          fill={color}
-          opacity={0.9}
-          style={{ pointerEvents: "none" }}
-        />
-        <text
-          x={badgeX + badgeW / 2}
-          y={c.y + 4}
-          textAnchor="middle"
-          fill="#fff"
-          fontSize={10}
-          fontFamily="'JetBrains Mono', monospace"
-          fontWeight={700}
-          style={{ userSelect: "none", pointerEvents: "none" }}
-        >
+        <line x1={0} y1={c.y} x2={svgW} y2={c.y} stroke="transparent" strokeWidth={18} style={{ pointerEvents: pe }} />
+        <line x1={0} y1={c.y} x2={svgW} y2={c.y} stroke={color} strokeWidth={strokeW} strokeDasharray={hovered ? "0" : "7 4"} style={{ pointerEvents: "none" }} />
+        <rect x={badgeX} y={c.y - badgeH / 2} width={badgeW} height={badgeH} rx={3} fill={color} opacity={0.9} style={{ pointerEvents: "none" }} />
+        <text x={badgeX + badgeW / 2} y={c.y + 4} textAnchor="middle" fill="#fff" fontSize={10} fontFamily="'JetBrains Mono', monospace" fontWeight={700} style={{ userSelect: "none", pointerEvents: "none" }}>
           {label}
         </text>
-        {hovered && (
-          <DeleteBtn
-            cx={badgeX - 24}
-            cy={c.y}
-            color={color}
-            drawingId={drawing.id}
-            onDelete={onDelete}
-          />
-        )}
+        {hovered && <DeleteBtn cx={badgeX - 24} cy={c.y} color={color} drawingId={drawing.id} onDelete={onDelete} />}
       </g>
     );
   }
 
   // ── Fibonacci Retracement ───────────────────────────────────────────────
   if (drawing.type === "fibRetracement") {
-    // p1 = origin (drag start), p2 = tip (drag end)
-    // price at ratio = p1.price + (p2.price - p1.price) * ratio
     const priceRange = drawing.p2.price - drawing.p1.price;
 
     const levelLines = FIB_LEVELS.map((lvl) => {
@@ -616,14 +620,12 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
     const topY = Math.min(...levelLines.map((l) => l.y));
     const botY = Math.max(...levelLines.map((l) => l.y));
 
-    // Build a price→Y lookup for zone fills
     const priceToY = (ratio) => {
       const p = drawing.p1.price + priceRange * ratio;
       const c = dataToCoord(null, p);
       return c.y;
     };
 
-    // Label badge width
     const BADGE_W = 158;
     const BADGE_H = 16;
     const lineX2 = svgW - BADGE_W - 4;
@@ -631,15 +633,8 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
 
     return (
       <g style={{ pointerEvents: pe }}>
-        {/* Full-width invisible hit area */}
-        <rect
-          x={0} y={topY - 6}
-          width={svgW} height={botY - topY + 12}
-          fill="transparent"
-          style={{ pointerEvents: pe }}
-        />
+        <rect x={0} y={topY - 6} width={svgW} height={botY - topY + 12} fill="transparent" style={{ pointerEvents: pe }} />
 
-        {/* Zone fills between consecutive levels */}
         {FIB_ZONE_FILLS.map((zone) => {
           const y1 = priceToY(zone.from);
           const y2 = priceToY(zone.to);
@@ -647,58 +642,90 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
           const zoneTop = Math.min(y1, y2);
           const zoneBot = Math.max(y1, y2);
           return (
-            <rect
-              key={`zone-${zone.from}-${zone.to}`}
-              x={0} y={zoneTop}
-              width={lineX2}
-              height={Math.max(zoneBot - zoneTop, 1)}
-              fill={zone.color}
-              opacity={hovered ? zone.opacity * 1.6 : zone.opacity}
-              style={{ pointerEvents: "none" }}
-            />
+            <rect key={`zone-${zone.from}-${zone.to}`} x={0} y={zoneTop} width={lineX2} height={Math.max(zoneBot - zoneTop, 1)} fill={zone.color} opacity={hovered ? zone.opacity * 1.6 : zone.opacity} style={{ pointerEvents: "none" }} />
           );
         })}
 
-        {/* Level lines and labels */}
         {levelLines.map(({ ratio, label, color, dash, width, price, y }) => {
           const isEdge = ratio === 0 || ratio === 1;
           const labelText = `${label} (${numFmt.format(price)})`;
           const lineColor = hovered ? HOVER_COLOR : color;
           return (
             <g key={ratio} style={{ pointerEvents: "none" }}>
-              <line
-                x1={0} y1={y}
-                x2={lineX2} y2={y}
-                stroke={lineColor}
-                strokeWidth={isEdge ? 1.8 : width}
-                strokeDasharray={isEdge ? "0" : dash}
-                opacity={hovered ? 1 : 0.90}
-              />
-              {/* Label badge */}
-              <rect
-                x={badgeX} y={y - BADGE_H / 2}
-                width={BADGE_W} height={BADGE_H}
-                rx={2}
-                fill={lineColor}
-                opacity={hovered ? 0.28 : 0.18}
-              />
-              <text
-                x={badgeX + 5} y={y + 4}
-                fill={lineColor}
-                fontSize={9.5}
-                fontFamily="'JetBrains Mono', monospace"
-                fontWeight={isEdge ? 700 : 600}
-              >
+              <line x1={0} y1={y} x2={lineX2} y2={y} stroke={lineColor} strokeWidth={isEdge ? 1.8 : width} strokeDasharray={isEdge ? "0" : dash} opacity={hovered ? 1 : 0.90} />
+              <rect x={badgeX} y={y - BADGE_H / 2} width={BADGE_W} height={BADGE_H} rx={2} fill={lineColor} opacity={hovered ? 0.28 : 0.18} />
+              <text x={badgeX + 5} y={y + 4} fill={lineColor} fontSize={9.5} fontFamily="'JetBrains Mono', monospace" fontWeight={isEdge ? 700 : 600}>
                 {labelText}
               </text>
             </g>
           );
         })}
 
+        {hovered && <DeleteBtn cx={svgW / 2} cy={topY - 16} color={HOVER_COLOR} drawingId={drawing.id} onDelete={onDelete} />}
+      </g>
+    );
+  }
+
+  // ── Text Label ──────────────────────────────────────────────────────────
+  if (drawing.type === "text") {
+    const c = dataToCoord(drawing.time, drawing.price);
+    // Use price-based Y coordinate; fall back to stored pixel Y
+    const cx = c.x ?? drawing.x ?? 100;
+    const cy = c.y ?? drawing.y ?? 100;
+    if (cx == null || cy == null) return null;
+
+    const textContent = drawing.content || "";
+    const fontSize = drawing.fontSize || 13;
+    const textCol = hovered ? HOVER_COLOR : (drawing.color || TEXT_COLOR);
+    const approxW = textContent.length * (fontSize * 0.62) + 16;
+    const approxH = fontSize + 8;
+
+    return (
+      <g style={{ pointerEvents: pe }}>
+        {/* Invisible hit area */}
+        <rect
+          x={cx - 4}
+          y={cy - approxH}
+          width={approxW}
+          height={approxH + 4}
+          fill="transparent"
+          style={{ pointerEvents: pe }}
+        />
+        {/* Background pill */}
+        <rect
+          x={cx - 4}
+          y={cy - approxH + 2}
+          width={approxW}
+          height={approxH - 2}
+          rx={3}
+          fill={hovered ? "rgba(91,143,255,0.15)" : "rgba(30,34,45,0.75)"}
+          style={{ pointerEvents: "none" }}
+        />
+        {/* Text */}
+        <text
+          x={cx + 4}
+          y={cy - 4}
+          fill={textCol}
+          fontSize={fontSize}
+          fontFamily="-apple-system, BlinkMacSystemFont, 'Trebuchet MS', sans-serif"
+          fontWeight={500}
+          style={{ userSelect: "none", pointerEvents: "none" }}
+        >
+          {textContent}
+        </text>
+        {/* Anchor dot */}
+        <circle
+          cx={cx}
+          cy={cy}
+          r={3}
+          fill={textCol}
+          opacity={hovered ? 1 : 0.5}
+          style={{ pointerEvents: "none" }}
+        />
         {hovered && (
           <DeleteBtn
-            cx={svgW / 2}
-            cy={topY - 16}
+            cx={cx + approxW / 2}
+            cy={cy - approxH - 8}
             color={HOVER_COLOR}
             drawingId={drawing.id}
             onDelete={onDelete}
@@ -719,14 +746,7 @@ function LivePreview({ drag, svgW, dataToCoord }) {
   if (tool === "trendline") {
     return (
       <g style={{ pointerEvents: "none" }}>
-        <line
-          x1={start.x}
-          y1={start.y}
-          x2={current.x}
-          y2={current.y}
-          stroke={color}
-          strokeWidth={1.8}
-        />
+        <line x1={start.x} y1={start.y} x2={current.x} y2={current.y} stroke={color} strokeWidth={1.8} />
         <circle cx={start.x} cy={start.y} r={HANDLE_R} fill={color} />
         <circle cx={current.x} cy={current.y} r={HANDLE_R} fill={color} />
       </g>
@@ -735,16 +755,7 @@ function LivePreview({ drag, svgW, dataToCoord }) {
 
   if (tool === "horizontal") {
     return (
-      <line
-        x1={0}
-        y1={start.y}
-        x2={svgW}
-        y2={start.y}
-        stroke={color}
-        strokeWidth={1.8}
-        strokeDasharray="7 4"
-        style={{ pointerEvents: "none" }}
-      />
+      <line x1={0} y1={start.y} x2={svgW} y2={start.y} stroke={color} strokeWidth={1.8} strokeDasharray="7 4" style={{ pointerEvents: "none" }} />
     );
   }
 
@@ -762,17 +773,7 @@ function LivePreview({ drag, svgW, dataToCoord }) {
           if (coord.y == null) return null;
           const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
           return (
-            <line
-              key={lvl.ratio}
-              x1={0}
-              y1={coord.y}
-              x2={lineX2}
-              y2={coord.y}
-              stroke={lvl.color}
-              strokeWidth={isEdge ? 1.8 : lvl.width}
-              strokeDasharray={isEdge ? "0" : lvl.dash}
-              opacity={0.75}
-            />
+            <line key={lvl.ratio} x1={0} y1={coord.y} x2={lineX2} y2={coord.y} stroke={lvl.color} strokeWidth={isEdge ? 1.8 : lvl.width} strokeDasharray={isEdge ? "0" : lvl.dash} opacity={0.75} />
           );
         })}
         <circle cx={start.x} cy={start.y} r={HANDLE_R} fill={FIB_COLOR} />

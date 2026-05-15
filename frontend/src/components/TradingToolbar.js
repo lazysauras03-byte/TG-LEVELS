@@ -20,6 +20,13 @@ const icons = {
       <line x1="1" y1="9" x2="17" y2="9" strokeLinecap="round" />
     </svg>
   ),
+  text: (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <line x1="3" y1="4" x2="15" y2="4" strokeLinecap="round" />
+      <line x1="9" y1="4" x2="9" y2="14" strokeLinecap="round" />
+      <line x1="6" y1="14" x2="12" y2="14" strokeLinecap="round" />
+    </svg>
+  ),
   fibRetracement: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <line x1="1" y1="4" x2="17" y2="4" strokeLinecap="round" />
@@ -51,14 +58,12 @@ const icons = {
       <line x1="17" y1="2" x2="17" y2="16" strokeLinecap="round" strokeDasharray="2,1" />
     </svg>
   ),
-  // Eye open (visible state)
   eye: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M1,9 Q4,4 9,4 Q14,4 17,9 Q14,14 9,14 Q4,14 1,9Z" />
       <circle cx="9" cy="9" r="2.5" />
     </svg>
   ),
-  // Eye closed (hidden state)
   eyeOff: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M1,9 Q4,4 9,4 Q14,4 17,9 Q14,14 9,14 Q4,14 1,9Z" />
@@ -87,39 +92,41 @@ export const TOOLBAR_SHORTCUTS = {
   "escape": "cursor",
   "alt+t": "trendline",
   "alt+h": "horizontal",
+  "alt+x": "text",
   "alt+j": "trendline",
   "alt+f": "fibRetracement",
 };
 
 // ─── Tool Group Definitions ────────────────────────────────────────────────────
-// trendline and horizontal have NO subtools — direct select only
 const TOOL_GROUPS = [
   {
     id: "cursor",
     icon: icons.cursor,
     label: "Cursor — Pan Mode  (Esc / Alt+A)",
-    shortLabel: "Cursor",
     subtools: [],
   },
   {
     id: "trendline",
     icon: icons.trendline,
     label: "Trend Line  (Alt+T)",
-    shortLabel: "Trend Line",
-    subtools: [], // NO dropdown
+    subtools: [],
   },
   {
     id: "horizontal",
     icon: icons.horizontal,
     label: "Horizontal Line  (Alt+H)",
-    shortLabel: "H. Line",
-    subtools: [], // NO dropdown
+    subtools: [],
+  },
+  {
+    id: "text",
+    icon: icons.text,
+    label: "Text  (Alt+X)",
+    subtools: [],
   },
   {
     id: "fibRetracement",
     icon: icons.fibRetracement,
     label: "Fib Retracement  (Alt+F)",
-    shortLabel: "Fib",
     subtools: [
       { id: "fibRetracement", icon: icons.fibRetracement, label: "Fib Retracement" },
       { id: "fibExtension", icon: icons.fibExtension, label: "Fib Extension" },
@@ -130,9 +137,8 @@ const TOOL_GROUPS = [
   { id: "divider1", divider: true },
   {
     id: "hide",
-    icon: icons.eye,        // icon swaps based on toggle state in render
+    icon: icons.eye,
     label: "Hide / Show All Drawings",
-    shortLabel: "Hide All",
     toggle: true,
     subtools: [],
   },
@@ -141,7 +147,6 @@ const TOOL_GROUPS = [
     id: "trash",
     icon: icons.trash,
     label: "Remove All Drawings",
-    shortLabel: "Clear All",
     action: true,
     danger: true,
     subtools: [],
@@ -208,14 +213,13 @@ export default function TradingToolbar({
   drawingsHidden,
   onToggleHide,
   onTrashAll,
-  srLines = [],          // [{price, color, label, style}] — from S&R panel
-  onDrawSRLines,         // () => void — draws SR lines on chart
-  srLinesDrawn = false,  // true when lines are currently on chart
+  srLines = [],
+  onDrawSRLines,
+  srLinesDrawn = false,
 }) {
   const [openDrawer, setOpenDrawer] = useState(null);
   const [drawerPos, setDrawerPos] = useState(0);
 
-  // Track which tool is "primary" for each group (shown as the group icon)
   const [groupPrimary, setGroupPrimary] = useState(() => {
     const map = {};
     TOOL_GROUPS.forEach((g) => {
@@ -263,17 +267,14 @@ export default function TradingToolbar({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [setSelectedTool, groupPrimary]);
 
-  // Find which group a tool belongs to
   const findGroupForTool = useCallback((toolId) => {
     return TOOL_GROUPS.find(
       (g) => !g.divider && g.subtools?.some((st) => st.id === toolId)
     );
   }, []);
 
-  // The icon to display for a group button
   const getGroupIcon = useCallback(
     (group) => {
-      // Eye icon swaps based on hide state
       if (group.id === "hide") {
         return drawingsHidden ? icons.eyeOff : icons.eye;
       }
@@ -287,7 +288,6 @@ export default function TradingToolbar({
     [groupPrimary, drawingsHidden]
   );
 
-  // Is this group's tool currently active?
   const isGroupActive = useCallback(
     (group) => {
       if (group.id === "hide") return drawingsHidden;
@@ -304,38 +304,32 @@ export default function TradingToolbar({
     (group, e) => {
       if (group.divider) return;
 
-      // Eye toggle
       if (group.id === "hide") {
         if (onToggleHide) onToggleHide();
         setOpenDrawer(null);
         return;
       }
 
-      // Trash action
       if (group.id === "trash") {
         if (onTrashAll) onTrashAll();
         setOpenDrawer(null);
         return;
       }
 
-      // Tools with no subtools — direct select
       if (group.subtools.length === 0) {
         setSelectedTool(group.id);
         setOpenDrawer(null);
         return;
       }
 
-      // Toggle open/close sub-drawer
       if (openDrawer === group.id) {
         setOpenDrawer(null);
         return;
       }
 
-      // Activate primary tool of the group
       const primaryToolId = groupPrimary[group.id] || group.subtools?.[0]?.id;
       if (primaryToolId) setSelectedTool(primaryToolId);
 
-      // Compute drawer vertical position
       const btn = btnRefs.current[group.id];
       const toolbar = toolbarRef.current;
       if (btn && toolbar) {
@@ -376,7 +370,6 @@ export default function TradingToolbar({
     [setSelectedTool]
   );
 
-  // Sync: if selectedTool changes externally, update group primary
   useEffect(() => {
     const group = findGroupForTool(selectedTool);
     if (group) {
@@ -404,7 +397,7 @@ export default function TradingToolbar({
             key={group.id}
             className={`tv-tool-wrap ${active ? "active" : ""} ${drawerOpen ? "drawer-open" : ""}`}
           >
-            {/* Main button */}
+            {/* Main button — icon only, no label text */}
             <button
               ref={(el) => (btnRefs.current[group.id] = el)}
               className={`tv-tool-btn ${active ? "active" : ""} ${group.danger ? "danger" : ""}`}
@@ -412,7 +405,6 @@ export default function TradingToolbar({
               title={group.label}
             >
               <span className="tv-tool-icon">{getGroupIcon(group)}</span>
-              <span className="tv-tool-label">{group.shortLabel}</span>
             </button>
 
             {/* Chevron arrow for groups with subtools */}
@@ -440,7 +432,7 @@ export default function TradingToolbar({
         />
       )}
 
-      {/* Draw S&R Lines button — only shows when srLines are available */}
+      {/* Draw S&R Lines button */}
       {srLines.length > 0 && onDrawSRLines && (
         <>
           <div className="tv-toolbar-divider" />
@@ -450,9 +442,6 @@ export default function TradingToolbar({
             title={srLinesDrawn ? "Clear S&R lines from chart" : "Draw S&R levels on chart"}
           >
             {srIcon}
-            <span className="tv-sr-draw-btn-label">
-              {srLinesDrawn ? "Clear S&R" : "Draw S&R"}
-            </span>
           </button>
         </>
       )}

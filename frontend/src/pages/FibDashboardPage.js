@@ -627,50 +627,125 @@ function HtfColumn({ symbol }) {
 
 // ── Support / Resistance computation ────────────────────────────────────────
 // Per document: Previous Swing Highs → Resistance, Previous Swing Lows → Support
-// Uses wave pivots from WavesIndicator (EMA-9 based swing detection)
+// ── EMA 9 Support & Resistance Strategy ──────────────────────────────────────
+// Support : Red candle closes BELOW EMA9-Low  → within next 3 candles a Green
+//           candle fully engulfs it (open ≤ prev close AND close > prev open).
+//           Confirmed Support = low of the breach (red) candle.
+// Resistance: Green candle closes ABOVE EMA9-High → within next 3 candles a Red
+//           candle fully engulfs it (open ≥ prev close AND close < prev open).
+//           Confirmed Resistance = high of the breach (green) candle.
 
 function computeSRLevels(candles, emaHighs, emaLows) {
-  if (!candles?.length) return null;
-  const { pivots } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
-  if (!pivots.length) return null;
+  if (!candles?.length || candles.length < 4) return null;
 
   const lastClose = candles[candles.length - 1].close;
-  const tolerance = lastClose * 0.002; // 0.2% cluster tolerance
+  const supports = [];    // { price, breachIdx, confirmIdx, time }
+  const resistances = []; // { price, breachIdx, confirmIdx, time }
 
-  // Cluster nearby pivot prices into S/R zones
-  function cluster(prices) {
-    const sorted = [...prices].sort((a, b) => a - b);
-    const clusters = [];
-    for (const p of sorted) {
-      const last = clusters[clusters.length - 1];
-      if (last && Math.abs(p - last.avg) <= tolerance * 2.5) {
-        last.prices.push(p);
-        last.avg = last.prices.reduce((s, x) => s + x, 0) / last.prices.length;
-        last.count = last.prices.length;
-      } else {
-        clusters.push({ avg: p, prices: [p], count: 1 });
+  for (let i = 0; i < candles.length - 1; i++) {
+    const bar = candles[i];
+    const emaH = emaHighs[i];
+    const emaL = emaLows[i];
+    const isRed = bar.close < bar.open;
+    const isGreen = bar.close > bar.open;
+
+    // ── Support: red candle closes below EMA9-Low ──────────────────────────
+    if (isRed && bar.close < emaL) {
+      // Look ahead up to 3 candles for bullish engulfment
+      const lookAhead = Math.min(3, candles.length - 1 - i);
+      for (let j = 1; j <= lookAhead; j++) {
+        const conf = candles[i + j];
+        const confIsGreen = conf.close > conf.open;
+        // Bullish engulfment: green candle open ≤ breach close AND close > breach open
+        if (confIsGreen && conf.open <= bar.close && conf.close > bar.open) {
+          supports.push({
+            price: bar.low,
+            breachIdx: i,
+            confirmIdx: i + j,
+            time: bar.time,
+            touches: 1,
+          });
+          break; // first valid confirmation only
+        }
       }
     }
-    return clusters;
+
+    // ── Resistance: green candle closes above EMA9-High ───────────────────
+    if (isGreen && bar.close > emaH) {
+      const lookAhead = Math.min(3, candles.length - 1 - i);
+      for (let j = 1; j <= lookAhead; j++) {
+        const conf = candles[i + j];
+        const confIsRed = conf.close < conf.open;
+        // Bearish engulfment: red candle open ≥ breach close AND close < breach open
+        if (confIsRed && conf.open >= bar.close && conf.close < bar.open) {
+          resistances.push({
+            price: bar.high,
+            breachIdx: i,
+            confirmIdx: i + j,
+            time: bar.time,
+            touches: 1,
+          });
+          break;
+        }
+      }
+    }
   }
 
-  // Swing highs → resistance, swing lows → support
-  // Keep most recent pivots (last 20) for intraday relevance
-  const recentPivots = pivots.slice(-20);
-  const highPivots = recentPivots.filter((p) => p.side === "high").map((p) => p.price);
-  const lowPivots = recentPivots.filter((p) => p.side === "low").map((p) => p.price);
+  // Deduplicate levels within 0.3% of each other — keep most recent
+  const tolerance = lastClose * 0.003;
+  function dedup(levels) {
+    const seen = [];
+    // Iterate newest-first so we keep the most recent
+    for (const lvl of [...levels].reverse()) {
+      const close = seen.find((s) => Math.abs(s.price - lvl.price) <= tolerance);
+      if (!close) seen.push({ ...lvl });
+    }
+    return seen.reverse(); // restore chronological order
+  }
 
-  const resClusters = cluster(highPivots)
-    .filter((c) => c.avg > lastClose)
-    .sort((a, b) => a.avg - b.avg); // nearest first
+  const cleanSup = dedup(supports);
+  const cleanRes = dedup(resistances);
 
-  const supClusters = cluster(lowPivots)
-    .filter((c) => c.avg < lastClose)
-    .sort((a, b) => b.avg - a.avg); // nearest first
+  // Split into above / below current price, nearest first
+  const supLevels = cleanSup
+    .filter((l) => l.price < lastClose)
+    .sort((a, b) => b.price - a.price); // nearest below first
 
-  // Change-of-polarity: ex-support now resistance and vice versa
-  const copRes = cluster(lowPivots).filter((c) => c.avg > lastClose).sort((a, b) => a.avg - b.avg)[0] || null;
-  const copSup = cluster(highPivots).filter((c) => c.avg < lastClose).sort((a, b) => b.avg - a.avg)[0] || null;
+  const resLevels = cleanRes
+    .filter((l) => l.price > lastClose)
+    .sort((a, b) => a.price - b.price); // nearest above first
+
+  // Change-of-polarity: support levels now above price = resistance; vice versa
+  const copRes = cleanSup
+    .filter((l) => l.price > lastClose)
+    .sort((a, b) => a.price - b.price)[0] || null;
+
+  const copSup = cleanRes
+    .filter((l) => l.price < lastClose)
+    .sort((a, b) => b.price - a.price)[0] || null;
+
+  // Mark "Key" = level touched (price revisited) more than once in candle data
+  // Count how many candles have a low within tolerance of each support
+  function countTouches(price, side) {
+    let count = 0;
+    for (const c of candles) {
+      if (side === "sup" && Math.abs(c.low - price) <= tolerance) count++;
+      if (side === "res" && Math.abs(c.high - price) <= tolerance) count++;
+    }
+    return Math.max(1, count);
+  }
+
+  const supClusters = supLevels.map((l) => ({
+    avg: l.price,
+    count: countTouches(l.price, "sup"),
+    time: l.time,
+  }));
+
+  const resClusters = resLevels.map((l) => ({
+    avg: l.price,
+    count: countTouches(l.price, "res"),
+    time: l.time,
+  }));
 
   function strongest(clusters) {
     if (!clusters.length) return null;
@@ -687,9 +762,9 @@ function computeSRLevels(candles, emaHighs, emaLows) {
     s3: supClusters[2] || null,
     strongestRes: strongest(resClusters),
     strongestSup: strongest(supClusters),
-    copRes,
-    copSup,
-    swingPivots: recentPivots.slice(-12), // raw pivots for wave-line display
+    copRes: copRes ? { avg: copRes.price, count: countTouches(copRes.price, "res"), time: copRes.time } : null,
+    copSup: copSup ? { avg: copSup.price, count: countTouches(copSup.price, "sup"), time: copSup.time } : null,
+    swingPivots: [],        // not used by new logic — kept for interface compat
     allResClusters: resClusters,
     allSupClusters: supClusters,
   };
@@ -708,8 +783,8 @@ function buildSRLinesForChart(sr) {
   addLine(sr.s1, "#44cc44", "S1");
   addLine(sr.s2, "#66aa66", "S2");
   addLine(sr.s3, "#448844", "S3");
-  if (sr.copRes) lines.push({ price: Math.round(sr.copRes.avg * 100) / 100, color: "#ff8844", label: "CoP R" });
-  if (sr.copSup) lines.push({ price: Math.round(sr.copSup.avg * 100) / 100, color: "#44aaff", label: "CoP S" });
+  if (sr.copRes) lines.push({ price: Math.round(sr.copRes.avg * 100) / 100, color: "#ff8844", label: "CoP Resistance" });
+  if (sr.copSup) lines.push({ price: Math.round(sr.copSup.avg * 100) / 100, color: "#44aaff", label: "CoP Support" });
   return lines;
 }
 
