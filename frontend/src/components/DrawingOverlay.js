@@ -160,13 +160,13 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     getDrawings() {
       return drawingsRef.current;
     },
-    addFibDrawing({ p1Price, p2Price }) {
+    addFibDrawing({ p1Price, p2Price, p2Time = null }) {
       if (p1Price == null || p2Price == null) return;
       const newDrawing = {
         id: uid(),
         type: "fibRetracement",
         p1: { price: p1Price, time: null },
-        p2: { price: p2Price, time: null },
+        p2: { price: p2Price, time: p2Time }, // wave origin time → left x-anchor
       };
       commitDrawings([...drawingsRef.current, newDrawing]);
     },
@@ -629,10 +629,18 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
       return c.y;
     };
 
+    // Layout: label on left edge, lines start from wave-origin x and extend right
     const BADGE_W = 158;
     const BADGE_H = 16;
-    const lineX2 = svgW - BADGE_W - 4;
-    const badgeX = svgW - BADGE_W - 2;
+    const LABEL_PAD = 4;
+    const badgeX = LABEL_PAD;
+
+    // Wave origin (p2) x-coordinate = where lines begin on the chart
+    // Falls back to BADGE_W+8 if time is not available (shouldn't happen)
+    const originCoord = dataToCoord(drawing.p2.time, drawing.p2.price);
+    const lineX1 = (originCoord.x != null && originCoord.x > BADGE_W + 8)
+      ? originCoord.x
+      : BADGE_W + 8;
 
     return (
       <g style={{ pointerEvents: pe }}>
@@ -645,7 +653,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
           const zoneTop = Math.min(y1, y2);
           const zoneBot = Math.max(y1, y2);
           return (
-            <rect key={`zone-${zone.from}-${zone.to}`} x={0} y={zoneTop} width={lineX2} height={Math.max(zoneBot - zoneTop, 1)} fill={zone.color} opacity={hovered ? zone.opacity * 1.6 : zone.opacity} style={{ pointerEvents: "none" }} />
+            <rect key={`zone-${zone.from}-${zone.to}`} x={lineX1} y={zoneTop} width={svgW - lineX1} height={Math.max(zoneBot - zoneTop, 1)} fill={zone.color} opacity={hovered ? zone.opacity * 1.6 : zone.opacity} style={{ pointerEvents: "none" }} />
           );
         })}
 
@@ -655,11 +663,13 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, int
           const lineColor = hovered ? HOVER_COLOR : color;
           return (
             <g key={ratio} style={{ pointerEvents: "none" }}>
-              <line x1={0} y1={y} x2={lineX2} y2={y} stroke={lineColor} strokeWidth={isEdge ? 1.8 : width} strokeDasharray={isEdge ? "0" : dash} opacity={hovered ? 1 : 0.90} />
+              {/* Label badge pinned to left edge */}
               <rect x={badgeX} y={y - BADGE_H / 2} width={BADGE_W} height={BADGE_H} rx={2} fill={lineColor} opacity={hovered ? 0.28 : 0.18} />
               <text x={badgeX + 5} y={y + 4} fill={lineColor} fontSize={9.5} fontFamily="'JetBrains Mono', monospace" fontWeight={isEdge ? 700 : 600}>
                 {labelText}
               </text>
+              {/* Line starts at wave-origin x and extends right to infinity */}
+              <line x1={lineX1} y1={y} x2={svgW} y2={y} stroke={lineColor} strokeWidth={isEdge ? 1.8 : width} strokeDasharray={isEdge ? "0" : dash} opacity={hovered ? 1 : 0.90} />
             </g>
           );
         })}
@@ -766,8 +776,8 @@ function LivePreview({ drag, svgW, dataToCoord }) {
     if (start.price == null || current.price == null) return null;
     // Preview: p1=current(tip=0), p2=start(origin=1) — matches buildDrawing convention
     const priceRange = start.price - current.price; // p2 - p1 = start - current
-    const BADGE_W = 158;
-    const lineX2 = svgW - BADGE_W - 4;
+    // Lines start from drag-start x (= wave origin), extend right
+    const lineX1 = Math.min(start.x, svgW - 10);
 
     return (
       <g style={{ pointerEvents: "none" }}>
@@ -777,7 +787,7 @@ function LivePreview({ drag, svgW, dataToCoord }) {
           if (coord.y == null) return null;
           const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
           return (
-            <line key={lvl.ratio} x1={0} y1={coord.y} x2={lineX2} y2={coord.y} stroke={lvl.color} strokeWidth={isEdge ? 1.8 : lvl.width} strokeDasharray={isEdge ? "0" : lvl.dash} opacity={0.75} />
+            <line key={lvl.ratio} x1={lineX1} y1={coord.y} x2={svgW} y2={coord.y} stroke={lvl.color} strokeWidth={isEdge ? 1.8 : lvl.width} strokeDasharray={isEdge ? "0" : lvl.dash} opacity={0.75} />
           );
         })}
         <circle cx={start.x} cy={start.y} r={HANDLE_R} fill={FIB_COLOR} />

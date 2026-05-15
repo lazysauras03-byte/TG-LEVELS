@@ -256,9 +256,12 @@ export default function ChartsPage() {
     if (!drawingOverlayExtRef.current?.addFibDrawing) return;
     fibInjectedRef.current = true;
     setTimeout(() => {
+      // p2Time = wave origin time (segment.fromTime), used as left x-anchor for fib lines
+      const p2Time = waveTarget?.fromMs ? Math.round(waveTarget.fromMs / 1000) : null;
       drawingOverlayExtRef.current?.addFibDrawing({
         p1Price: urlFibDrawing.p1Price,
         p2Price: urlFibDrawing.p2Price,
+        p2Time,
       });
     }, 800);
   }, [candles.length, urlFibDrawing]); // eslint-disable-line

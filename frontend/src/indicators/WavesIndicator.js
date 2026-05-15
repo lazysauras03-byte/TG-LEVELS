@@ -275,7 +275,7 @@ function _redraw() {
     const rawMx = (p1.x + p2.x) / 2;
     const my = (p1.y + p2.y) / 2;
     const color = seg.toSide === "high" ? "#00d97e" : "#ff4560";
-    const text = `Wave ${seg.waveNum}  ${seg.prevWaveType} \u2192 ${seg.currWaveType}`;
+    const text = `${seg.waveNum}`;
     _ctx.save();
     _ctx.font = "600 10px 'JetBrains Mono',monospace";
     _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
