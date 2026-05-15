@@ -368,6 +368,8 @@ export default function CandleChart({
   setSelectedTool = () => { },
   drawingsHidden = false,
   drawingOverlayExtRef = null,
+  srLines = [],              // [{price, color, label, lineStyle}] drawn as price lines
+  onSRLinesDrawn = null,     // callback(bool) when sr lines are applied/removed
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -376,6 +378,7 @@ export default function CandleChart({
   const emaLoRef = useRef(null);
   const rulerRef = useRef(null);
   const drawingOverlayRef = useRef(null);
+  const srPriceLinesRef = useRef([]);  // active SR price line handles
 
   // Forward overlay ref to parent so it can call clearAll
   useEffect(() => {
@@ -860,6 +863,42 @@ export default function CandleChart({
       containerRef.current.style.cursor = isPanMode ? "" : "crosshair";
     }
   }, [selectedTool, setSelectedTool]);
+
+  // ── SR Price Lines — draw horizontal S&R levels on chart ─────────────────
+  // Draws each srLines entry as a createPriceLine on the candle series.
+  // When srLines is empty, all previously drawn lines are removed.
+  useEffect(() => {
+    const series = candleRef.current;
+    if (!series) return;
+
+    // Remove existing SR price lines
+    srPriceLinesRef.current.forEach((pl) => {
+      try { series.removePriceLine(pl); } catch (_) { }
+    });
+    srPriceLinesRef.current = [];
+
+    if (!srLines?.length) {
+      if (onSRLinesDrawn) onSRLinesDrawn(false);
+      return;
+    }
+
+    // Draw new lines
+    const handles = srLines.map(({ price, color, label, lineStyle: ls }) => {
+      try {
+        return series.createPriceLine({
+          price,
+          color: color || "#2962ff",
+          lineWidth: 1,
+          lineStyle: ls ?? LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: label || "",
+        });
+      } catch (_) { return null; }
+    }).filter(Boolean);
+
+    srPriceLinesRef.current = handles;
+    if (onSRLinesDrawn) onSRLinesDrawn(handles.length > 0);
+  }, [srLines, onSRLinesDrawn]); // eslint-disable-line
 
   // ── Markers: refresh when signals, todayMode, or showBubble changes ────────
   // These three are the ONLY things that should cause setMarkers to fire.

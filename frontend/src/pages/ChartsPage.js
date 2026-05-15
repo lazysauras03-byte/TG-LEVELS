@@ -118,6 +118,31 @@ export default function ChartsPage() {
     drawingOverlayExtRef.current?.clearAll();
   }, []);
 
+  // ── SR Lines drawn on chart ───────────────────────────────────────────────
+  // srLinesToDraw = [{price, color, label, lineStyle}] — fed from URL params or FibDash
+  const [srLinesToDraw, setSrLinesToDraw] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get("srLines");
+      return raw ? JSON.parse(decodeURIComponent(raw)) : [];
+    } catch { return []; }
+  });
+  const [srLinesDrawn, setSrLinesDrawn] = useState(false);
+
+  const handleDrawSRLines = useCallback(() => {
+    if (srLinesDrawn) {
+      // Clear — pass empty array to remove all price lines
+      setSrLinesToDraw([]);
+    } else {
+      // Re-apply from URL if available
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get("srLines");
+        if (raw) setSrLinesToDraw(JSON.parse(decodeURIComponent(raw)));
+      } catch { }
+    }
+  }, [srLinesDrawn]);
+
   // Escape always snaps back to cursor/pan mode (TradingView behaviour)
   useEffect(() => {
     function onKey(e) {
@@ -279,6 +304,9 @@ export default function ChartsPage() {
           drawingsHidden={drawingsHidden}
           onToggleHide={handleToggleHide}
           onTrashAll={handleTrashAll}
+          srLines={srLinesToDraw}
+          onDrawSRLines={handleDrawSRLines}
+          srLinesDrawn={srLinesDrawn}
         />
 
         {/* Chart area */}
@@ -337,6 +365,8 @@ export default function ChartsPage() {
               setSelectedTool={setSelectedTool}
               drawingsHidden={drawingsHidden}
               drawingOverlayExtRef={drawingOverlayExtRef}
+              srLines={srLinesToDraw}
+              onSRLinesDrawn={setSrLinesDrawn}
             />
           )}
         </div>

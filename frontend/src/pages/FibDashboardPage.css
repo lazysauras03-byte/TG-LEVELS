@@ -775,3 +775,368 @@
   flex-shrink: 0;
   margin-top: 1px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Fib Table enhancements — extended levels, trap zone, current price
+══════════════════════════════════════════════════════════════════════════════ */
+
+.fdb-fib-trap td,
+.fdb-fib-trap .fdb-lvl-num {
+  background: rgba(255, 80, 80, 0.08);
+  color: #ff7777 !important;
+}
+
+.fdb-fib-ext td,
+.fdb-fib-ext .fdb-lvl-num {
+  color: #44aaff !important;
+  background: rgba(68, 170, 255, 0.05);
+}
+
+.fdb-fib-current td,
+.fdb-fib-current .fdb-lvl-num {
+  background: rgba(255, 200, 68, 0.12);
+  font-weight: 700;
+}
+
+.fdb-fib-price-now {
+  color: #ffcc44 !important;
+  font-weight: 700;
+}
+
+.fdb-badge.fdb-b-caution {
+  background: #1e1500;
+  color: #ffaa33;
+  border: 1px solid #3a2800;
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.fdb-badge.fdb-b-ext {
+  background: #001430;
+  color: #44aaff;
+  border: 1px solid #003060;
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.fdb-badge.fdb-b-target {
+  background: #002818;
+  color: #44cc88;
+  border: 1px solid #005030;
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.fdb-badge.fdb-b-trap {
+  background: #2a0a0a;
+  color: #ff6666;
+  border: 1px solid #550000;
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   SR Wave Lines — indicator-style display (not bubbles)
+══════════════════════════════════════════════════════════════════════════════ */
+
+/* Mother Wave Condition block */
+.sr-mw-condition {
+  border: 1px solid;
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sr-mw-condition-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.sr-mw-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.sr-mw-tag {
+  font-size: 9px;
+  color: #4a4a7a;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sr-mw-desc {
+  font-size: 10px;
+  color: #6a6a9a;
+  line-height: 1.4;
+}
+
+/* Trap Zone Alert */
+.sr-trap-alert {
+  background: rgba(255, 60, 60, 0.08);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.sr-trap-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.sr-trap-icon {
+  font-size: 13px;
+  color: #ff5555;
+}
+
+.sr-trap-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff6666;
+  letter-spacing: 0.03em;
+}
+
+.sr-trap-body {
+  font-size: 10px;
+  color: #9a6a6a;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sr-trap-row {
+  color: #aa8080;
+}
+
+.sr-trap-bias {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 6px;
+  border-radius: 3px;
+}
+
+.sr-trap-short {
+  color: #ff6666;
+  background: rgba(255, 80, 80, 0.1);
+}
+
+.sr-trap-buy {
+  color: #55cc55;
+  background: rgba(68, 200, 68, 0.1);
+}
+
+.sr-trap-hint {
+  color: #6a6a9a;
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* Fib Alert */
+.sr-fib-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 5px;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+}
+
+.sr-fib-alert-ready {
+  background: rgba(255, 200, 68, 0.08);
+  border: 1px solid rgba(255, 200, 68, 0.25);
+}
+
+.sr-fib-alert-between {
+  background: rgba(100, 100, 200, 0.08);
+  border: 1px solid rgba(100, 100, 200, 0.2);
+}
+
+.sr-fib-alert-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.sr-fib-alert-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffcc44;
+  letter-spacing: 0.03em;
+}
+
+.sr-fib-alert-between .sr-fib-alert-title {
+  color: #9090cc;
+}
+
+.sr-fib-alert-sub {
+  font-size: 9px;
+  color: #6a6a8a;
+  margin-top: 2px;
+}
+
+/* Section labels */
+.sr-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 0 2px;
+  margin-top: 4px;
+}
+
+.sr-section-res {
+  color: #cc4444;
+}
+
+.sr-section-sup {
+  color: #44aa44;
+}
+
+/* Wave line rows — indicator style */
+.sr-wave-line {
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 3px;
+  border-left: 3px solid transparent;
+}
+
+.sr-wave-res {
+  background: rgba(255, 68, 68, 0.06);
+  border-left-color: #ff4444;
+}
+
+.sr-wave-sup {
+  background: rgba(68, 204, 68, 0.06);
+  border-left-color: #44cc44;
+}
+
+.sr-wave-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  gap: 6px;
+}
+
+.sr-wave-label-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.sr-wave-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8888bb;
+  min-width: 22px;
+}
+
+.sr-wave-type-hint {
+  font-size: 9px;
+  color: #44446a;
+  letter-spacing: 0.02em;
+}
+
+.sr-wave-price-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sr-wave-price {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sr-wave-price-res {
+  color: #ff7777;
+}
+
+.sr-wave-price-sup {
+  color: #55cc55;
+}
+
+.sr-wave-pct {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Bar track — the indicator line visual */
+.sr-wave-bar-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 4px;
+  position: relative;
+}
+
+.sr-wave-bar {
+  height: 4px;
+  border-radius: 2px;
+  min-width: 6px;
+  transition: width 0.3s ease;
+}
+
+.sr-wave-bar-res {
+  background: linear-gradient(90deg, rgba(255, 68, 68, 0.6), rgba(255, 68, 68, 0.2));
+}
+
+.sr-wave-bar-sup {
+  background: linear-gradient(90deg, rgba(68, 204, 68, 0.6), rgba(68, 204, 68, 0.2));
+}
+
+.sr-wave-touches {
+  font-size: 9px;
+  color: #44446a;
+  background: #0e0e22;
+  border: 1px solid #1e1e3a;
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+  line-height: 14px;
+  margin-left: auto;
+}
+
+/* ── Draw on Chart button ── */
+.fdb-draw-chart-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 4px 10px;
+  background: rgba(41, 98, 255, 0.1);
+  border: 1px solid rgba(41, 98, 255, 0.3);
+  border-radius: 4px;
+  color: #5588ff;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+
+.fdb-draw-chart-btn:hover {
+  background: rgba(41, 98, 255, 0.22);
+  color: #88aaff;
+  border-color: rgba(41, 98, 255, 0.6);
+}
+
+.fdb-draw-chart-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}

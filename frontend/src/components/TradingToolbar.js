@@ -98,24 +98,28 @@ const TOOL_GROUPS = [
     id: "cursor",
     icon: icons.cursor,
     label: "Cursor — Pan Mode  (Esc / Alt+A)",
+    shortLabel: "Cursor",
     subtools: [],
   },
   {
     id: "trendline",
     icon: icons.trendline,
     label: "Trend Line  (Alt+T)",
+    shortLabel: "Trend Line",
     subtools: [], // NO dropdown
   },
   {
     id: "horizontal",
     icon: icons.horizontal,
     label: "Horizontal Line  (Alt+H)",
+    shortLabel: "H. Line",
     subtools: [], // NO dropdown
   },
   {
     id: "fibRetracement",
     icon: icons.fibRetracement,
     label: "Fib Retracement  (Alt+F)",
+    shortLabel: "Fib",
     subtools: [
       { id: "fibRetracement", icon: icons.fibRetracement, label: "Fib Retracement" },
       { id: "fibExtension", icon: icons.fibExtension, label: "Fib Extension" },
@@ -128,6 +132,7 @@ const TOOL_GROUPS = [
     id: "hide",
     icon: icons.eye,        // icon swaps based on toggle state in render
     label: "Hide / Show All Drawings",
+    shortLabel: "Hide All",
     toggle: true,
     subtools: [],
   },
@@ -136,6 +141,7 @@ const TOOL_GROUPS = [
     id: "trash",
     icon: icons.trash,
     label: "Remove All Drawings",
+    shortLabel: "Clear All",
     action: true,
     danger: true,
     subtools: [],
@@ -184,6 +190,17 @@ function SubDrawer({ group, position, selectedTool, onSelect, onClose }) {
   );
 }
 
+// ─── SR icon ──────────────────────────────────────────────────────────────────
+const srIcon = (
+  <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <line x1="1" y1="4" x2="13" y2="4" strokeLinecap="round" />
+    <line x1="1" y1="10" x2="13" y2="10" strokeLinecap="round" />
+    <line x1="1" y1="7" x2="4" y2="7" strokeLinecap="round" strokeDasharray="1.5,1.5" />
+    <line x1="10" y1="7" x2="13" y2="7" strokeLinecap="round" strokeDasharray="1.5,1.5" />
+    <circle cx="7" cy="7" r="1.2" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 // ─── Main Toolbar ──────────────────────────────────────────────────────────────
 export default function TradingToolbar({
   selectedTool,
@@ -191,6 +208,9 @@ export default function TradingToolbar({
   drawingsHidden,
   onToggleHide,
   onTrashAll,
+  srLines = [],          // [{price, color, label, style}] — from S&R panel
+  onDrawSRLines,         // () => void — draws SR lines on chart
+  srLinesDrawn = false,  // true when lines are currently on chart
 }) {
   const [openDrawer, setOpenDrawer] = useState(null);
   const [drawerPos, setDrawerPos] = useState(0);
@@ -392,6 +412,7 @@ export default function TradingToolbar({
               title={group.label}
             >
               <span className="tv-tool-icon">{getGroupIcon(group)}</span>
+              <span className="tv-tool-label">{group.shortLabel}</span>
             </button>
 
             {/* Chevron arrow for groups with subtools */}
@@ -417,6 +438,23 @@ export default function TradingToolbar({
           onSelect={(toolId) => handleSubSelect(activeGroup.id, toolId)}
           onClose={() => setOpenDrawer(null)}
         />
+      )}
+
+      {/* Draw S&R Lines button — only shows when srLines are available */}
+      {srLines.length > 0 && onDrawSRLines && (
+        <>
+          <div className="tv-toolbar-divider" />
+          <button
+            className={`tv-sr-draw-btn ${srLinesDrawn ? "active" : ""}`}
+            onClick={onDrawSRLines}
+            title={srLinesDrawn ? "Clear S&R lines from chart" : "Draw S&R levels on chart"}
+          >
+            {srIcon}
+            <span className="tv-sr-draw-btn-label">
+              {srLinesDrawn ? "Clear S&R" : "Draw S&R"}
+            </span>
+          </button>
+        </>
       )}
     </div>
   );

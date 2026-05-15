@@ -26,15 +26,23 @@ const ENTRY_TFS = [
   { label: "1Min", value: 1 },
 ];
 
+// Full Fib levels per document: -1.618, -1, -0.236 to 0.236 (trap), 0, 0.382, 0.500, 0.618, 0.786, 1
 const FIB_LEVELS = [
-  { ratio: 0.000, badge: null },
-  { ratio: 0.236, badge: null },
+  { ratio: -1.618, badge: "Ext Target" },
+  { ratio: -1.000, badge: "Target" },
+  { ratio: -0.236, badge: "Trap Top" },  // upper edge of trap zone
+  { ratio: 0.000, badge: null },         // High (reference)
+  { ratio: 0.236, badge: "Trap Bot" },  // lower edge of trap zone
   { ratio: 0.382, badge: "Support" },
   { ratio: 0.500, badge: "Mid" },
   { ratio: 0.618, badge: "Golden" },
-  { ratio: 0.786, badge: null },
-  { ratio: 1.000, badge: null },
+  { ratio: 0.786, badge: "Caution" },
+  { ratio: 1.000, badge: null },         // Low (reference)
 ];
+
+// Trap zone is between -0.236 and +0.236
+const TRAP_ZONE_TOP = -0.236;
+const TRAP_ZONE_BOT = 0.236;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,15 +54,88 @@ function fmt(n) {
   return n == null ? "—" : numFmt.format(Number(n));
 }
 
+// Compute fib levels per document:
+// Bullish Mother Wave → Fib Bottom to Top (1=Low, 0=High)
+//   ratio 0 = High (start/from of bull wave), ratio 1 = Low (end/to NOT right — see below)
+//   Actually for a bull wave: fromPrice=Low, toPrice=High
+//   ratio 0 = 0% retracement = toPrice (High), ratio 1 = 100% retracement = fromPrice (Low)
+//   price = toPrice - ratio * (toPrice - fromPrice)
+// Bearish Mother Wave → Fib Top to Bottom (1=High, 0=Low)
+//   ratio 0 = toPrice (Low), ratio 1 = fromPrice (High) — mirror of above
+// In both cases: price = toPrice + ratio * (fromPrice - toPrice)
+//   which = toPrice - ratio * delta where delta = toPrice - fromPrice
+// This aligns with the document: 0=High end of wave, 1=Low end, 0.382 first pullback etc.
 function computeFibLevels(segment) {
   if (!segment) return [];
   const { fromPrice, toPrice } = segment;
-  const delta = toPrice - fromPrice;
+  // For fib: "0" is the wave tip (toPrice), "1" is the wave origin (fromPrice)
+  // Retracement price = toPrice + ratio * (fromPrice - toPrice)
   return FIB_LEVELS.map((f) => ({
     ratio: f.ratio,
     badge: f.badge,
-    price: fromPrice + delta * f.ratio,
+    price: toPrice + f.ratio * (fromPrice - toPrice),
   }));
+}
+
+// Derive mother wave condition per document 4 cases
+function getMotherWaveCondition(segment, currentPrice) {
+  if (!segment || currentPrice == null) return null;
+  const high = Math.max(segment.fromPrice, segment.toPrice);
+  const low = Math.min(segment.fromPrice, segment.toPrice);
+  const isBullWave = segment.toSide === "high"; // wave ended at a high = bullish wave
+
+  const priceInside = currentPrice >= low && currentPrice <= high;
+  const priceAbove = currentPrice > high;
+  const priceBelow = currentPrice < low;
+
+  if (priceInside && isBullWave) return "inside_bull";   // Case 1: Inside Bullish
+  if (priceInside && !isBullWave) return "inside_bear";   // Case 2: Inside Bearish
+  if (priceAbove) return "outside_bull";  // Case 3: Outside Bullish
+  if (priceBelow) return "outside_bear";  // Case 4: Outside Bearish
+  return null;
+}
+
+// Get trap zone status and fib alert per document
+function getTrapZoneStatus(fibLevels, currentPrice) {
+  if (!fibLevels.length || currentPrice == null) return null;
+  const lvl = (ratio) => fibLevels.find((f) => Math.abs(f.ratio - ratio) < 0.001)?.price;
+
+  const trapTop = lvl(-0.236); // upper trap edge
+  const trapBot = lvl(0.236);  // lower trap edge
+  const fib382 = lvl(0.382);
+  const fib500 = lvl(0.500);
+  const fib618 = lvl(0.618);
+
+  if (trapTop == null || trapBot == null) return null;
+
+  const trapHigh = Math.max(trapTop, trapBot);
+  const trapLow = Math.min(trapTop, trapBot);
+
+  const inTrap = currentPrice >= trapLow && currentPrice <= trapHigh;
+
+  // Which side of trap zone is price touching?
+  let trapBias = null;
+  if (inTrap) {
+    const midTrap = (trapHigh + trapLow) / 2;
+    trapBias = currentPrice >= midTrap ? "short" : "buy"; // upper = short, lower = buy
+  }
+
+  // Alert: price at key fib level for the first time
+  const keyLevels = [fib382, fib500, fib618].filter(Boolean);
+  const tolerance = currentPrice * 0.002; // 0.2% tolerance
+  const atKeyLevel = keyLevels.some((lvlPrice) => Math.abs(currentPrice - lvlPrice) <= tolerance);
+
+  // Between swing — price between two key levels
+  let betweenLevels = null;
+  const orderedKeyLevels = [fib382, fib500, fib618].filter(Boolean).sort((a, b) => a - b);
+  for (let i = 0; i < orderedKeyLevels.length - 1; i++) {
+    if (currentPrice > orderedKeyLevels[i] && currentPrice < orderedKeyLevels[i + 1]) {
+      betweenLevels = { lower: orderedKeyLevels[i], upper: orderedKeyLevels[i + 1] };
+      break;
+    }
+  }
+
+  return { inTrap, trapBias, trapHigh, trapLow, atKeyLevel, betweenLevels };
 }
 
 function getLastMotherwave(candles, emaHighs, emaLows) {
@@ -196,8 +277,13 @@ function WaveCard({ segment, tfLabel, onClick }) {
   );
 }
 
-function FibTable({ fibLevels }) {
+function FibTable({ fibLevels, currentPrice }) {
   if (!fibLevels.length) return <div className="fdb-no-wave">No Fib data</div>;
+
+  const lvlPrice = (ratio) => fibLevels.find((f) => Math.abs(f.ratio - ratio) < 0.001)?.price;
+  const trapHigh = Math.max(lvlPrice(-0.236) ?? 0, lvlPrice(0.236) ?? 0);
+  const trapLow = Math.min(lvlPrice(-0.236) ?? Infinity, lvlPrice(0.236) ?? Infinity);
+
   return (
     <table className="fdb-fib-tbl">
       <thead>
@@ -205,20 +291,40 @@ function FibTable({ fibLevels }) {
           <th>Level</th>
           <th></th>
           <th>Price</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
-        {fibLevels.map((f) => (
-          <tr key={f.ratio}>
-            <td className="fdb-lvl-num">{f.ratio.toFixed(3)}</td>
-            <td>
-              {f.badge === "Support" && <span className="fdb-badge fdb-b-sup">Support</span>}
-              {f.badge === "Mid" && <span className="fdb-badge fdb-b-mid">Mid</span>}
-              {f.badge === "Golden" && <span className="fdb-badge fdb-b-gold">Golden</span>}
-            </td>
-            <td>{fmt(f.price)}</td>
-          </tr>
-        ))}
+        {fibLevels.map((f) => {
+          const isTrapZone = f.ratio === -0.236 || f.ratio === 0.236;
+          const isInsideTrap = f.price >= trapLow && f.price <= trapHigh && !isTrapZone;
+          const isCurrent = currentPrice != null && Math.abs(currentPrice - f.price) / currentPrice < 0.003;
+          const isExtension = f.ratio < 0;
+          return (
+            <tr
+              key={f.ratio}
+              className={[
+                isTrapZone ? "fdb-fib-trap" : "",
+                isExtension && !isTrapZone ? "fdb-fib-ext" : "",
+                isCurrent ? "fdb-fib-current" : "",
+              ].filter(Boolean).join(" ")}
+            >
+              <td className="fdb-lvl-num">{f.ratio.toFixed(3)}</td>
+              <td>
+                {f.badge === "Support" && <span className="fdb-badge fdb-b-sup">Support</span>}
+                {f.badge === "Mid" && <span className="fdb-badge fdb-b-mid">Mid</span>}
+                {f.badge === "Golden" && <span className="fdb-badge fdb-b-gold">Golden</span>}
+                {f.badge === "Caution" && <span className="fdb-badge fdb-b-caution">Caution</span>}
+                {f.badge === "Ext Target" && <span className="fdb-badge fdb-b-ext">Ext Target</span>}
+                {f.badge === "Target" && <span className="fdb-badge fdb-b-target">Target</span>}
+                {f.badge === "Trap Top" && <span className="fdb-badge fdb-b-trap">Trap ↑</span>}
+                {f.badge === "Trap Bot" && <span className="fdb-badge fdb-b-trap">Trap ↓</span>}
+              </td>
+              <td className={isCurrent ? "fdb-fib-price-now" : ""}>{fmt(f.price)}</td>
+              <td>{isCurrent && <span style={{ color: "#ffcc44", fontSize: 9 }}>◄ NOW</span>}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -294,7 +400,8 @@ function useColData(symbol, tfValue) {
           data.emaHighs || [],
           data.emaLows || []
         );
-        setState({ status: "done", segment, candles: data.candles, emaHighsData: data.emaHighs || [], emaLowsData: data.emaLows || [] });
+        const lastClose = data.candles[data.candles.length - 1].close;
+        setState({ status: "done", segment, candles: data.candles, emaHighsData: data.emaHighs || [], emaLowsData: data.emaLows || [], lastClose });
       } else {
         setState({ status: "error", segment: null });
       }
@@ -420,7 +527,7 @@ function HtfColumn({ symbol }) {
     { label: "1Hour", value: 60 },
   ];
 
-  const { status, segment } = useColData(symbol, activeTF);
+  const { status, segment, lastClose } = useColData(symbol, activeTF);
   const fibLevels = computeFibLevels(segment);
   const bias = getBias(segment);
   const waveLabel = activeTF >= 10080 ? "Weekly wave" : activeTF >= 1440 ? "Daily wave" : "1H wave";
@@ -475,7 +582,7 @@ function HtfColumn({ symbol }) {
         {status === "loading" ? (
           <div className="fdb-state"><div className="fdb-spinner" /></div>
         ) : (
-          <FibTable fibLevels={fibLevels} />
+          <FibTable fibLevels={fibLevels} currentPrice={lastClose} />
         )}
       </div>
     </div>
@@ -484,6 +591,8 @@ function HtfColumn({ symbol }) {
 
 
 // ── Support / Resistance computation ────────────────────────────────────────
+// Per document: Previous Swing Highs → Resistance, Previous Swing Lows → Support
+// Uses wave pivots from WavesIndicator (EMA-9 based swing detection)
 
 function computeSRLevels(candles, emaHighs, emaLows) {
   if (!candles?.length) return null;
@@ -491,14 +600,15 @@ function computeSRLevels(candles, emaHighs, emaLows) {
   if (!pivots.length) return null;
 
   const lastClose = candles[candles.length - 1].close;
-  const tolerance = lastClose * 0.0018;
+  const tolerance = lastClose * 0.002; // 0.2% cluster tolerance
 
+  // Cluster nearby pivot prices into S/R zones
   function cluster(prices) {
     const sorted = [...prices].sort((a, b) => a - b);
     const clusters = [];
     for (const p of sorted) {
       const last = clusters[clusters.length - 1];
-      if (last && Math.abs(p - last.avg) <= tolerance * 2) {
+      if (last && Math.abs(p - last.avg) <= tolerance * 2.5) {
         last.prices.push(p);
         last.avg = last.prices.reduce((s, x) => s + x, 0) / last.prices.length;
         last.count = last.prices.length;
@@ -509,60 +619,157 @@ function computeSRLevels(candles, emaHighs, emaLows) {
     return clusters;
   }
 
-  const highPivots = pivots.filter((p) => p.side === "high").map((p) => p.price);
-  const lowPivots = pivots.filter((p) => p.side === "low").map((p) => p.price);
+  // Swing highs → resistance, swing lows → support
+  // Keep most recent pivots (last 20) for intraday relevance
+  const recentPivots = pivots.slice(-20);
+  const highPivots = recentPivots.filter((p) => p.side === "high").map((p) => p.price);
+  const lowPivots = recentPivots.filter((p) => p.side === "low").map((p) => p.price);
 
-  const resClusters = cluster(highPivots).filter((c) => c.avg > lastClose).sort((a, b) => a.avg - b.avg);
-  const supClusters = cluster(lowPivots).filter((c) => c.avg < lastClose).sort((a, b) => b.avg - a.avg);
+  const resClusters = cluster(highPivots)
+    .filter((c) => c.avg > lastClose)
+    .sort((a, b) => a.avg - b.avg); // nearest first
+
+  const supClusters = cluster(lowPivots)
+    .filter((c) => c.avg < lastClose)
+    .sort((a, b) => b.avg - a.avg); // nearest first
+
+  // Change-of-polarity: ex-support now resistance and vice versa
+  const copRes = cluster(lowPivots).filter((c) => c.avg > lastClose).sort((a, b) => a.avg - b.avg)[0] || null;
+  const copSup = cluster(highPivots).filter((c) => c.avg < lastClose).sort((a, b) => b.avg - a.avg)[0] || null;
 
   function strongest(clusters) {
     if (!clusters.length) return null;
     return clusters.reduce((best, c) => c.count >= best.count ? c : best, clusters[0]);
   }
 
-  const copRes = cluster(lowPivots).filter((c) => c.avg > lastClose).sort((a, b) => a.avg - b.avg)[0] || null;
-  const copSup = cluster(highPivots).filter((c) => c.avg < lastClose).sort((a, b) => b.avg - a.avg)[0] || null;
+  // Build SR lines array for chart URL — converts S&R panel data to chart price lines
+  function buildSRLinesForChart(sr) {
+    if (!sr) return [];
+    const lines = [];
+    const addLine = (cluster, color, label) => {
+      if (cluster) lines.push({ price: Math.round(cluster.avg * 100) / 100, color, label });
+    };
+    addLine(sr.r3, "#ff4444", "R3");
+    addLine(sr.r2, "#ff6666", "R2");
+    addLine(sr.r1, "#ff9999", "R1");
+    addLine(sr.s1, "#44cc44", "S1");
+    addLine(sr.s2, "#66aa66", "S2");
+    addLine(sr.s3, "#448844", "S3");
+    if (sr.copRes) lines.push({ price: Math.round(sr.copRes.avg * 100) / 100, color: "#ff8844", label: "CoP R" });
+    if (sr.copSup) lines.push({ price: Math.round(sr.copSup.avg * 100) / 100, color: "#44aaff", label: "CoP S" });
+    return lines;
+  }
+
+  function DrawOnChartBtn({ symbol, resolution, sr }) {
+    if (!sr) return null;
+    const lines = buildSRLinesForChart(sr);
+    if (!lines.length) return null;
+
+    function handleClick() {
+      const params = new URLSearchParams({
+        symbol,
+        resolution: String(resolution),
+        srLines: encodeURIComponent(JSON.stringify(lines)),
+      });
+      window.open(`/charts?${params.toString()}`, "_blank");
+    }
+
+    return (
+      <button className="fdb-draw-chart-btn" onClick={handleClick} title="Open chart with S&R lines drawn">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+          <rect x="1" y="1" width="14" height="14" rx="2" />
+          <line x1="1" y1="5.5" x2="15" y2="5.5" strokeDasharray="2,1.5" />
+          <line x1="1" y1="10.5" x2="15" y2="10.5" strokeDasharray="2,1.5" />
+          <polyline points="3,13 6,8 9,10 13,4" strokeWidth="1.6" />
+        </svg>
+        Draw on Chart
+      </button>
+    );
+  }
 
   return {
+    r3: resClusters[2] || null,
     r2: resClusters[1] || null,
     r1: resClusters[0] || null,
     current: lastClose,
     s1: supClusters[0] || null,
     s2: supClusters[1] || null,
+    s3: supClusters[2] || null,
     strongestRes: strongest(resClusters),
     strongestSup: strongest(supClusters),
     copRes,
     copSup,
+    swingPivots: recentPivots.slice(-12), // raw pivots for wave-line display
+    allResClusters: resClusters,
+    allSupClusters: supClusters,
   };
 }
 
-// ── SR Panel component ───────────────────────────────────────────────────────
+// ── SR Wave Lines Panel ───────────────────────────────────────────────────────
+// Shows Previous Swing Highs as Resistance and Swing Lows as Support
+// displayed as indicator lines (like on a chart), not bubbles
 
-function SRPanel({ sr, status }) {
+function SRPanel({ sr, status, motherSegment, fibLevels }) {
   if (status === "loading") return <div className="fdb-state"><div className="fdb-spinner" /></div>;
   if (!sr) return <div className="fdb-no-wave">No pivot data available</div>;
 
-  const { r2, r1, current, s1, s2, strongestRes, strongestSup, copRes, copSup } = sr;
+  const { r3, r2, r1, current, s1, s2, s3, strongestRes, strongestSup, copRes, copSup, swingPivots } = sr;
 
-  function LevelRow({ label, cluster, type, extra }) {
+  // Mother wave condition
+  const mwCondition = getMotherWaveCondition(motherSegment, current);
+  const conditionLabels = {
+    inside_bull: { label: "Inside Bullish", color: "#44cc44", desc: "Price inside MW · Bullish momentum (HH+HL)" },
+    inside_bear: { label: "Inside Bearish", color: "#ff5555", desc: "Price inside MW · Bearish momentum (LL+LH)" },
+    outside_bull: { label: "Outside Bullish", color: "#ffaa44", desc: "Price broke above MW high · Breakout pattern" },
+    outside_bear: { label: "Outside Bearish", color: "#7777aa", desc: "Price broke below MW low · Breakdown pattern" },
+  };
+  const cond = conditionLabels[mwCondition];
+
+  // Trap zone analysis
+  const trapStatus = getTrapZoneStatus(fibLevels, current);
+
+  // Wave pivot lines: group into resistance (highs above) and support (lows below)
+  const highPivots = swingPivots.filter((p) => p.side === "high" && p.price > current)
+    .sort((a, b) => a.price - b.price);
+  const lowPivots = swingPivots.filter((p) => p.side === "low" && p.price < current)
+    .sort((a, b) => b.price - a.price);
+
+  // Determine distance bar width (visual)
+  const allLevels = [r1, r2, s1, s2].filter(Boolean).map((c) => c.avg);
+  const maxDist = allLevels.length
+    ? Math.max(...allLevels.map((p) => Math.abs(p - current)))
+    : 1;
+
+  function WaveLine({ cluster, type, label, isCoP, isStrongest }) {
     if (!cluster) return null;
-    const isStrongestRes = strongestRes && Math.abs(cluster.avg - strongestRes.avg) < 0.01;
-    const isStrongestSup = strongestSup && Math.abs(cluster.avg - strongestSup.avg) < 0.01;
-    const isStrongest = isStrongestRes || isStrongestSup;
-    const isCopR = copRes && Math.abs(cluster.avg - copRes.avg) < 0.01;
-    const isCopS = copSup && Math.abs(cluster.avg - copSup.avg) < 0.01;
-    const isCoP = isCopR || isCopS;
+    const dist = Math.abs(cluster.avg - current);
+    const barW = maxDist > 0 ? Math.min(100, (dist / maxDist) * 100) : 0;
+    const pct = current > 0 ? ((cluster.avg - current) / current * 100).toFixed(2) : "0.00";
+    const isRes = type === "res";
     return (
-      <div className={`sr-row sr-row-${type}`}>
-        <div className="sr-label-wrap">
-          <span className="sr-label">{label}</span>
-          {isStrongest && <span className="sr-badge sr-strongest">&#128293; Strongest</span>}
-          {isCoP && <span className="sr-badge sr-cop">&#x27F3; CoP</span>}
+      <div className={`sr-wave-line sr-wave-${type}`}>
+        <div className="sr-wave-header">
+          <div className="sr-wave-label-group">
+            <span className="sr-wave-tag">{label}</span>
+            {isStrongest && <span className="sr-badge sr-strongest">🔥 Key</span>}
+            {isCoP && <span className="sr-badge sr-cop">⟳ CoP</span>}
+            <span className="sr-wave-type-hint">
+              {isRes ? "Prev Swing High" : "Prev Swing Low"}
+            </span>
+          </div>
+          <div className="sr-wave-price-group">
+            <span className={`sr-wave-price sr-wave-price-${type}`}>{fmt(cluster.avg)}</span>
+            <span className="sr-wave-pct" style={{ color: isRes ? "#ff8888" : "#55cc55" }}>
+              {isRes ? "+" : ""}{pct}%
+            </span>
+          </div>
         </div>
-        <div className="sr-right">
-          <span className={`sr-price sr-price-${type}`}>{fmt(cluster.avg)}</span>
-          <span className="sr-touches">{cluster.count}&times; touch{cluster.count !== 1 ? "es" : ""}</span>
-          {extra && <span className="sr-extra">{extra}</span>}
+        <div className="sr-wave-bar-track">
+          <div
+            className={`sr-wave-bar sr-wave-bar-${type}`}
+            style={{ width: `${barW}%` }}
+          />
+          <span className="sr-wave-touches">{cluster.count}× touch{cluster.count !== 1 ? "es" : ""}</span>
         </div>
       </div>
     );
@@ -570,26 +777,138 @@ function SRPanel({ sr, status }) {
 
   return (
     <div className="sr-panel">
-      <LevelRow label="R2" cluster={r2} type="res" extra="2nd resistance" />
-      <LevelRow label="R1" cluster={r1} type="res" extra="nearest high" />
+      {/* Mother Wave Condition */}
+      {cond && (
+        <div className="sr-mw-condition" style={{ borderColor: cond.color }}>
+          <div className="sr-mw-condition-header">
+            <span className="sr-mw-label" style={{ color: cond.color }}>{cond.label}</span>
+            <span className="sr-mw-tag">Market Condition</span>
+          </div>
+          <div className="sr-mw-desc">{cond.desc}</div>
+        </div>
+      )}
+
+      {/* Trap Zone Alert */}
+      {trapStatus?.inTrap && (
+        <div className="sr-trap-alert">
+          <div className="sr-trap-header">
+            <span className="sr-trap-icon">⚠</span>
+            <span className="sr-trap-label">TRAP ZONE (-0.236 to 0.236)</span>
+          </div>
+          <div className="sr-trap-body">
+            <div className="sr-trap-row">
+              <span>Price is inside No-Trade zone</span>
+            </div>
+            {trapStatus.trapBias === "short" && (
+              <div className="sr-trap-bias sr-trap-short">
+                ▼ Upper side (-0.236) → Bias: SHORT
+              </div>
+            )}
+            {trapStatus.trapBias === "buy" && (
+              <div className="sr-trap-bias sr-trap-buy">
+                ▲ Lower side (0.236) → Bias: BUY
+              </div>
+            )}
+            <div className="sr-trap-hint">Switch to 15Min S&amp;R for guidance</div>
+          </div>
+        </div>
+      )}
+
+      {/* Fib Alert */}
+      {!trapStatus?.inTrap && trapStatus?.atKeyLevel && (
+        <div className="sr-fib-alert sr-fib-alert-ready">
+          <span className="sr-fib-alert-icon">🔔</span>
+          <div>
+            <div className="sr-fib-alert-title">GET READY FOR TRADE</div>
+            <div className="sr-fib-alert-sub">Price touching key Fib level (0.382 / 0.500 / 0.618)</div>
+          </div>
+        </div>
+      )}
+      {!trapStatus?.inTrap && !trapStatus?.atKeyLevel && trapStatus?.betweenLevels && (
+        <div className="sr-fib-alert sr-fib-alert-between">
+          <span className="sr-fib-alert-icon">🔔</span>
+          <div>
+            <div className="sr-fib-alert-title">IN BETWEEN SWING</div>
+            <div className="sr-fib-alert-sub">
+              Between {fmt(trapStatus.betweenLevels.lower)} — {fmt(trapStatus.betweenLevels.upper)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resistance Levels — Previous Swing Highs as wave indicator lines */}
+      <div className="sr-section-label sr-section-res">▲ Resistance · Prev Swing Highs</div>
+      {r3 && (
+        <WaveLine
+          cluster={r3} type="res" label="R3"
+          isStrongest={strongestRes && Math.abs(r3.avg - strongestRes.avg) < 0.01}
+          isCoP={copRes && Math.abs(r3.avg - copRes.avg) < 0.01}
+        />
+      )}
+      {r2 && (
+        <WaveLine
+          cluster={r2} type="res" label="R2"
+          isStrongest={strongestRes && Math.abs(r2.avg - strongestRes.avg) < 0.01}
+          isCoP={copRes && Math.abs(r2.avg - copRes.avg) < 0.01}
+        />
+      )}
+      {r1 && (
+        <WaveLine
+          cluster={r1} type="res" label="R1"
+          isStrongest={strongestRes && Math.abs(r1.avg - strongestRes.avg) < 0.01}
+          isCoP={copRes && Math.abs(r1.avg - copRes.avg) < 0.01}
+        />
+      )}
+      {!r1 && !r2 && !r3 && (
+        <div className="fdb-no-wave" style={{ paddingLeft: 8, fontSize: 11 }}>No resistance pivots above price</div>
+      )}
+
+      {/* Current Price */}
       <div className="sr-row sr-row-current">
-        <span className="sr-label sr-label-current">&#9654; Current</span>
+        <span className="sr-label sr-label-current">▶ Current</span>
         <span className="sr-price sr-price-current">{fmt(current)}</span>
       </div>
-      <LevelRow label="S1" cluster={s1} type="sup" extra="nearest low" />
-      <LevelRow label="S2" cluster={s2} type="sup" extra="2nd support" />
+
+      {/* Support Levels — Previous Swing Lows as wave indicator lines */}
+      <div className="sr-section-label sr-section-sup">▼ Support · Prev Swing Lows</div>
+      {s1 && (
+        <WaveLine
+          cluster={s1} type="sup" label="S1"
+          isStrongest={strongestSup && Math.abs(s1.avg - strongestSup.avg) < 0.01}
+          isCoP={copSup && Math.abs(s1.avg - copSup.avg) < 0.01}
+        />
+      )}
+      {s2 && (
+        <WaveLine
+          cluster={s2} type="sup" label="S2"
+          isStrongest={strongestSup && Math.abs(s2.avg - strongestSup.avg) < 0.01}
+          isCoP={copSup && Math.abs(s2.avg - copSup.avg) < 0.01}
+        />
+      )}
+      {s3 && (
+        <WaveLine
+          cluster={s3} type="sup" label="S3"
+          isStrongest={strongestSup && Math.abs(s3.avg - strongestSup.avg) < 0.01}
+          isCoP={copSup && Math.abs(s3.avg - copSup.avg) < 0.01}
+        />
+      )}
+      {!s1 && !s2 && !s3 && (
+        <div className="fdb-no-wave" style={{ paddingLeft: 8, fontSize: 11 }}>No support pivots below price</div>
+      )}
+
+      {/* Change of Polarity */}
       {(copRes || copSup) && (
         <div className="sr-cop-note">
           {copRes && (
             <div className="sr-cop-row sr-cop-res">
-              <span className="sr-cop-icon">&#x27F3;</span>
-              <span>CoP Resistance &mdash; ex-support @ {fmt(copRes.avg)} (price fell below)</span>
+              <span className="sr-cop-icon">⟳</span>
+              <span>CoP Resistance — ex-support @ {fmt(copRes.avg)} (price fell below)</span>
             </div>
           )}
           {copSup && (
             <div className="sr-cop-row sr-cop-sup">
-              <span className="sr-cop-icon">&#x27F3;</span>
-              <span>CoP Support &mdash; ex-resistance @ {fmt(copSup.avg)} (price broke above)</span>
+              <span className="sr-cop-icon">⟳</span>
+              <span>CoP Support — ex-resistance @ {fmt(copSup.avg)} (price broke above)</span>
             </div>
           )}
         </div>
@@ -602,7 +921,9 @@ function SRPanel({ sr, status }) {
 
 // ── Single-TF SR sub-panel ───────────────────────────────────────────────────
 
-function SRSubPanel({ symbol, tfValue, tfLabel }) {
+// ── Single-TF SR sub-panel ───────────────────────────────────────────────────
+
+function SRSubPanel({ symbol, tfValue, tfLabel, motherSegment, motherFibLevels }) {
   const { status, segment, candles, emaHighsData, emaLowsData } = useColData(symbol, tfValue);
   const bias = getBias(segment);
 
@@ -610,23 +931,32 @@ function SRSubPanel({ symbol, tfValue, tfLabel }) {
     ? computeSRLevels(candles, emaHighsData, emaLowsData)
     : null;
 
+  // Use 1H mother wave segment for condition detection, fallback to this TF's segment
+  const condSegment = motherSegment || segment;
+  // Use 1H fib levels for trap zone detection if available, else compute from this TF
+  const fibLvls = motherFibLevels?.length ? motherFibLevels : (segment ? computeFibLevels(segment) : []);
+
   return (
     <div className="sr-subpanel">
       <div className="sr-subpanel-head">
         <span className="sr-tf-label">{tfLabel}</span>
         <BiasPill bias={status === "done" ? bias : "neutral"} />
-
+        {sr && <DrawOnChartBtn symbol={symbol} resolution={tfValue} sr={sr} />}
       </div>
       {status === "loading" ? (
         <div className="fdb-state" style={{ minHeight: 60 }}><div className="fdb-spinner" /></div>
       ) : (
-        <SRPanel sr={sr} status={status} />
+        <SRPanel sr={sr} status={status} motherSegment={condSegment} fibLevels={fibLvls} />
       )}
     </div>
   );
 }
 
 function IntradayColumn({ symbol }) {
+  // Also fetch 1H data to get mother wave condition and fib levels for trap zone
+  const { status: htfStatus, segment: htfSegment } = useColData(symbol, 60);
+  const htfFibLevels = computeFibLevels(htfSegment);
+
   return (
     <div className="fdb-col">
       <div className="fdb-col-head">
@@ -634,7 +964,13 @@ function IntradayColumn({ symbol }) {
       </div>
 
       <div className="fdb-col-body fdb-sr-body">
-        <SRSubPanel symbol={symbol} tfValue={15} tfLabel="15Min" />
+        <SRSubPanel
+          symbol={symbol}
+          tfValue={15}
+          tfLabel="15Min"
+          motherSegment={htfSegment}
+          motherFibLevels={htfFibLevels}
+        />
       </div>
     </div>
   );
