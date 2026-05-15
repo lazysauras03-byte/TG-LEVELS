@@ -524,10 +524,18 @@ function DrawFibOnChartBtn({ symbol, resolution, segment }) {
   if (!segment) return null;
 
   function handleClick() {
-    // Encode the fib drawing as URL param: p1=origin price, p2=tip price
+    // DrawingOverlay formula: price = p1 + (p2 - p1) * ratio
+    //   so ratio=0 → p1, ratio=1 → p2
+    // Dashboard computeFibLevels: price = toPrice + ratio * (fromPrice - toPrice)
+    //   so ratio=0 → toPrice (wave TIP), ratio=1 → fromPrice (wave ORIGIN)
+    // To match the dashboard:
+    //   Bull wave (toSide="high"): toPrice=High (tip), fromPrice=Low (origin)
+    //     → p1=toPrice(High)=0, p2=fromPrice(Low)=1  → 0 at top, 1 at bottom ✓
+    //   Bear wave (toSide="low"):  toPrice=Low  (tip), fromPrice=High (origin)
+    //     → p1=toPrice(Low)=0,  p2=fromPrice(High)=1 → 0 at bottom, 1 at top ✓
     const fibDrawing = encodeURIComponent(JSON.stringify({
-      p1Price: segment.fromPrice,
-      p2Price: segment.toPrice,
+      p1Price: segment.toPrice,   // wave TIP  → ratio 0
+      p2Price: segment.fromPrice, // wave ORIGIN → ratio 1
     }));
     const params = new URLSearchParams({
       symbol,

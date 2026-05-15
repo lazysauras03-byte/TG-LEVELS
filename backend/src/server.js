@@ -10,6 +10,7 @@ const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = re
 const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
 const { TickStream, isMarketOpen, isLiveMarket, isTradingDay } = require("./tickStream");
 const symbolsRouter = require("./symbolsRouter");
+const { request } = require("https");
 
 const app = express();
 const server = http.createServer(app);

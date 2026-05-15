@@ -528,11 +528,14 @@ function buildDrawing({ tool, start, current }) {
   if (tool === "fibRetracement") {
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
     if (start.price == null || current.price == null) return null;
+    // Convention: ratio 0 = wave TIP (drag end), ratio 1 = wave ORIGIN (drag start)
+    // DrawingOverlay renders: price = p1 + (p2 - p1) * ratio → p1=ratio0, p2=ratio1
+    // So: p1 = current (where you release = tip = 0), p2 = start (where you clicked = origin = 1)
     return {
       id: uid(),
       type: "fibRetracement",
-      p1: { price: start.price, time: start.time },
-      p2: { price: current.price, time: current.time },
+      p1: { price: current.price, time: current.time }, // tip  → ratio 0
+      p2: { price: start.price, time: start.time }, // origin → ratio 1
     };
   }
 
@@ -761,14 +764,15 @@ function LivePreview({ drag, svgW, dataToCoord }) {
 
   if (tool === "fibRetracement") {
     if (start.price == null || current.price == null) return null;
-    const priceRange = current.price - start.price;
+    // Preview: p1=current(tip=0), p2=start(origin=1) — matches buildDrawing convention
+    const priceRange = start.price - current.price; // p2 - p1 = start - current
     const BADGE_W = 158;
     const lineX2 = svgW - BADGE_W - 4;
 
     return (
       <g style={{ pointerEvents: "none" }}>
         {FIB_LEVELS.map((lvl) => {
-          const price = start.price + priceRange * lvl.ratio;
+          const price = current.price + priceRange * lvl.ratio; // p1(tip) + (p2-p1)*ratio
           const coord = dataToCoord(null, price);
           if (coord.y == null) return null;
           const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
