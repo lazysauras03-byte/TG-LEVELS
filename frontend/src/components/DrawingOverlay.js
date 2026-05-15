@@ -20,8 +20,37 @@ const HANDLE_R = 5;
 const HIT_SLOP = 10;
 const LS_KEY = "tgg_drawings_v2";
 
-// Fibonacci levels to draw
-const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+// Fibonacci levels to draw — full extended set matching FibDashboardPage
+// p1=drag start (origin), p2=drag end (tip). For a bull drag: p1=low, p2=high
+// Level 0 = p1 (origin/start), Level 1 = p2 (tip/end)
+// price = p1.price + (p2.price - p1.price) * level
+const FIB_LEVELS = [
+  { ratio: -1.618, label: "-1.618", color: "#26a69a", zoneColor: null, dash: "6 3", width: 1.2 },
+  { ratio: -1.000, label: "-1", color: "#ef5350", zoneColor: null, dash: "4 3", width: 1.4 },
+  { ratio: -0.236, label: "-0.236", color: "#fb8c00", zoneColor: "#fb8c00", dash: "4 2", width: 1.0 },
+  { ratio: 0.000, label: "0", color: "#b2b5be", zoneColor: null, dash: "0", width: 1.6 },
+  { ratio: 0.236, label: "0.236", color: "#fb8c00", zoneColor: null, dash: "4 2", width: 1.0 },
+  { ratio: 0.382, label: "0.382", color: "#26c6da", zoneColor: "#26c6da", dash: "5 3", width: 1.0 },
+  { ratio: 0.500, label: "0.500", color: "#66bb6a", zoneColor: "#66bb6a", dash: "5 3", width: 1.2 },
+  { ratio: 0.618, label: "0.618", color: "#ffca28", zoneColor: "#ffca28", dash: "5 3", width: 1.4 },
+  { ratio: 0.786, label: "0.786", color: "#26c6da", zoneColor: "#26c6da", dash: "5 3", width: 1.0 },
+  { ratio: 1.000, label: "1", color: "#b2b5be", zoneColor: null, dash: "0", width: 1.6 },
+  { ratio: 1.618, label: "1.618", color: "#26a69a", zoneColor: null, dash: "6 3", width: 1.2 },
+];
+
+// Zone fill bands between consecutive fib levels (colors from Image 1)
+const FIB_ZONE_FILLS = [
+  { from: -1.618, to: -1.000, color: "#26a69a", opacity: 0.10 }, // teal — ext target zone
+  { from: -1.000, to: -0.236, color: "#ef9a9a", opacity: 0.10 }, // red — above 0 (extension)
+  { from: -0.236, to: 0.000, color: "#ffcc80", opacity: 0.12 }, // orange — trap top zone
+  { from: 0.000, to: 0.236, color: "#fff9c4", opacity: 0.08 }, // yellow — near 0 zone
+  { from: 0.236, to: 0.382, color: "#ffab91", opacity: 0.10 }, // orange-red
+  { from: 0.382, to: 0.500, color: "#b2dfdb", opacity: 0.10 }, // teal-light
+  { from: 0.500, to: 0.618, color: "#c8e6c9", opacity: 0.10 }, // green-light
+  { from: 0.618, to: 0.786, color: "#fff9c4", opacity: 0.10 }, // golden zone
+  { from: 0.786, to: 1.000, color: "#b2dfdb", opacity: 0.10 }, // caution zone
+  { from: 1.000, to: 1.618, color: "#cfd8dc", opacity: 0.08 }, // below 1 (deep retrace)
+];
 
 // ─── Persistence helpers ──────────────────────────────────────────────────────
 function loadDrawings() {
@@ -129,6 +158,18 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     getDrawings() {
       return drawingsRef.current;
     },
+    // Add a fib retracement drawing programmatically from p1Price → p2Price
+    addFibDrawing({ p1Price, p2Price }) {
+      if (p1Price == null || p2Price == null) return;
+      const newDrawing = {
+        id: uid(),
+        type: "fibRetracement",
+        p1: { price: p1Price, time: null },
+        p2: { price: p2Price, time: null },
+      };
+      const updated = [...drawingsRef.current, newDrawing];
+      commitDrawings(updated);
+    },
   }));
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -157,8 +198,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         if (drawing.type === "fibRetracement") {
           // Hit test: check if mouse Y is near any fib level line
           const priceRange = drawing.p2.price - drawing.p1.price;
-          for (const level of FIB_LEVELS) {
-            const price = drawing.p1.price + priceRange * level;
+          for (const lvl of FIB_LEVELS) {
+            const price = drawing.p1.price + priceRange * lvl.ratio;
             const c = dataToCoord(null, price);
             if (c.y != null && Math.abs(py - c.y) < HIT_SLOP) return true;
           }
@@ -345,6 +386,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
             svgH={svgH}
             hovered={hoveredId === d.id}
             onDelete={deleteDrawing}
+            interactive={isDrawing}
           />
         ))}
 
@@ -438,9 +480,11 @@ const numFmt = new Intl.NumberFormat("en-IN", {
 });
 
 // ─── Completed drawing shapes ─────────────────────────────────────────────────
-function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete }) {
+function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete, interactive }) {
   const color = hovered ? HOVER_COLOR : DRAW_COLOR;
   const strokeW = hovered ? 2.5 : 1.8;
+  // In cursor mode (interactive=false) all hit areas are disabled so chart pans freely
+  const pe = interactive ? "all" : "none";
 
   // ── Trend Line ──────────────────────────────────────────────────────────
   if (drawing.type === "trendline") {
@@ -450,7 +494,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete }) {
     const mx = (c1.x + c2.x) / 2;
     const my = (c1.y + c2.y) / 2;
     return (
-      <g style={{ pointerEvents: "all" }}>
+      <g style={{ pointerEvents: pe }}>
         {/* Fat invisible hit strip */}
         <line
           x1={c1.x}
@@ -459,7 +503,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete }) {
           y2={c2.y}
           stroke="transparent"
           strokeWidth={18}
-          style={{ pointerEvents: "all" }}
+          style={{ pointerEvents: pe }}
         />
         {/* Visible line */}
         <line
@@ -497,7 +541,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete }) {
     const badgeX = svgW - badgeW - 2;
 
     return (
-      <g style={{ pointerEvents: "all" }}>
+      <g style={{ pointerEvents: pe }}>
         {/* Fat invisible hit strip */}
         <line
           x1={0}
@@ -506,7 +550,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete }) {
           y2={c.y}
           stroke="transparent"
           strokeWidth={18}
-          style={{ pointerEvents: "all" }}
+          style={{ pointerEvents: pe }}
         />
         {/* Visible line */}
         <line
@@ -557,81 +601,93 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, onDelete }) {
 
   // ── Fibonacci Retracement ───────────────────────────────────────────────
   if (drawing.type === "fibRetracement") {
-    // p1 = drag start, p2 = drag end
-    // Price Y coords: convert each fib level price directly via priceToCoordinate
+    // p1 = origin (drag start), p2 = tip (drag end)
+    // price at ratio = p1.price + (p2.price - p1.price) * ratio
     const priceRange = drawing.p2.price - drawing.p1.price;
 
-    const levelLines = FIB_LEVELS.map((level) => {
-      const price = drawing.p1.price + priceRange * level;
-      // Use null time so it only converts price → Y
+    const levelLines = FIB_LEVELS.map((lvl) => {
+      const price = drawing.p1.price + priceRange * lvl.ratio;
       const coord = dataToCoord(null, price);
-      return { level, price, y: coord.y };
+      return { ...lvl, price, y: coord.y };
     }).filter((l) => l.y != null);
 
     if (levelLines.length < 2) return null;
 
-    const lineColor = hovered ? HOVER_COLOR : FIB_COLOR;
     const topY = Math.min(...levelLines.map((l) => l.y));
     const botY = Math.max(...levelLines.map((l) => l.y));
 
-    // Label badge width: "0.786 (23,808.65)" ~ 140px
-    const BADGE_W = 145;
+    // Build a price→Y lookup for zone fills
+    const priceToY = (ratio) => {
+      const p = drawing.p1.price + priceRange * ratio;
+      const c = dataToCoord(null, p);
+      return c.y;
+    };
+
+    // Label badge width
+    const BADGE_W = 158;
     const BADGE_H = 16;
-    // Lines span full chart width; label pinned to right edge
-    const lineX1 = 0;
     const lineX2 = svgW - BADGE_W - 4;
     const badgeX = svgW - BADGE_W - 2;
 
-    // Hit strip: full width invisible rect covering the whole fib zone
-    // (for delete — placed first so drawings render on top)
     return (
-      <g style={{ pointerEvents: "all" }}>
+      <g style={{ pointerEvents: pe }}>
         {/* Full-width invisible hit area */}
         <rect
           x={0} y={topY - 6}
           width={svgW} height={botY - topY + 12}
           fill="transparent"
-          style={{ pointerEvents: "all" }}
+          style={{ pointerEvents: pe }}
         />
 
-        {/* Subtle fill between 0% and 100% */}
-        <rect
-          x={0} y={Math.min(levelLines[0].y, levelLines[levelLines.length - 1].y)}
-          width={svgW - BADGE_W - 4}
-          height={Math.abs(levelLines[0].y - levelLines[levelLines.length - 1].y)}
-          fill={lineColor}
-          opacity={0.04}
-          style={{ pointerEvents: "none" }}
-        />
-
-        {levelLines.map(({ level, price, y }) => {
-          const isEdge = level === 0 || level === 1;
-          const labelText = `${level === 0 ? "0" : level === 1 ? "1" : level.toFixed(3).replace(/^0/, "")} (${numFmt.format(price)})`;
+        {/* Zone fills between consecutive levels */}
+        {FIB_ZONE_FILLS.map((zone) => {
+          const y1 = priceToY(zone.from);
+          const y2 = priceToY(zone.to);
+          if (y1 == null || y2 == null) return null;
+          const zoneTop = Math.min(y1, y2);
+          const zoneBot = Math.max(y1, y2);
           return (
-            <g key={level} style={{ pointerEvents: "none" }}>
-              {/* Full-width horizontal line */}
+            <rect
+              key={`zone-${zone.from}-${zone.to}`}
+              x={0} y={zoneTop}
+              width={lineX2}
+              height={Math.max(zoneBot - zoneTop, 1)}
+              fill={zone.color}
+              opacity={hovered ? zone.opacity * 1.6 : zone.opacity}
+              style={{ pointerEvents: "none" }}
+            />
+          );
+        })}
+
+        {/* Level lines and labels */}
+        {levelLines.map(({ ratio, label, color, dash, width, price, y }) => {
+          const isEdge = ratio === 0 || ratio === 1;
+          const labelText = `${label} (${numFmt.format(price)})`;
+          const lineColor = hovered ? HOVER_COLOR : color;
+          return (
+            <g key={ratio} style={{ pointerEvents: "none" }}>
               <line
-                x1={lineX1} y1={y}
+                x1={0} y1={y}
                 x2={lineX2} y2={y}
                 stroke={lineColor}
-                strokeWidth={isEdge ? 1.6 : 0.9}
-                strokeDasharray={isEdge ? "0" : "5 3"}
-                opacity={hovered ? 1 : 0.85}
+                strokeWidth={isEdge ? 1.8 : width}
+                strokeDasharray={isEdge ? "0" : dash}
+                opacity={hovered ? 1 : 0.90}
               />
-              {/* Label badge pinned to right */}
+              {/* Label badge */}
               <rect
                 x={badgeX} y={y - BADGE_H / 2}
                 width={BADGE_W} height={BADGE_H}
                 rx={2}
                 fill={lineColor}
-                opacity={hovered ? 0.25 : 0.15}
+                opacity={hovered ? 0.28 : 0.18}
               />
               <text
                 x={badgeX + 5} y={y + 4}
                 fill={lineColor}
                 fontSize={9.5}
                 fontFamily="'JetBrains Mono', monospace"
-                fontWeight={600}
+                fontWeight={isEdge ? 700 : 600}
               >
                 {labelText}
               </text>
@@ -695,26 +751,26 @@ function LivePreview({ drag, svgW, dataToCoord }) {
   if (tool === "fibRetracement") {
     if (start.price == null || current.price == null) return null;
     const priceRange = current.price - start.price;
-    const BADGE_W = 145;
+    const BADGE_W = 158;
     const lineX2 = svgW - BADGE_W - 4;
 
     return (
       <g style={{ pointerEvents: "none" }}>
-        {FIB_LEVELS.map((level) => {
-          const price = start.price + priceRange * level;
+        {FIB_LEVELS.map((lvl) => {
+          const price = start.price + priceRange * lvl.ratio;
           const coord = dataToCoord(null, price);
           if (coord.y == null) return null;
-          const isEdge = level === 0 || level === 1;
+          const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
           return (
             <line
-              key={level}
+              key={lvl.ratio}
               x1={0}
               y1={coord.y}
               x2={lineX2}
               y2={coord.y}
-              stroke={FIB_COLOR}
-              strokeWidth={isEdge ? 1.6 : 0.9}
-              strokeDasharray={isEdge ? "0" : "5 3"}
+              stroke={lvl.color}
+              strokeWidth={isEdge ? 1.8 : lvl.width}
+              strokeDasharray={isEdge ? "0" : lvl.dash}
               opacity={0.75}
             />
           );

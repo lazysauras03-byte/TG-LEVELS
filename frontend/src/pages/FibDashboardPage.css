@@ -1140,3 +1140,25 @@
   height: 14px;
   flex-shrink: 0;
 }
+
+/* ── HTF TF row with Draw Fib button ── */
+.fdb-tf-row-htf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+/* Draw Fib button — teal/green accent to distinguish from SR draw btn */
+.fdb-draw-fib-btn {
+  background: rgba(38, 166, 154, 0.10) !important;
+  border-color: rgba(38, 166, 154, 0.35) !important;
+  color: #26a69a !important;
+  margin-left: auto;
+}
+
+.fdb-draw-fib-btn:hover {
+  background: rgba(38, 166, 154, 0.22) !important;
+  color: #4db6ac !important;
+  border-color: rgba(38, 166, 154, 0.6) !important;
+}

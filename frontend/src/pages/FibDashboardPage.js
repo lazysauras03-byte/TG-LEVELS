@@ -519,6 +519,40 @@ function SymbolSearch({ symbol, onSelect }) {
 
 // ── Column 1 — High Timeframe ────────────────────────────────────────────────
 
+// Button that opens the chart page with the mother wave fib pre-drawn
+function DrawFibOnChartBtn({ symbol, resolution, segment }) {
+  if (!segment) return null;
+
+  function handleClick() {
+    // Encode the fib drawing as URL param: p1=origin price, p2=tip price
+    const fibDrawing = encodeURIComponent(JSON.stringify({
+      p1Price: segment.fromPrice,
+      p2Price: segment.toPrice,
+    }));
+    const params = new URLSearchParams({
+      symbol,
+      resolution: String(resolution),
+      waveFrom: String(segment.fromTime),
+      waveTo: String(segment.toTime),
+      fibDrawing,
+    });
+    window.open(`/charts?${params.toString()}`, "_blank");
+  }
+
+  return (
+    <button className="fdb-draw-chart-btn fdb-draw-fib-btn" onClick={handleClick} title="Open chart with Fib retracement drawn on mother wave">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <rect x="1" y="1" width="14" height="14" rx="2" />
+        <line x1="1" y1="4" x2="15" y2="4" strokeDasharray="2 1.5" />
+        <line x1="1" y1="7" x2="15" y2="7" strokeDasharray="2 1.5" />
+        <line x1="1" y1="10" x2="15" y2="10" strokeDasharray="2 1.5" />
+        <line x1="1" y1="13" x2="15" y2="13" strokeDasharray="2 1.5" />
+      </svg>
+      Draw Fib
+    </button>
+  );
+}
+
 function HtfColumn({ symbol }) {
   const [activeTF, setActiveTF] = useState(1440);
   const tfOptions = [
@@ -549,7 +583,7 @@ function HtfColumn({ symbol }) {
         High time frame<span>Trend · Mother wave · Fib</span>
       </div>
 
-      <div className="fdb-tf-row">
+      <div className="fdb-tf-row fdb-tf-row-htf">
         {tfOptions.map((tf) => (
           <button
             key={tf.value}
@@ -559,6 +593,7 @@ function HtfColumn({ symbol }) {
             {tf.label}
           </button>
         ))}
+        <DrawFibOnChartBtn symbol={symbol} resolution={activeTF} segment={segment} />
       </div>
 
       <div className="fdb-bias-line">

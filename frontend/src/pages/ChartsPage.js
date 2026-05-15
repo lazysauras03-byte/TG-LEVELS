@@ -118,6 +118,16 @@ export default function ChartsPage() {
     drawingOverlayExtRef.current?.clearAll();
   }, []);
 
+  // ── Fib drawing from URL (from FibDashboardPage "Draw Fib" button) ────────
+  const urlFibDrawing = useMemo(() => {
+    try {
+      const raw = new URLSearchParams(window.location.search).get("fibDrawing");
+      return raw ? JSON.parse(decodeURIComponent(raw)) : null;
+    } catch { return null; }
+  }, []); // eslint-disable-line
+
+  const fibInjectedRef = useRef(false);
+
   // ── SR Lines drawn on chart ───────────────────────────────────────────────
   // srLinesToDraw = [{price, color, label, lineStyle}] — fed from URL params or FibDash
   const [srLinesToDraw, setSrLinesToDraw] = useState(() => {
@@ -238,6 +248,20 @@ export default function ChartsPage() {
   const bestPrice = chartData?.bestPrice;
 
   const chartDataResolution = chartData?.resolution ?? resolution;
+
+  // ── Inject fib drawing once candles are loaded ────────────────────────────
+  useEffect(() => {
+    if (!urlFibDrawing || fibInjectedRef.current) return;
+    if (!candles.length) return;
+    if (!drawingOverlayExtRef.current?.addFibDrawing) return;
+    fibInjectedRef.current = true;
+    setTimeout(() => {
+      drawingOverlayExtRef.current?.addFibDrawing({
+        p1Price: urlFibDrawing.p1Price,
+        p2Price: urlFibDrawing.p2Price,
+      });
+    }, 800);
+  }, [candles.length, urlFibDrawing]); // eslint-disable-line
 
   const showLoadingScreen = loading && candles.length === 0;
 
