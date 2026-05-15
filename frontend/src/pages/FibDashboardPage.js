@@ -642,51 +642,6 @@ function computeSRLevels(candles, emaHighs, emaLows) {
     return clusters.reduce((best, c) => c.count >= best.count ? c : best, clusters[0]);
   }
 
-  // Build SR lines array for chart URL — converts S&R panel data to chart price lines
-  function buildSRLinesForChart(sr) {
-    if (!sr) return [];
-    const lines = [];
-    const addLine = (cluster, color, label) => {
-      if (cluster) lines.push({ price: Math.round(cluster.avg * 100) / 100, color, label });
-    };
-    addLine(sr.r3, "#ff4444", "R3");
-    addLine(sr.r2, "#ff6666", "R2");
-    addLine(sr.r1, "#ff9999", "R1");
-    addLine(sr.s1, "#44cc44", "S1");
-    addLine(sr.s2, "#66aa66", "S2");
-    addLine(sr.s3, "#448844", "S3");
-    if (sr.copRes) lines.push({ price: Math.round(sr.copRes.avg * 100) / 100, color: "#ff8844", label: "CoP R" });
-    if (sr.copSup) lines.push({ price: Math.round(sr.copSup.avg * 100) / 100, color: "#44aaff", label: "CoP S" });
-    return lines;
-  }
-
-  function DrawOnChartBtn({ symbol, resolution, sr }) {
-    if (!sr) return null;
-    const lines = buildSRLinesForChart(sr);
-    if (!lines.length) return null;
-
-    function handleClick() {
-      const params = new URLSearchParams({
-        symbol,
-        resolution: String(resolution),
-        srLines: encodeURIComponent(JSON.stringify(lines)),
-      });
-      window.open(`/charts?${params.toString()}`, "_blank");
-    }
-
-    return (
-      <button className="fdb-draw-chart-btn" onClick={handleClick} title="Open chart with S&R lines drawn">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-          <rect x="1" y="1" width="14" height="14" rx="2" />
-          <line x1="1" y1="5.5" x2="15" y2="5.5" strokeDasharray="2,1.5" />
-          <line x1="1" y1="10.5" x2="15" y2="10.5" strokeDasharray="2,1.5" />
-          <polyline points="3,13 6,8 9,10 13,4" strokeWidth="1.6" />
-        </svg>
-        Draw on Chart
-      </button>
-    );
-  }
-
   return {
     r3: resClusters[2] || null,
     r2: resClusters[1] || null,
@@ -703,6 +658,51 @@ function computeSRLevels(candles, emaHighs, emaLows) {
     allResClusters: resClusters,
     allSupClusters: supClusters,
   };
+}
+
+// Build SR lines array for chart URL — converts S&R panel data to chart price lines
+function buildSRLinesForChart(sr) {
+  if (!sr) return [];
+  const lines = [];
+  const addLine = (cluster, color, label) => {
+    if (cluster) lines.push({ price: Math.round(cluster.avg * 100) / 100, color, label });
+  };
+  addLine(sr.r3, "#ff4444", "R3");
+  addLine(sr.r2, "#ff6666", "R2");
+  addLine(sr.r1, "#ff9999", "R1");
+  addLine(sr.s1, "#44cc44", "S1");
+  addLine(sr.s2, "#66aa66", "S2");
+  addLine(sr.s3, "#448844", "S3");
+  if (sr.copRes) lines.push({ price: Math.round(sr.copRes.avg * 100) / 100, color: "#ff8844", label: "CoP R" });
+  if (sr.copSup) lines.push({ price: Math.round(sr.copSup.avg * 100) / 100, color: "#44aaff", label: "CoP S" });
+  return lines;
+}
+
+function DrawOnChartBtn({ symbol, resolution, sr }) {
+  if (!sr) return null;
+  const lines = buildSRLinesForChart(sr);
+  if (!lines.length) return null;
+
+  function handleClick() {
+    const params = new URLSearchParams({
+      symbol,
+      resolution: String(resolution),
+      srLines: encodeURIComponent(JSON.stringify(lines)),
+    });
+    window.open(`/charts?${params.toString()}`, "_blank");
+  }
+
+  return (
+    <button className="fdb-draw-chart-btn" onClick={handleClick} title="Open chart with S&R lines drawn">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <rect x="1" y="1" width="14" height="14" rx="2" />
+        <line x1="1" y1="5.5" x2="15" y2="5.5" strokeDasharray="2,1.5" />
+        <line x1="1" y1="10.5" x2="15" y2="10.5" strokeDasharray="2,1.5" />
+        <polyline points="3,13 6,8 9,10 13,4" strokeWidth="1.6" />
+      </svg>
+      Draw on Chart
+    </button>
+  );
 }
 
 // ── SR Wave Lines Panel ───────────────────────────────────────────────────────
