@@ -27,6 +27,12 @@ const icons = {
       <line x1="6" y1="14" x2="12" y2="14" strokeLinecap="round" />
     </svg>
   ),
+  draw: (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M3 14 Q6 9 9 7 Q12 5 14 3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="3" cy="14" r="1.8" fill="currentColor" stroke="none" />
+    </svg>
+  ),
   fibRetracement: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <line x1="1" y1="4" x2="17" y2="4" strokeLinecap="round" />
@@ -86,47 +92,34 @@ const icons = {
   ),
 };
 
-// ─── Keyboard shortcut map ────────────────────────────────────────────────────
+// ─── Draw tool colour & thickness options ────────────────────────────────────
+export const DRAW_COLORS = [
+  { id: "white", label: "White", hex: "#e0e3eb" },
+  { id: "blue", label: "Blue", hex: "#2962ff" },
+  { id: "green", label: "Green", hex: "#26a69a" },
+];
+
+// ─── Keyboard shortcut map ─────────────────────────────────────────────────────
 export const TOOLBAR_SHORTCUTS = {
   "alt+a": "cursor",
   "escape": "cursor",
   "alt+t": "trendline",
   "alt+h": "horizontal",
   "alt+x": "text",
+  "alt+d": "draw",
   "alt+j": "trendline",
   "alt+f": "fibRetracement",
 };
 
-// ─── Tool Group Definitions ────────────────────────────────────────────────────
+// ─── Tool Group Definitions ───────────────────────────────────────────────────
 const TOOL_GROUPS = [
+  { id: "cursor", icon: icons.cursor, label: "Cursor — Pan Mode  (Esc / Alt+A)", subtools: [] },
+  { id: "trendline", icon: icons.trendline, label: "Trend Line  (Alt+T)", subtools: [] },
+  { id: "horizontal", icon: icons.horizontal, label: "Horizontal Line  (Alt+H)", subtools: [] },
+  { id: "text", icon: icons.text, label: "Text  (Alt+X)", subtools: [] },
+  { id: "draw", icon: icons.draw, label: "Freehand Draw  (Alt+D)", subtools: [], hasDraw: true },
   {
-    id: "cursor",
-    icon: icons.cursor,
-    label: "Cursor — Pan Mode  (Esc / Alt+A)",
-    subtools: [],
-  },
-  {
-    id: "trendline",
-    icon: icons.trendline,
-    label: "Trend Line  (Alt+T)",
-    subtools: [],
-  },
-  {
-    id: "horizontal",
-    icon: icons.horizontal,
-    label: "Horizontal Line  (Alt+H)",
-    subtools: [],
-  },
-  {
-    id: "text",
-    icon: icons.text,
-    label: "Text  (Alt+X)",
-    subtools: [],
-  },
-  {
-    id: "fibRetracement",
-    icon: icons.fibRetracement,
-    label: "Fib Retracement  (Alt+F)",
+    id: "fibRetracement", icon: icons.fibRetracement, label: "Fib Retracement  (Alt+F)",
     subtools: [
       { id: "fibRetracement", icon: icons.fibRetracement, label: "Fib Retracement" },
       { id: "fibExtension", icon: icons.fibExtension, label: "Fib Extension" },
@@ -135,62 +128,62 @@ const TOOL_GROUPS = [
     ],
   },
   { id: "divider1", divider: true },
-  {
-    id: "hide",
-    icon: icons.eye,
-    label: "Hide / Show All Drawings",
-    toggle: true,
-    subtools: [],
-  },
+  { id: "hide", icon: icons.eye, label: "Hide / Show All Drawings", toggle: true, subtools: [] },
   { id: "divider2", divider: true },
-  {
-    id: "trash",
-    icon: icons.trash,
-    label: "Remove All Drawings",
-    action: true,
-    danger: true,
-    subtools: [],
-  },
+  { id: "trash", icon: icons.trash, label: "Remove All Drawings", action: true, danger: true, subtools: [] },
 ];
 
-// ─── Sub-drawer Component ──────────────────────────────────────────────────────
+// ─── SubDrawer ────────────────────────────────────────────────────────────────
 function SubDrawer({ group, position, selectedTool, onSelect, onClose }) {
   const ref = useRef(null);
-
   useEffect(() => {
-    function handleClick(e) {
-      if (ref.current && !ref.current.contains(e.target)) {
-        onClose();
-      }
-    }
+    function handleClick(e) { if (ref.current && !ref.current.contains(e.target)) onClose(); }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [onClose]);
 
   return (
-    <div
-      className="tv-subdrawer"
-      ref={ref}
-      style={{ top: Math.max(0, position) }}
-    >
+    <div className="tv-subdrawer" ref={ref} style={{ top: Math.max(0, position) }}>
       <div className="tv-subdrawer-label">{group.label}</div>
       {group.subtools.map((tool) => (
         <button
           key={tool.id}
           className={`tv-subdrawer-btn ${selectedTool === tool.id ? "active" : ""}`}
-          onClick={() => {
-            onSelect(tool.id);
-            onClose();
-          }}
+          onClick={() => { onSelect(tool.id); onClose(); }}
           title={tool.label}
         >
           <span className="tv-subdrawer-icon">{tool.icon}</span>
           <span className="tv-subdrawer-text">{tool.label}</span>
-          {selectedTool === tool.id && (
-            <span className="tv-subdrawer-check">✓</span>
-          )}
+          {selectedTool === tool.id && <span className="tv-subdrawer-check">✓</span>}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ─── DrawOptionsPanel ─────────────────────────────────────────────────────────
+function DrawOptionsPanel({ position, drawColor, onColorChange, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    function handleClick(e) { if (ref.current && !ref.current.contains(e.target)) onClose(); }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onClose]);
+
+  return (
+    <div className="tv-draw-options" ref={ref} style={{ top: Math.max(0, position) }}>
+      <div className="tv-subdrawer-label">Draw Colour</div>
+      <div className="tv-draw-colors">
+        {DRAW_COLORS.map((c) => (
+          <button
+            key={c.id}
+            className={`tv-draw-color-btn ${drawColor === c.id ? "active" : ""}`}
+            style={{ background: c.hex }}
+            onClick={() => onColorChange(c.id)}
+            title={c.label}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -216,6 +209,8 @@ export default function TradingToolbar({
   srLines = [],
   onDrawSRLines,
   srLinesDrawn = false,
+  drawColor,
+  setDrawColor,
 }) {
   const [openDrawer, setOpenDrawer] = useState(null);
   const [drawerPos, setDrawerPos] = useState(0);
@@ -223,9 +218,7 @@ export default function TradingToolbar({
   const [groupPrimary, setGroupPrimary] = useState(() => {
     const map = {};
     TOOL_GROUPS.forEach((g) => {
-      if (!g.divider && g.subtools?.length > 0) {
-        map[g.id] = g.subtools[0].id;
-      }
+      if (!g.divider && g.subtools?.length > 0) map[g.id] = g.subtools[0].id;
     });
     return map;
   });
@@ -233,186 +226,112 @@ export default function TradingToolbar({
   const btnRefs = useRef({});
   const toolbarRef = useRef(null);
 
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  // Keyboard shortcuts
   useEffect(() => {
     function onKeyDown(e) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       const key = e.key.toLowerCase();
       let toolId = null;
-      if (key === "escape") {
-        toolId = "cursor";
-      } else if (e.altKey && !e.ctrlKey && !e.shiftKey) {
-        const combo = "alt+" + key;
-        toolId = TOOLBAR_SHORTCUTS[combo] || null;
-      }
+      if (key === "escape") toolId = "cursor";
+      else if (e.altKey && !e.ctrlKey && !e.shiftKey) toolId = TOOLBAR_SHORTCUTS["alt+" + key] || null;
       if (!toolId) return;
       e.preventDefault();
-
-      const group = TOOL_GROUPS.find(
-        (g) => !g.divider && (g.id === toolId || g.subtools?.some((s) => s.id === toolId))
-      );
+      const group = TOOL_GROUPS.find((g) => !g.divider && (g.id === toolId || g.subtools?.some((s) => s.id === toolId)));
       if (!group) return;
-
-      if (group.id !== toolId) {
-        setGroupPrimary((prev) => ({ ...prev, [group.id]: toolId }));
-      }
-      setSelectedTool(
-        toolId === group.id && group.subtools?.length > 0
-          ? (groupPrimary[group.id] || group.subtools[0].id)
-          : toolId
-      );
+      if (group.id !== toolId) setGroupPrimary((prev) => ({ ...prev, [group.id]: toolId }));
+      setSelectedTool(toolId === group.id && group.subtools?.length > 0 ? (groupPrimary[group.id] || group.subtools[0].id) : toolId);
       setOpenDrawer(null);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [setSelectedTool, groupPrimary]);
 
-  const findGroupForTool = useCallback((toolId) => {
-    return TOOL_GROUPS.find(
-      (g) => !g.divider && g.subtools?.some((st) => st.id === toolId)
-    );
+  const findGroupForTool = useCallback((toolId) => TOOL_GROUPS.find((g) => !g.divider && g.subtools?.some((st) => st.id === toolId)), []);
+
+  const getGroupIcon = useCallback((group) => {
+    if (group.id === "hide") return drawingsHidden ? icons.eyeOff : icons.eye;
+    const primaryId = groupPrimary[group.id];
+    if (primaryId) { const st = group.subtools.find((s) => s.id === primaryId); if (st) return st.icon; }
+    return group.icon;
+  }, [groupPrimary, drawingsHidden]);
+
+  const isGroupActive = useCallback((group) => {
+    if (group.id === "hide") return drawingsHidden;
+    if (!group.subtools || group.subtools.length === 0) return selectedTool === group.id;
+    const primaryId = groupPrimary[group.id] || group.subtools?.[0]?.id;
+    return selectedTool === primaryId;
+  }, [selectedTool, groupPrimary, drawingsHidden]);
+
+  const openPanelAt = useCallback((groupId) => {
+    const btn = btnRefs.current[groupId];
+    const toolbar = toolbarRef.current;
+    if (btn && toolbar) {
+      const btnRect = btn.getBoundingClientRect();
+      const tbRect = toolbar.getBoundingClientRect();
+      setDrawerPos(btnRect.top - tbRect.top);
+    }
+    setOpenDrawer(groupId);
   }, []);
 
-  const getGroupIcon = useCallback(
-    (group) => {
-      if (group.id === "hide") {
-        return drawingsHidden ? icons.eyeOff : icons.eye;
-      }
-      const primaryId = groupPrimary[group.id];
-      if (primaryId) {
-        const st = group.subtools.find((s) => s.id === primaryId);
-        if (st) return st.icon;
-      }
-      return group.icon;
-    },
-    [groupPrimary, drawingsHidden]
-  );
+  const handleMainClick = useCallback((group) => {
+    if (group.divider) return;
+    if (group.id === "hide") { if (onToggleHide) onToggleHide(); setOpenDrawer(null); return; }
+    if (group.id === "trash") { if (onTrashAll) onTrashAll(); setOpenDrawer(null); return; }
+    if (group.hasDraw) {
+      setSelectedTool("draw");
+      openDrawer === "draw" ? setOpenDrawer(null) : openPanelAt("draw");
+      return;
+    }
+    if (group.subtools.length === 0) { setSelectedTool(group.id); setOpenDrawer(null); return; }
+    if (openDrawer === group.id) { setOpenDrawer(null); return; }
+    const primaryToolId = groupPrimary[group.id] || group.subtools?.[0]?.id;
+    if (primaryToolId) setSelectedTool(primaryToolId);
+    openPanelAt(group.id);
+  }, [openDrawer, onToggleHide, onTrashAll, groupPrimary, setSelectedTool, openPanelAt]);
 
-  const isGroupActive = useCallback(
-    (group) => {
-      if (group.id === "hide") return drawingsHidden;
-      if (!group.subtools || group.subtools.length === 0) {
-        return selectedTool === group.id;
-      }
-      const primaryId = groupPrimary[group.id] || group.subtools?.[0]?.id;
-      return selectedTool === primaryId;
-    },
-    [selectedTool, groupPrimary, drawingsHidden]
-  );
+  const handleChevronClick = useCallback((group, e) => {
+    e.stopPropagation();
+    if (group.hasDraw) { openDrawer === "draw" ? setOpenDrawer(null) : openPanelAt("draw"); return; }
+    if (group.subtools.length === 0) return;
+    openDrawer === group.id ? setOpenDrawer(null) : openPanelAt(group.id);
+  }, [openDrawer, openPanelAt]);
 
-  const handleMainClick = useCallback(
-    (group, e) => {
-      if (group.divider) return;
-
-      if (group.id === "hide") {
-        if (onToggleHide) onToggleHide();
-        setOpenDrawer(null);
-        return;
-      }
-
-      if (group.id === "trash") {
-        if (onTrashAll) onTrashAll();
-        setOpenDrawer(null);
-        return;
-      }
-
-      if (group.subtools.length === 0) {
-        setSelectedTool(group.id);
-        setOpenDrawer(null);
-        return;
-      }
-
-      if (openDrawer === group.id) {
-        setOpenDrawer(null);
-        return;
-      }
-
-      const primaryToolId = groupPrimary[group.id] || group.subtools?.[0]?.id;
-      if (primaryToolId) setSelectedTool(primaryToolId);
-
-      const btn = btnRefs.current[group.id];
-      const toolbar = toolbarRef.current;
-      if (btn && toolbar) {
-        const btnRect = btn.getBoundingClientRect();
-        const tbRect = toolbar.getBoundingClientRect();
-        setDrawerPos(btnRect.top - tbRect.top);
-      }
-      setOpenDrawer(group.id);
-    },
-    [openDrawer, onToggleHide, onTrashAll, groupPrimary, setSelectedTool]
-  );
-
-  const handleChevronClick = useCallback(
-    (group, e) => {
-      e.stopPropagation();
-      if (group.subtools.length === 0) return;
-      if (openDrawer === group.id) {
-        setOpenDrawer(null);
-        return;
-      }
-      const btn = btnRefs.current[group.id];
-      const toolbar = toolbarRef.current;
-      if (btn && toolbar) {
-        const btnRect = btn.getBoundingClientRect();
-        const tbRect = toolbar.getBoundingClientRect();
-        setDrawerPos(btnRect.top - tbRect.top);
-      }
-      setOpenDrawer(group.id);
-    },
-    [openDrawer]
-  );
-
-  const handleSubSelect = useCallback(
-    (groupId, toolId) => {
-      setGroupPrimary((prev) => ({ ...prev, [groupId]: toolId }));
-      setSelectedTool(toolId);
-    },
-    [setSelectedTool]
-  );
+  const handleSubSelect = useCallback((groupId, toolId) => {
+    setGroupPrimary((prev) => ({ ...prev, [groupId]: toolId }));
+    setSelectedTool(toolId);
+  }, [setSelectedTool]);
 
   useEffect(() => {
     const group = findGroupForTool(selectedTool);
-    if (group) {
-      setGroupPrimary((prev) => ({ ...prev, [group.id]: selectedTool }));
-    }
+    if (group) setGroupPrimary((prev) => ({ ...prev, [group.id]: selectedTool }));
   }, [selectedTool, findGroupForTool]);
 
-  const activeGroup = openDrawer
-    ? TOOL_GROUPS.find((g) => g.id === openDrawer)
-    : null;
+  const activeGroup = openDrawer ? TOOL_GROUPS.find((g) => g.id === openDrawer) : null;
 
   return (
     <div className="tv-toolbar" ref={toolbarRef}>
       {TOOL_GROUPS.map((group) => {
-        if (group.divider) {
-          return <div key={group.id} className="tv-toolbar-divider" />;
-        }
-
+        if (group.divider) return <div key={group.id} className="tv-toolbar-divider" />;
         const active = isGroupActive(group);
-        const hasSubtools = group.subtools && group.subtools.length > 0;
+        const hasChevron = (group.subtools && group.subtools.length > 0) || group.hasDraw;
         const drawerOpen = openDrawer === group.id;
 
         return (
-          <div
-            key={group.id}
-            className={`tv-tool-wrap ${active ? "active" : ""} ${drawerOpen ? "drawer-open" : ""}`}
-          >
-            {/* Main button — icon only, no label text */}
+          <div key={group.id} className={`tv-tool-wrap ${active ? "active" : ""} ${drawerOpen ? "drawer-open" : ""}`}>
             <button
               ref={(el) => (btnRefs.current[group.id] = el)}
               className={`tv-tool-btn ${active ? "active" : ""} ${group.danger ? "danger" : ""}`}
-              onClick={(e) => handleMainClick(group, e)}
+              onClick={() => handleMainClick(group)}
               title={group.label}
             >
               <span className="tv-tool-icon">{getGroupIcon(group)}</span>
             </button>
 
-            {/* Chevron arrow for groups with subtools */}
-            {hasSubtools && (
+            {hasChevron && (
               <button
                 className={`tv-chevron-btn ${drawerOpen ? "open" : ""}`}
                 onClick={(e) => handleChevronClick(group, e)}
-                title={`${group.label} options`}
+                title={group.hasDraw ? "Draw options" : `${group.label} options`}
               >
                 {icons.chevronRight}
               </button>
@@ -421,8 +340,8 @@ export default function TradingToolbar({
         );
       })}
 
-      {/* Sub-drawer flyout */}
-      {activeGroup && activeGroup.subtools.length > 0 && (
+      {/* Subdrawer flyout (fib etc.) */}
+      {activeGroup && !activeGroup.hasDraw && activeGroup.subtools.length > 0 && (
         <SubDrawer
           group={activeGroup}
           position={drawerPos}
@@ -432,7 +351,17 @@ export default function TradingToolbar({
         />
       )}
 
-      {/* Draw S&R Lines button */}
+      {/* Draw options panel */}
+      {openDrawer === "draw" && (
+        <DrawOptionsPanel
+          position={drawerPos}
+          drawColor={drawColor}
+          onColorChange={setDrawColor}
+          onClose={() => setOpenDrawer(null)}
+        />
+      )}
+
+      {/* S&R button */}
       {srLines.length > 0 && onDrawSRLines && (
         <>
           <div className="tv-toolbar-divider" />

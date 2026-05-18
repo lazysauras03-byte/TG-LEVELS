@@ -108,6 +108,9 @@ export default function ChartsPage() {
   // ── Toolbar selected tool ─────────────────────────────────────────────────
   const [selectedTool, setSelectedTool] = useState("cursor");
 
+  // ── Freehand draw options ─────────────────────────────────────────────────
+  const [drawColor, setDrawColor] = useState("white");
+
   // ── Drawings hide/show state ──────────────────────────────────────────────
   const [drawingsHidden, setDrawingsHidden] = useState(false);
   const handleToggleHide = useCallback(() => setDrawingsHidden((v) => !v), []);
@@ -260,8 +263,9 @@ export default function ChartsPage() {
       const p2Time = waveTarget?.fromMs ? Math.round(waveTarget.fromMs / 1000) : null;
       drawingOverlayExtRef.current?.addFibDrawing({
         p1Price: urlFibDrawing.p1Price,
+        p1Time: urlFibDrawing.p1Time ?? (waveTarget?.toMs ? Math.round(waveTarget.toMs / 1000) : null),
         p2Price: urlFibDrawing.p2Price,
-        p2Time,
+        p2Time: urlFibDrawing.p2Time ?? (waveTarget?.fromMs ? Math.round(waveTarget.fromMs / 1000) : null),
       });
     }, 800);
   }, [candles.length, urlFibDrawing]); // eslint-disable-line
@@ -334,6 +338,8 @@ export default function ChartsPage() {
           srLines={srLinesToDraw}
           onDrawSRLines={handleDrawSRLines}
           srLinesDrawn={srLinesDrawn}
+          drawColor={drawColor}
+          setDrawColor={setDrawColor}
         />
 
         {/* Chart area */}
@@ -394,6 +400,7 @@ export default function ChartsPage() {
               drawingOverlayExtRef={drawingOverlayExtRef}
               srLines={srLinesToDraw}
               onSRLinesDrawn={setSrLinesDrawn}
+              drawColor={drawColor}
             />
           )}
         </div>

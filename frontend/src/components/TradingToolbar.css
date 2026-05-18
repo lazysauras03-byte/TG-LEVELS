@@ -268,3 +268,49 @@
   height: 14px;
   flex-shrink: 0;
 }
+
+/* ─── Draw Options Panel ──────────────────────────────────────────────────── */
+.tv-draw-options {
+  position: absolute;
+  left: 46px;
+  width: 120px;
+
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
+  z-index: 1000000;
+  padding: 4px 0 12px;
+
+  animation: tvDrawerIn 0.1s ease;
+}
+
+
+
+/* Colour swatches row */
+.tv-draw-colors {
+  display: flex;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.tv-draw-color-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: border-color 0.12s, transform 0.1s;
+}
+
+.tv-draw-color-btn:hover {
+  transform: scale(1.15);
+}
+
+.tv-draw-color-btn.active {
+  border-color: #fff;
+  transform: scale(1.1);
+}

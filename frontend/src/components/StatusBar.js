@@ -228,16 +228,6 @@ function StatusBar({
         <span style={{ color: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)", fontSize: 11 }}>
           {connected ? (isLive ? "Market Live" : "Market Closed") : "OFFLINE"}
         </span>
-        {tickStreamActive && (
-          <span style={{ color: "var(--green)", fontSize: 10, marginLeft: 4, fontFamily: "var(--font-mono)", fontWeight: 700 }}>
-            ⚡TICK
-          </span>
-        )}
-        {lastUpdate && (
-          <span style={{ color: "var(--text3)", fontSize: 11, marginLeft: 6 }}>
-            {lastUpdate} IST
-          </span>
-        )}
       </div>
 
       {/* ── Right side: Refresh + Sidebar toggle ── */}

@@ -370,6 +370,7 @@ export default function CandleChart({
   drawingOverlayExtRef = null,
   srLines = [],              // [{price, color, label, lineStyle}] drawn as price lines
   onSRLinesDrawn = null,     // callback(bool) when sr lines are applied/removed
+  drawColor = "white",
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -1014,6 +1015,7 @@ export default function CandleChart({
         setSelectedTool={setSelectedTool}
         containerRef={containerRef}
         hidden={drawingsHidden}
+        drawColor={drawColor}
       />
 
       {/* Hint labels */}

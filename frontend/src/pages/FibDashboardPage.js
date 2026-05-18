@@ -534,8 +534,10 @@ function DrawFibOnChartBtn({ symbol, resolution, segment }) {
     //   Bear wave (toSide="low"):  toPrice=Low  (tip), fromPrice=High (origin)
     //     → p1=toPrice(Low)=0,  p2=fromPrice(High)=1 → 0 at bottom, 1 at top ✓
     const fibDrawing = encodeURIComponent(JSON.stringify({
-      p1Price: segment.toPrice,   // wave TIP  → ratio 0
-      p2Price: segment.fromPrice, // wave ORIGIN → ratio 1
+      p1Price: segment.toPrice,        // wave TIP  → ratio 0
+      p1Time: Math.round(segment.toTime / 1000),   // wave TIP time (unix sec)
+      p2Price: segment.fromPrice,      // wave ORIGIN → ratio 1
+      p2Time: Math.round(segment.fromTime / 1000), // wave ORIGIN time (unix sec)
     }));
     const params = new URLSearchParams({
       symbol,
