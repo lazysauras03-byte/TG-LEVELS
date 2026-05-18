@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const http = require("http");
+const path = require("path");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
@@ -10,7 +11,7 @@ const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = re
 const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
 const { TickStream, isMarketOpen, isLiveMarket, isTradingDay } = require("./tickStream");
 const symbolsRouter = require("./symbolsRouter");
-const { request } = require("https");
+
 
 const app = express();
 const server = http.createServer(app);
@@ -621,19 +622,18 @@ io.on("connection", (socket) => {
   });
 });
 
+// ─── Serve React Frontend ─────────────────────────────────────────────────────
+// Must be registered BEFORE server.listen so it's available from the first request.
+const FRONTEND_BUILD = path.join(__dirname, "../../frontend/build");
+app.use(express.static(FRONTEND_BUILD));
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) return next();
+  res.sendFile(path.join(FRONTEND_BUILD, "index.html"));
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "9004");
 server.listen(PORT, async () => {
-  // ─── Serve React Frontend ─────────────────────────────────────────────────────
-  const path = require("path");
-  const FRONTEND_BUILD = path.join(__dirname, "../../frontend/build");
-  app.use(express.static(FRONTEND_BUILD));
-  app.get("*", (req, res, next) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) {
-      return next();
-    }
-    res.sendFile(path.join(FRONTEND_BUILD, "index.html"));
-  });
   console.log(`\n✅ TGG Backend running on http://localhost:${PORT}`);
   console.log(`   Health  : http://localhost:${PORT}/health`);
   console.log(`   Chart   : http://localhost:${PORT}/api/chart`);

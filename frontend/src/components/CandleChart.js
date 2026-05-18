@@ -1037,7 +1037,7 @@ export default function CandleChart({
           right: 0,
           pointerEvents: "none",
           userSelect: "none",
-          zIndex: 10,
+          zIndex: 30,
         }}>
           <div style={{
             background: timerInfo.isBull ? "rgba(0,160,85,0.95)" : "rgba(200,40,55,0.95)",

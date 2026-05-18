@@ -125,7 +125,10 @@ export function useSocket() {
     socket.on("connect", () => {
       setConnected(true);
       setError(null);
-      if (!hasDataRef.current) {
+      // Only fall back to a GET fetch if there's genuinely no data and nothing is in-flight.
+      // ChartsPage calls refresh() (POST) on mount which already covers the initial load.
+      // The latestRequestIdRef check inside fetchChart prevents stale responses from landing.
+      if (!hasDataRef.current && latestRequestIdRef.current === 0) {
         fetchChart(activeSymbolRef.current, activeResolutionRef.current, { retries: 3 });
       }
     });
@@ -229,14 +232,6 @@ export function useSocket() {
       socket.disconnect();
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
-  }, []); // eslint-disable-line
-
-  // ── Initial data fetch on mount ───────────────────────────────────────────
-  useEffect(() => {
-    setLoading(true);
-    const abortCtrl = new AbortController();
-    fetchChart(null, null, { retries: 5, signal: abortCtrl.signal });
-    return () => abortCtrl.abort();
   }, []); // eslint-disable-line
 
   // ── refresh — user clicks Refresh, changes symbol, or changes timeframe ───
