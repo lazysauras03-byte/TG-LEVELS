@@ -1,4 +1,10 @@
-/* ─── ChartsPage ─────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   ChartsPage.css
+   Original single-chart styles preserved exactly.
+   Dual-layout additions appended at the bottom.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── Root page wrapper ───────────────────────────────────── */
 .charts-page {
   display: flex;
   flex-direction: column;
@@ -6,7 +12,7 @@
   overflow: hidden;
 }
 
-/* ─── Topbar — home btn + StatusBar only ─────────────── */
+/* ─── Topbar — home btn + dual toggle ────────────────────── */
 .charts-topbar {
   display: flex;
   align-items: stretch;
@@ -15,6 +21,8 @@
   flex-shrink: 0;
   position: relative;
   z-index: 100;
+  height: 44px;
+  /* fixed so it never shifts */
 }
 
 .charts-home-btn {
@@ -41,35 +49,114 @@
   background: var(--bg3);
 }
 
+/* ── Dual-layout toggle button ─────────────────────────────── */
+.dual-layout-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.dual-layout-btn:hover {
+  color: var(--text);
+  background: var(--bg3);
+}
+
+.dual-layout-btn--active {
+  color: var(--accent, #3d84ff);
+  background: rgba(61, 132, 255, 0.10);
+  border-right-color: var(--border);
+}
+
+.dual-layout-btn--active:hover {
+  background: rgba(61, 132, 255, 0.18);
+}
+
+.dual-layout-btn svg {
+  opacity: 0.75;
+}
+
+.dual-layout-btn--active svg {
+  opacity: 1;
+  stroke: var(--accent, #3d84ff);
+}
+
+/* ─── Original: charts-status-bar-wrapper (kept for compat) ── */
 .charts-status-bar-wrapper {
   flex: 1;
   min-width: 0;
 }
 
-/* ─── Main content — contains toolbar + chart + sidebar ─ */
+/* ══════════════════════════════════════════════════════════════
+   SINGLE MODE layout (original, unchanged)
+   .main-content wraps the single ChartPanel
+   ══════════════════════════════════════════════════════════════ */
+
+/* .main-content — fills remaining height below topbar */
 .main-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   position: relative;
-  /* toolbar uses position: absolute inside here */
+  overflow: hidden;
 }
 
-/* ─── Chart area — shifted right to clear the toolbar ─── */
+/* ─── ChartPanel shell ────────────────────────────────────── */
+.cp-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Each panel's StatusBar row */
+.cp-statusbar {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Panel body: toolbar (absolute) + chart + sidebar */
+.cp-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ─── Chart area — shifted right to clear the toolbar ──────── */
 .chart-area {
   position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   /* 44px toolbar width + 4px left gap + 4px breathing room = 52px */
   padding-left: 52px;
 }
 
-/* ─── Floating Indicator Panel ───────────────────────── */
-/* Sits inside .chart-area, offset right of toolbar */
+/* ─── Floating Indicator Panel ─────────────────────────────── */
 .chart-indicator-float {
   position: absolute;
   top: 10px;
   left: 62px;
-  /* 52px chart padding + 10px from edge */
+  /* 52px padding + 10px */
   z-index: 50;
 }
 
-/* ─── Sidebar sections — split evenly when both bubble + waves are shown ── */
+/* ─── Sidebar sections ─────────────────────────────────────── */
 .sidebar .sidebar-sections {
   display: flex;
   flex-direction: column;
@@ -96,9 +183,74 @@
   min-height: 0;
 }
 
-/* ─────────────────────────────────────────────────────── */
-/* REPORT button — completely invisible, no hover effect  */
-/* ─────────────────────────────────────────────────────── */
+/* ─── Error bar ────────────────────────────────────────────── */
+.error-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(220, 50, 50, 0.15);
+  border-bottom: 1px solid var(--red);
+  color: var(--red);
+  font-size: 11px;
+  padding: 4px 12px;
+  z-index: 20;
+}
+
+/* ─── Loading / no-data ────────────────────────────────────── */
+.loading-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text3);
+  font-size: 13px;
+  z-index: 10;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border2);
+  border-top-color: var(--accent, #3d84ff);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.no-data-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.no-data-icon {
+  font-size: 36px;
+}
+
+.no-data-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text2);
+}
+
+.no-data-sub {
+  font-size: 12px;
+  color: var(--text3);
+  line-height: 1.6;
+}
+
+/* ─── REPORT button — completely hidden ────────────────────── */
 .charts-report-btn,
 .report-btn,
 .rp-report-nav-btn,
@@ -113,4 +265,65 @@ button.report-link {
   overflow: hidden !important;
   position: absolute !important;
   left: -9999px !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DUAL MODE layout
+   .dual-container holds two .dual-panel-wrap + .dual-divider
+   ══════════════════════════════════════════════════════════════ */
+
+.dual-container {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Each panel wrapper — width set inline via style prop */
+.dual-panel-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Draggable divider */
+.dual-divider {
+  width: 5px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 200;
+}
+
+.dual-divider:hover,
+.dual-divider:active {
+  background: var(--accent, #3d84ff);
+}
+
+/* Three-dot grip in the centre of the divider */
+.dual-divider-grip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.dual-divider-grip span {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text3);
+  opacity: 0.6;
+}
+
+.dual-divider:hover .dual-divider-grip span {
+  background: #fff;
+  opacity: 0.9;
 }
