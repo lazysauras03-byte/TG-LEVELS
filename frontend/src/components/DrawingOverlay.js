@@ -99,6 +99,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     hidden,
     drawColor = "white",
     drawThickness = 1,
+    lastBarTime = null,
   },
   ref
 ) {
@@ -709,6 +710,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
             hovered={hoveredId === d.id}
             selected={selectedHLineId === d.id}
             interactive={true}
+            lastBarTime={lastBarTime}
           />
         ))}
 
@@ -926,7 +928,7 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
 }
 
 // ─── Completed drawing shapes ─────────────────────────────────────────────────
-function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, interactive }) {
+function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, interactive, lastBarTime }) {
   const color = hovered ? HOVER_COLOR : DRAW_COLOR;
   const strokeW = hovered ? 2.5 : 1.8;
   const pe = interactive ? "all" : "none";
@@ -1055,14 +1057,19 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     const c2 = dataToCoord(drawing.p2.time, drawing.p2.price);
 
     const hasTimeAnchors = c1.x != null && c2.x != null;
-    const lineX1 = hasTimeAnchors ? Math.min(c1.x, c2.x) : 0;
-    // Clamp lineX2 to the chart plot area (svgW minus price-scale width ~70px).
-    // This prevents fib lines from stretching into future/empty space when
-    // the user pans past the last candle.
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
-    const rawX2 = hasTimeAnchors ? Math.max(c1.x, c2.x) : maxX;
-    const lineX2 = Math.min(rawX2, maxX);
+
+    // Use EXACT anchor pixel positions — no clamping, no expansion.
+    // A clipPath on the visible plot area handles viewport edges cleanly.
+    const lineX1 = hasTimeAnchors ? Math.min(c1.x, c2.x) : 0;
+    const lineX2 = hasTimeAnchors ? Math.max(c1.x, c2.x) : maxX;
+
+    // Hide entirely if box is fully off-screen or has no width
+    if (lineX2 <= 0 || lineX1 >= maxX || lineX2 <= lineX1) return null;
+
+    // Unique clip ID per drawing so multiple fibs don't interfere
+    const clipId = `fib-clip-${drawing.id}`;
 
     const priceRange = drawing.p2.price - drawing.p1.price;
 
@@ -1083,58 +1090,82 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     const LABEL_GAP = 6;
     const LABEL_RIGHT = lineX1 - LABEL_GAP;
 
+    // Clamp rendered box to visible plot area using Math.max/min on the draw coords
+    const visX1 = Math.max(lineX1, 0);
+    const visX2 = Math.min(lineX2, maxX);
+
     return (
       <g style={{ pointerEvents: "none" }}>
-        {/* Zone fills */}
-        {FIB_ZONE_FILLS.map((zone) => {
-          const y1 = priceToY(zone.from);
-          const y2 = priceToY(zone.to);
-          if (y1 == null || y2 == null) return null;
-          const zy = Math.min(y1, y2), zh = Math.abs(y2 - y1);
-          return (
-            <rect
-              key={`zone-${zone.from}`}
-              x={lineX1} y={zy}
-              width={lineX2 - lineX1} height={Math.max(zh, 1)}
-              fill={zone.color}
-              opacity={hovered ? zone.opacity * 1.6 : zone.opacity}
-              style={{ pointerEvents: "none" }}
-            />
-          );
-        })}
+        {/* clipPath ensures nothing bleeds outside visible plot area */}
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={0} y={0} width={maxX} height={svgH} />
+          </clipPath>
+        </defs>
 
-        {/* Level lines + labels */}
-        {levelLines.map(({ ratio, label, color: lvlColor, dash, width, price, y }) => {
+        {/* Zone fills — clipped to visible area */}
+        <g clipPath={`url(#${clipId})`}>
+          {FIB_ZONE_FILLS.map((zone) => {
+            const y1 = priceToY(zone.from);
+            const y2 = priceToY(zone.to);
+            if (y1 == null || y2 == null) return null;
+            const zy = Math.min(y1, y2), zh = Math.abs(y2 - y1);
+            return (
+              <rect
+                key={`zone-${zone.from}`}
+                x={lineX1} y={zy}
+                width={lineX2 - lineX1} height={Math.max(zh, 1)}
+                fill={zone.color}
+                opacity={hovered ? zone.opacity * 1.6 : zone.opacity}
+                style={{ pointerEvents: "none" }}
+              />
+            );
+          })}
+
+          {/* Level lines — clipped */}
+          {levelLines.map(({ ratio, label, color: lvlColor, dash, width, price, y }) => {
+            const isEdge = ratio === 0 || ratio === 1;
+            const lineColor = hovered ? HOVER_COLOR : lvlColor;
+            return (
+              <g key={ratio}>
+                <line
+                  x1={lineX1} y1={y} x2={lineX2} y2={y}
+                  stroke="transparent" strokeWidth={14}
+                  style={{ pointerEvents: interactive ? "stroke" : "none" }}
+                />
+                <line
+                  x1={lineX1} y1={y} x2={lineX2} y2={y}
+                  stroke={lineColor}
+                  strokeWidth={isEdge ? 1.8 : width}
+                  strokeDasharray={isEdge ? "0" : dash}
+                  opacity={hovered ? 1 : 0.90}
+                  style={{ pointerEvents: "none" }}
+                />
+              </g>
+            );
+          })}
+        </g>
+
+        {/* Labels rendered outside clip so they don't get cut off at left edge */}
+        {levelLines.map(({ ratio, label, color: lvlColor, price, y }) => {
           const isEdge = ratio === 0 || ratio === 1;
           const labelText = `${label} (${numFmt.format(price)})`;
           const lineColor = hovered ? HOVER_COLOR : lvlColor;
+          // Only show label if this level is at least partially visible
+          if (y == null || visX1 >= visX2) return null;
+          const labelX = visX1 - LABEL_GAP;
           return (
-            <g key={ratio}>
-              {/* Thin transparent hit strip */}
-              <line
-                x1={lineX1} y1={y} x2={lineX2} y2={y}
-                stroke="transparent" strokeWidth={14}
-                style={{ pointerEvents: interactive ? "stroke" : "none" }}
-              />
-              <text
-                x={LABEL_RIGHT} y={y + 4}
-                fill={lineColor} fontSize={9.5}
-                fontFamily="'JetBrains Mono', monospace"
-                fontWeight={isEdge ? 700 : 600}
-                textAnchor="end"
-                style={{ pointerEvents: "none" }}
-              >
-                {labelText}
-              </text>
-              <line
-                x1={lineX1} y1={y} x2={lineX2} y2={y}
-                stroke={lineColor}
-                strokeWidth={isEdge ? 1.8 : width}
-                strokeDasharray={isEdge ? "0" : dash}
-                opacity={hovered ? 1 : 0.90}
-                style={{ pointerEvents: "none" }}
-              />
-            </g>
+            <text
+              key={`lbl-${ratio}`}
+              x={labelX} y={y + 4}
+              fill={lineColor} fontSize={9.5}
+              fontFamily="'JetBrains Mono', monospace"
+              fontWeight={isEdge ? 700 : 600}
+              textAnchor="end"
+              style={{ pointerEvents: "none" }}
+            >
+              {labelText}
+            </text>
           );
         })}
 

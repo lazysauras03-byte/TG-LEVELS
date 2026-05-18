@@ -1016,6 +1016,7 @@ export default function CandleChart({
         containerRef={containerRef}
         hidden={drawingsHidden}
         drawColor={drawColor}
+        lastBarTime={candles?.length ? candles[candles.length - 1].time : null}
       />
 
       {/* Hint labels */}
