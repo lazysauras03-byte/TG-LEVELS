@@ -24,7 +24,10 @@ const io = new Server(server, {
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] }));
-app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader('ngrok-skip-browser-warning', 'true');
+  next();
+});
 app.use(
   rateLimit({
     windowMs: 60 * 1000,
@@ -621,6 +624,16 @@ io.on("connection", (socket) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "9004");
 server.listen(PORT, async () => {
+  // ─── Serve React Frontend ─────────────────────────────────────────────────────
+  const path = require("path");
+  const FRONTEND_BUILD = path.join(__dirname, "../../frontend/build");
+  app.use(express.static(FRONTEND_BUILD));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) {
+      return next();
+    }
+    res.sendFile(path.join(FRONTEND_BUILD, "index.html"));
+  });
   console.log(`\n✅ TGG Backend running on http://localhost:${PORT}`);
   console.log(`   Health  : http://localhost:${PORT}/health`);
   console.log(`   Chart   : http://localhost:${PORT}/api/chart`);

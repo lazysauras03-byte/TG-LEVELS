@@ -53,7 +53,7 @@ const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onT
       </div>
       <div className="tab-content">
         {tab === "signals" ? children.signals : children.stats}
-      </div>
+      </div>``
     </div>
   );
 });
