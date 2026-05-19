@@ -54,6 +54,36 @@
   font-family: var(--font-mono);
 }
 
+.home-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.home-theme-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+.home-theme-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .home-dot {
   width: 7px;
   height: 7px;
@@ -389,5 +419,38 @@
 
   .home-title {
     font-size: clamp(40px, 11vw, 64px);
+  }
+}
+
+/* ─── Extra responsive fixes ─────────────────────────── */
+@media (max-width: 900px) {
+  .home-cards {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .home-card {
+    min-width: 260px;
+    max-width: 100%;
+    flex: 1 1 260px;
+  }
+}
+
+@media (max-width: 480px) {
+  .home-header {
+    padding: 12px 16px;
+  }
+
+  .home-header-right {
+    gap: 8px;
+  }
+
+  .home-theme-btn {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+
+  .home-logo-img {
+    height: 28px;
   }
 }

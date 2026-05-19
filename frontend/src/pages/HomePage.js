@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMarketStatus } from "../hooks/useMarketStatus";
+import { useTheme } from "../App";
 import "./HomePage.css";
 
 const NAV_ITEMS = [
@@ -56,6 +57,7 @@ export default function HomePage() {
   const cardRefs = useRef([]);
   const marketStatus = useMarketStatus();
   const isLive = marketStatus === "live";
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     // Staggered entrance
@@ -79,12 +81,20 @@ export default function HomePage() {
       {/* Header */}
       <header className="home-header">
         <div className="home-logo">
-          <img src="/tg-icon.png" alt="TG Levels" className="home-logo-img" />
-          <h1> Dashboard </h1>
+          <img src="/tg-levels-logo.png" alt="TG Levels" className="home-logo-img" />
         </div>
-        <div className="home-header-tag">
-          <span className={`home-dot ${isLive ? "green" : "red"}`} />
-          {isLive ? "Market Live" : "Market Closed"}
+        <div className="home-header-right">
+          <button
+            className="home-theme-btn"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {theme === "dark" ? "☀ Light" : "🌙 Dark"}
+          </button>
+          <div className="home-header-tag">
+            <span className={`home-dot ${isLive ? "green" : "red"}`} />
+            {isLive ? "Market Live" : "Market Closed"}
+          </div>
         </div>
       </header>
 

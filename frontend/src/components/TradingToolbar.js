@@ -97,6 +97,7 @@ export const DRAW_COLORS = [
   { id: "white", label: "White", hex: "#e0e3eb" },
   { id: "blue", label: "Blue", hex: "#2962ff" },
   { id: "green", label: "Green", hex: "#26a69a" },
+  { id: "black", label: "black", hex: "#00000000" },
 ];
 
 // ─── Keyboard shortcut map ─────────────────────────────────────────────────────

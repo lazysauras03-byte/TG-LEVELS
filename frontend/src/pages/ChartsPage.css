@@ -263,3 +263,14 @@ button.report-link {
   background: #fff;
   opacity: 0.9;
 }
+
+/* ─── Responsive extra fixes ─────────────────────────── */
+@media (max-width: 900px) {
+  .dual-container {
+    flex-direction: column !important;
+  }
+
+  .dual-divider {
+    display: none !important;
+  }
+}

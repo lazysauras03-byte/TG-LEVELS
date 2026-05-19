@@ -22,6 +22,10 @@
  *  4. Pivot fingerprinting — line series rebuilt only when pivot structure
  *     changes (new swing). On tick updates where pivots are unchanged, only the
  *     canvas labels are refreshed — no chart series are added or removed.
+ *
+ *  5. MULTI-INSTANCE — each chart instance gets its own independent state Map
+ *     entry, keyed by the chart object itself. Dual-mode panels no longer
+ *     share a singleton and therefore cannot overwrite each other's state.
  */
 
 const MAX_WAVES = 50;
@@ -128,29 +132,47 @@ export function updateWavesIndicatorPure(candles, emaHighs, emaLows) {
   };
 }
 
-// ─── Overlay state ────────────────────────────────────────────────────────────
+// ─── Per-instance state ───────────────────────────────────────────────────────
+// Each entry in _instances is keyed by the chart object and holds all the
+// state that used to be in module-level globals. This means two CandleChart
+// instances in dual-mode each manage their own independent waves overlay
+// without ever touching the other panel's data.
 
-let _chart = null;
-let _series = null;   // candleSeries — for priceToCoordinate()
-let _container = null;
-let _canvas = null;
-let _ctx = null;
-let _onWaveData = null;
-let _lines = [];
-let _pivots = [];
-let _segments = [];
-let _rafId = null;   // pending rAF — only one allowed at a time
-let _rangeUnsub = null;
-let _crosshairUnsub = null;
-let _resizeObs = null;
-let _pivotFingerprint = "";
+const _instances = new Map();
 
-// Pan suppression
-let _isPanning = false;
-let _panClearId = null;
-let _crosshairDebounceId = null;
+function _getInstance(chart) {
+  return _instances.get(chart) ?? null;
+}
 
-// ─── Canvas helpers ───────────────────────────────────────────────────────────
+function _createInstance(chart, container, onWaveData, candleSeries) {
+  const inst = {
+    chart,
+    series: candleSeries ?? null,
+    container,
+    canvas: null,
+    ctx: null,
+    onWaveData: onWaveData ?? null,
+    lines: [],
+    pivots: [],
+    segments: [],
+    rafId: null,
+    rangeUnsub: null,
+    crosshairUnsub: null,
+    resizeObs: null,
+    pivotFingerprint: "",
+    isPanning: false,
+    panClearId: null,
+    crosshairDebounceId: null,
+  };
+  _instances.set(chart, inst);
+  return inst;
+}
+
+function _destroyInstance(inst) {
+  _instances.delete(inst.chart);
+}
+
+// ─── Canvas helpers (instance-scoped) ────────────────────────────────────────
 
 function _rrect(ctx, x, y, w, h, r) {
   if (typeof ctx.roundRect === "function") {
@@ -166,193 +188,204 @@ function _rrect(ctx, x, y, w, h, r) {
   }
 }
 
-// Return the pixel width of the right price scale so we can clip the canvas.
-// Without clipping, wave labels near the right edge drift over the scale.
-function _priceScaleWidth() {
-  if (!_chart) return 0;
+function _priceScaleWidth(inst) {
+  if (!inst.chart) return 0;
   try {
-    const ps = _chart.priceScale('right');
+    const ps = inst.chart.priceScale('right');
     if (ps && typeof ps.width === 'function') return ps.width();
   } catch (_) { }
   return 0;
 }
 
-function _ensureCanvas() {
-  if (_canvas && _container.contains(_canvas)) return;
-  const old = _container.querySelector(".__wc");
-  if (old) try { _container.removeChild(old); } catch (_) { }
-  _canvas = document.createElement("canvas");
-  _canvas.className = "__wc";
-  _canvas.style.cssText = "position:absolute;top:0;left:0;pointer-events:none;z-index:5;";
-  _container.appendChild(_canvas);
-  _ctx = _canvas.getContext("2d");
-  _syncSize();
-  _resizeObs = new ResizeObserver(() => { _syncSize(); _scheduleRedraw(); });
-  _resizeObs.observe(_container);
+function _ensureCanvas(inst) {
+  if (inst.canvas && inst.container.contains(inst.canvas)) return;
+  const old = inst.container.querySelector(".__wc_" + _instId(inst));
+  if (old) try { inst.container.removeChild(old); } catch (_) { }
+  inst.canvas = document.createElement("canvas");
+  inst.canvas.className = "__wc __wc_" + _instId(inst);
+  inst.canvas.style.cssText = "position:absolute;top:0;left:0;pointer-events:none;z-index:5;";
+  inst.container.appendChild(inst.canvas);
+  inst.ctx = inst.canvas.getContext("2d");
+  _syncSize(inst);
+  inst.resizeObs = new ResizeObserver(() => { _syncSize(inst); _scheduleRedraw(inst); });
+  inst.resizeObs.observe(inst.container);
 }
 
-function _syncSize() {
-  if (!_canvas || !_container) return;
+// Use a WeakMap to give each chart a stable numeric ID for canvas class names
+const _idMap = new WeakMap();
+let _idCounter = 0;
+function _instId(inst) {
+  if (!_idMap.has(inst.chart)) _idMap.set(inst.chart, ++_idCounter);
+  return _idMap.get(inst.chart);
+}
+
+function _syncSize(inst) {
+  if (!inst.canvas || !inst.container) return;
   const dpr = window.devicePixelRatio || 1;
-  const w = _container.clientWidth, h = _container.clientHeight;
-  _canvas.width = w * dpr; _canvas.height = h * dpr;
-  _canvas.style.width = `${w}px`; _canvas.style.height = `${h}px`;
-  if (_ctx) _ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const w = inst.container.clientWidth, h = inst.container.clientHeight;
+  inst.canvas.width = w * dpr; inst.canvas.height = h * dpr;
+  inst.canvas.style.width = `${w}px`; inst.canvas.style.height = `${h}px`;
+  if (inst.ctx) inst.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function _removeCanvas() {
-  if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
-  if (_canvas) { try { _canvas.parentNode?.removeChild(_canvas); } catch (_) { } _canvas = null; _ctx = null; }
+function _removeCanvas(inst) {
+  if (inst.resizeObs) { inst.resizeObs.disconnect(); inst.resizeObs = null; }
+  if (inst.canvas) {
+    try { inst.canvas.parentNode?.removeChild(inst.canvas); } catch (_) { }
+    inst.canvas = null; inst.ctx = null;
+  }
 }
 
-// ─── Drawing ──────────────────────────────────────────────────────────────────
+// ─── Drawing (instance-scoped) ────────────────────────────────────────────────
 
-function _redraw() {
-  if (!_ctx || !_canvas || !_chart || !_series) return;
-  const cw = _canvas.clientWidth, ch = _canvas.clientHeight;
-  _ctx.clearRect(0, 0, cw, ch);
-  if (!_pivots.length) return;
+function _redraw(inst) {
+  if (!inst.ctx || !inst.canvas || !inst.chart || !inst.series) return;
+  const cw = inst.canvas.clientWidth, ch = inst.canvas.clientHeight;
+  inst.ctx.clearRect(0, 0, cw, ch);
+  if (!inst.pivots.length) return;
 
-  // Clip to the plot area (exclude the right price scale).
-  // This prevents pivot bubbles and segment labels from rendering
-  // on top of or beyond the price scale when scrolled to the right.
-  const scaleW = _priceScaleWidth();
+  const scaleW = _priceScaleWidth(inst);
   const plotW = Math.max(cw - scaleW, 0);
-
-  const ts = _chart.timeScale();
+  const ts = inst.chart.timeScale();
 
   function toXY(timeMs, price) {
     try {
       const x = ts.timeToCoordinate(Math.floor(timeMs / 1000));
-      const y = _series.priceToCoordinate(price);
+      const y = inst.series.priceToCoordinate(price);
       return (x == null || y == null) ? null : { x, y };
     } catch (_) { return null; }
   }
 
-  // Clip drawing to the plot area — nothing renders beyond the scale boundary
-  _ctx.save();
-  _ctx.beginPath();
-  _ctx.rect(0, 0, plotW, ch);
-  _ctx.clip();
+  inst.ctx.save();
+  inst.ctx.beginPath();
+  inst.ctx.rect(0, 0, plotW, ch);
+  inst.ctx.clip();
 
-  // Pivot labels: HH / LH / HL / LL
-  _pivots.forEach((piv) => {
+  inst.pivots.forEach((piv) => {
     const pt = toXY(piv.time, piv.price);
     if (!pt) return;
-    // Skip if the pivot's x position is beyond the visible plot area
     if (pt.x > plotW) return;
     const color = piv.side === "high" ? "#00d97e" : "#ff4560";
-    _ctx.save();
-    _ctx.font = "bold 11px 'JetBrains Mono',monospace";
-    _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
-    const tw = _ctx.measureText(piv.waveType).width;
+    inst.ctx.save();
+    inst.ctx.font = "bold 11px 'JetBrains Mono',monospace";
+    inst.ctx.textAlign = "center"; inst.ctx.textBaseline = "middle";
+    const tw = inst.ctx.measureText(piv.waveType).width;
     const pad = 4, bw = tw + pad * 2, bh = 16;
-    // Clamp label so it stays fully inside the plot area
     const rawBx = pt.x - bw / 2;
     const bx = Math.min(rawBx, plotW - bw - 2);
     const by = piv.side === "high" ? pt.y - bh - 6 : pt.y + 6;
-    _ctx.fillStyle = "rgba(10,11,15,0.88)";
-    _rrect(_ctx, bx, by, bw, bh, 3); _ctx.fill();
-    _ctx.strokeStyle = color; _ctx.lineWidth = 1; _ctx.stroke();
-    _ctx.fillStyle = color;
-    _ctx.fillText(piv.waveType, bx + bw / 2, by + bh / 2);
-    _ctx.restore();
+    inst.ctx.fillStyle = "rgba(10,11,15,0.88)";
+    _rrect(inst.ctx, bx, by, bw, bh, 3); inst.ctx.fill();
+    inst.ctx.strokeStyle = color; inst.ctx.lineWidth = 1; inst.ctx.stroke();
+    inst.ctx.fillStyle = color;
+    inst.ctx.fillText(piv.waveType, bx + bw / 2, by + bh / 2);
+    inst.ctx.restore();
   });
 
-  // Diagonal segment labels — only draw if segment is wide enough to fit a label
-  _segments.forEach((seg) => {
+  inst.segments.forEach((seg) => {
     const p1 = toXY(seg.fromTime, seg.fromPrice);
     const p2 = toXY(seg.toTime, seg.toPrice);
     if (!p1 || !p2) return;
-    // Skip if the entire segment is beyond the plot area
     if (p1.x > plotW && p2.x > plotW) return;
     const dx = p2.x - p1.x, dy = p2.y - p1.y;
     const segPixelLen = Math.sqrt(dx * dx + dy * dy);
-    // Skip label if segment is too short — avoids overlap on zoomed-out charts
     if (segPixelLen < 40) return;
     const angle = Math.atan2(dy, dx);
-    // Clamp midpoint x so label stays inside the plot area
     const rawMx = (p1.x + p2.x) / 2;
     const my = (p1.y + p2.y) / 2;
     const color = seg.toSide === "high" ? "#00d97e" : "#ff4560";
     const text = `${seg.waveNum}`;
-    _ctx.save();
-    _ctx.font = "600 10px 'JetBrains Mono',monospace";
-    _ctx.textAlign = "center"; _ctx.textBaseline = "middle";
-    const tw = _ctx.measureText(text).width;
+    inst.ctx.save();
+    inst.ctx.font = "600 10px 'JetBrains Mono',monospace";
+    inst.ctx.textAlign = "center"; inst.ctx.textBaseline = "middle";
+    const tw = inst.ctx.measureText(text).width;
     const pad = 4, bw = tw + pad * 2, bh = 15, perpOff = -12;
-    // Only draw label if segment is wide enough to actually show the text
     if (segPixelLen < bw) return;
-    // Only clamp the label position, not the midpoint for rotation
     const mx = Math.min(rawMx, plotW - bw / 2 - 2);
-    _ctx.translate(mx, my); _ctx.rotate(angle);
-    _ctx.fillStyle = "rgba(10,11,15,0.82)";
-    _rrect(_ctx, -bw / 2, perpOff - bh / 2, bw, bh, 3); _ctx.fill();
-    _ctx.fillStyle = color;
-    _ctx.fillText(text, 0, perpOff);
-    _ctx.restore();
+    inst.ctx.translate(mx, my); inst.ctx.rotate(angle);
+    inst.ctx.fillStyle = "rgba(10,11,15,0.82)";
+    _rrect(inst.ctx, -bw / 2, perpOff - bh / 2, bw, bh, 3); inst.ctx.fill();
+    inst.ctx.fillStyle = color;
+    inst.ctx.fillText(text, 0, perpOff);
+    inst.ctx.restore();
   });
 
-  _ctx.restore(); // end clip
+  inst.ctx.restore();
 }
 
-// ─── Scheduling ───────────────────────────────────────────────────────────────
+// ─── Scheduling (instance-scoped) ─────────────────────────────────────────────
 
-// Single rAF — no-op if already queued. Rapid events collapse into one paint.
-function _scheduleRedraw() {
-  if (_rafId != null) return;
-  _rafId = requestAnimationFrame(() => { _rafId = null; _redraw(); });
+function _scheduleRedraw(inst) {
+  if (inst.rafId != null) return;
+  inst.rafId = requestAnimationFrame(() => { inst.rafId = null; _redraw(inst); });
 }
 
-// Pan handler — sets _isPanning, suppresses crosshair redraws for 150ms.
-function _onRangeChange() {
-  _isPanning = true;
-  if (_panClearId != null) clearTimeout(_panClearId);
-  _panClearId = setTimeout(() => { _isPanning = false; _panClearId = null; }, 150);
-  _scheduleRedraw();
+function _makeRangeHandler(inst) {
+  return function _onRangeChange() {
+    inst.isPanning = true;
+    if (inst.panClearId != null) clearTimeout(inst.panClearId);
+    inst.panClearId = setTimeout(() => { inst.isPanning = false; inst.panClearId = null; }, 150);
+    _scheduleRedraw(inst);
+  };
 }
 
-// Crosshair handler — skipped during pan, debounced 60ms otherwise.
-function _onCrosshairMove() {
-  if (_isPanning) return;
-  if (_crosshairDebounceId != null) return;
-  _crosshairDebounceId = setTimeout(() => { _crosshairDebounceId = null; _scheduleRedraw(); }, 60);
+function _makeCrosshairHandler(inst) {
+  return function _onCrosshairMove() {
+    if (inst.isPanning) return;
+    if (inst.crosshairDebounceId != null) return;
+    inst.crosshairDebounceId = setTimeout(() => { inst.crosshairDebounceId = null; _scheduleRedraw(inst); }, 60);
+  };
+}
+
+// ─── Overlay clear (instance-scoped) ─────────────────────────────────────────
+
+function _clearOverlay(inst) {
+  if (inst.rafId != null) { cancelAnimationFrame(inst.rafId); inst.rafId = null; }
+  if (inst.chart) inst.lines.forEach((s) => { try { inst.chart.removeSeries(s); } catch (_) { } });
+  inst.lines = [];
+  if (inst.ctx && inst.canvas) inst.ctx.clearRect(0, 0, inst.canvas.clientWidth, inst.canvas.clientHeight);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export function createWavesIndicator(chart, container, onWaveData, candleSeries) {
-  _chart = chart; _series = candleSeries ?? null;
-  _container = container; _onWaveData = onWaveData ?? null;
-  _lines = []; _pivots = []; _segments = [];
-  _rafId = null; _rangeUnsub = null; _crosshairUnsub = null;
-  _pivotFingerprint = "";
-  _isPanning = false; _panClearId = null; _crosshairDebounceId = null;
+  // If an instance already exists for this chart (e.g. HMR), tear it down first.
+  const existing = _getInstance(chart);
+  if (existing) {
+    _clearOverlay(existing);
+    _removeCanvas(existing);
+    _destroyInstance(existing);
+  }
+  _createInstance(chart, container, onWaveData, candleSeries);
 }
 
-export function updateWavesIndicator(candles, emaHighs, emaLows) {
-  if (!_chart || !candles?.length) return;
+export function updateWavesIndicator(candles, emaHighs, emaLows, chart) {
+  // chart param is the key — fall back to last created if omitted (single-panel mode)
+  let inst = chart ? _getInstance(chart) : null;
+  if (!inst) {
+    // Single-panel mode: use the only instance if exactly one exists
+    if (_instances.size === 1) inst = _instances.values().next().value;
+  }
+  if (!inst || !inst.chart || !candles?.length) return;
 
   const { pivots, segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
   const fp = pivots.map((p) => `${p.barIndex}:${p.price}`).join("|");
 
-  if (fp === _pivotFingerprint) {
-    // Structure unchanged — just refresh canvas labels.
-    _scheduleRedraw();
+  if (fp === inst.pivotFingerprint) {
+    _scheduleRedraw(inst);
     return;
   }
 
-  // New pivot structure — rebuild line series.
-  _pivotFingerprint = fp;
-  _clearOverlay();
-  _pivots = pivots; _segments = segments;
+  inst.pivotFingerprint = fp;
+  _clearOverlay(inst);
+  inst.pivots = pivots; inst.segments = segments;
 
-  if (!pivots.length) { if (_onWaveData) _onWaveData([], []); return; }
+  if (!pivots.length) { if (inst.onWaveData) inst.onWaveData([], []); return; }
 
   for (let i = 1; i < pivots.length; i++) {
     const from = pivots[i - 1], to = pivots[i];
     try {
-      const ls = _chart.addLineSeries({
+      const ls = inst.chart.addLineSeries({
         color: to.side === "high" ? "rgba(0,217,126,0.85)" : "rgba(255,69,96,0.85)",
         lineWidth: 2,
         priceLineVisible: false,
@@ -363,51 +396,52 @@ export function updateWavesIndicator(candles, emaHighs, emaLows) {
         { time: Math.floor(from.time / 1000), value: from.price },
         { time: Math.floor(to.time / 1000), value: to.price },
       ]);
-      _lines.push(ls);
+      inst.lines.push(ls);
     } catch (_) { }
   }
 
-  if (!_series && _lines.length) _series = _lines[0];
-  _ensureCanvas();
+  if (!inst.series && inst.lines.length) inst.series = inst.lines[0];
+  _ensureCanvas(inst);
 
-  if (!_rangeUnsub && _chart) {
-    _chart.timeScale().subscribeVisibleLogicalRangeChange(_onRangeChange);
-    _rangeUnsub = () => {
-      try { _chart.timeScale().unsubscribeVisibleLogicalRangeChange(_onRangeChange); } catch (_) { }
+  if (!inst.rangeUnsub && inst.chart) {
+    const handler = _makeRangeHandler(inst);
+    inst.chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+    inst.rangeUnsub = () => {
+      try { inst.chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler); } catch (_) { }
     };
   }
-  if (!_crosshairUnsub && _chart) {
-    _chart.subscribeCrosshairMove(_onCrosshairMove);
-    _crosshairUnsub = () => {
-      try { _chart.unsubscribeCrosshairMove(_onCrosshairMove); } catch (_) { }
+  if (!inst.crosshairUnsub && inst.chart) {
+    const handler = _makeCrosshairHandler(inst);
+    inst.chart.subscribeCrosshairMove(handler);
+    inst.crosshairUnsub = () => {
+      try { inst.chart.unsubscribeCrosshairMove(handler); } catch (_) { }
     };
   }
 
-  _scheduleRedraw();
-  if (_onWaveData) _onWaveData(pivots, segments);
+  _scheduleRedraw(inst);
+  if (inst.onWaveData) inst.onWaveData(pivots, segments);
 }
 
-export function removeWavesIndicator(fullTeardown = false) {
-  _clearOverlay();
-  _pivots = []; _segments = []; _pivotFingerprint = "";
-  if (_crosshairDebounceId != null) { clearTimeout(_crosshairDebounceId); _crosshairDebounceId = null; }
-  if (_panClearId != null) { clearTimeout(_panClearId); _panClearId = null; }
-  _isPanning = false;
+export function removeWavesIndicator(fullTeardown = false, chart) {
+  let inst = chart ? _getInstance(chart) : null;
+  if (!inst) {
+    if (_instances.size === 1) inst = _instances.values().next().value;
+  }
+  if (!inst) return;
+
+  _clearOverlay(inst);
+  inst.pivots = []; inst.segments = []; inst.pivotFingerprint = "";
+  if (inst.crosshairDebounceId != null) { clearTimeout(inst.crosshairDebounceId); inst.crosshairDebounceId = null; }
+  if (inst.panClearId != null) { clearTimeout(inst.panClearId); inst.panClearId = null; }
+  inst.isPanning = false;
 
   if (fullTeardown) {
-    if (_rangeUnsub) { _rangeUnsub(); _rangeUnsub = null; }
-    if (_crosshairUnsub) { _crosshairUnsub(); _crosshairUnsub = null; }
-    _removeCanvas();
-    _chart = null; _series = null; _container = null; _onWaveData = null;
+    if (inst.rangeUnsub) { inst.rangeUnsub(); inst.rangeUnsub = null; }
+    if (inst.crosshairUnsub) { inst.crosshairUnsub(); inst.crosshairUnsub = null; }
+    _removeCanvas(inst);
+    _destroyInstance(inst);
   } else {
-    if (_ctx && _canvas) _ctx.clearRect(0, 0, _canvas.clientWidth, _canvas.clientHeight);
+    if (inst.ctx && inst.canvas) inst.ctx.clearRect(0, 0, inst.canvas.clientWidth, inst.canvas.clientHeight);
   }
-  if (_onWaveData) _onWaveData([], []);
-}
-
-function _clearOverlay() {
-  if (_rafId != null) { cancelAnimationFrame(_rafId); _rafId = null; }
-  if (_chart) _lines.forEach((s) => { try { _chart.removeSeries(s); } catch (_) { } });
-  _lines = [];
-  if (_ctx && _canvas) _ctx.clearRect(0, 0, _canvas.clientWidth, _canvas.clientHeight);
+  if (inst.onWaveData) inst.onWaveData([], []);
 }

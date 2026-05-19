@@ -1,5 +1,8 @@
 /* ─── TGG Design System ───────────────────────────────────────────── */
-:root {
+
+/* ── DARK MODE (default) ── */
+:root,
+[data-theme="dark"] {
   --bg: #0a0b0f;
   --bg2: #111318;
   --bg3: #181b22;
@@ -20,6 +23,38 @@
   --yellow-dim: rgba(255, 193, 53, 0.12);
   --accent: #7c5cfc;
   --accent-dim: rgba(124, 92, 252, 0.15);
+  --chart-bg: #0a0b0f;
+  --shadow: rgba(0, 0, 0, 0.6);
+  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Syne", sans-serif;
+  --radius: 8px;
+  --radius2: 12px;
+}
+
+/* ── LIGHT MODE ── */
+[data-theme="light"] {
+  --bg: #f0f2f7;
+  --bg2: #ffffff;
+  --bg3: #e8eaf0;
+  --border: #d0d4e0;
+  --border2: #b8bdd0;
+  --text: #1a1d2e;
+  --text2: #4a5068;
+  --text3: #8a90a8;
+  --green: #00a85e;
+  --green2: #007a44;
+  --green-dim: rgba(0, 168, 94, 0.12);
+  --red: #e0203a;
+  --red2: #b01830;
+  --red-dim: rgba(224, 32, 58, 0.12);
+  --blue: #2060dd;
+  --blue-dim: rgba(32, 96, 221, 0.12);
+  --yellow: #d4960a;
+  --yellow-dim: rgba(212, 150, 10, 0.12);
+  --accent: #6040e0;
+  --accent-dim: rgba(96, 64, 224, 0.12);
+  --chart-bg: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.15);
   --font-mono: "JetBrains Mono", monospace;
   --font-display: "Syne", sans-serif;
   --radius: 8px;
@@ -47,9 +82,11 @@ body,
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: var(--bg2);
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--border2);
   border-radius: 3px;
@@ -67,18 +104,74 @@ a {
 
 /* ─── Animations ─────────────────────────────────────────────────── */
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
 }
+
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
+
 @keyframes slideRight {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
 }
+
 @keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ─── Theme toggle button (global floating) ─────────────────────── */
+.theme-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.03em;
+}
+
+.theme-toggle-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
 }

@@ -6,6 +6,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { updateWavesIndicatorPure } from "../indicators/WavesIndicator";
+import { useTheme } from "../App";
 import SYMBOLS from "../symbols.json";
 import "./ReportsPage.css";
 
@@ -149,6 +150,7 @@ function SymbolSearch({ symbol, onSelect }) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function ReportsPage() {
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
 
   const [timeframe, setTimeframe] = useState(() => {
     try { const v = localStorage.getItem("tgg_resolution"); return v ? JSON.parse(v) : 15; }
@@ -315,7 +317,7 @@ export default function ReportsPage() {
 
   function sortArrow(col) {
     if (sortCol !== col || !sortDir) return <span className="cr-sort-arrow inactive">↕</span>;
-    return <span className="cr-sort-arrow active">{sortDir === "asc" ? "↑" : "↓"}</span>;
+    return <span className="cr-sort-arrow active">{sortDir === "" ? "↑" : "↓"}</span>;
   }
 
   const sortLabel = !sortCol ? "Sort by Δ" : sortDir === "asc" ? "Δ Ascending" : "Δ Descending";
@@ -365,6 +367,14 @@ export default function ReportsPage() {
           title="Reload"
         >
           <span style={{ display: "inline-block", animation: loadState === "loading" ? "cr-spin 0.8s linear infinite" : "none" }}>↻</span>
+        </button>
+
+        <button
+          className="cr-theme-btn"
+          onClick={toggleTheme}
+          title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+        >
+          {theme === "dark" ? "☀" : "🌙"}
         </button>
       </div>
 

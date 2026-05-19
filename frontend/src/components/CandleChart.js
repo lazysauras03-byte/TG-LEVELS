@@ -12,6 +12,7 @@ import {
   removeWavesIndicator,
 } from "../indicators/WavesIndicator";
 import DrawingOverlay from "./DrawingOverlay";
+import { useTheme } from "../App";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -328,7 +329,7 @@ class RulerOverlay {
       ctx.roundRect(lx, ly, lw, lh, 3);
       ctx.fill();
       ctx.font = "700 10px 'JetBrains Mono', monospace";
-      ctx.fillStyle = "#0a0b0f";
+      ctx.fillStyle = "#ffffff";
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
       ctx.fillText(label, lx + lw / 2, py);
@@ -374,6 +375,7 @@ export default function CandleChart({
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
+  const { theme } = useTheme();
   const candleRef = useRef(null);
   const emaHiRef = useRef(null);
   const emaLoRef = useRef(null);
@@ -501,14 +503,14 @@ export default function CandleChart({
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { color: "#0a0b0f" },
-        textColor: "#7a8099",
+        background: { color: theme === "light" ? "#ffffff" : "#0a0b0f" },
+        textColor: theme === "light" ? "#4a5068" : "#7a8099",
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: "#1e2230" },
-        horzLines: { color: "#1e2230" },
+        vertLines: { color: theme === "light" ? "#dde0ea" : "#1e2230" },
+        horzLines: { color: theme === "light" ? "#dde0ea" : "#1e2230" },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -516,11 +518,11 @@ export default function CandleChart({
         horzLine: { color: "#3d84ff", width: 1, style: LineStyle.Dashed },
       },
       rightPriceScale: {
-        borderColor: "#1e2230",
+        borderColor: theme === "light" ? "#dde0ea" : "#1e2230",
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
-        borderColor: "#1e2230",
+        borderColor: theme === "light" ? "#dde0ea" : "#1e2230",
         timeVisible: true,
         secondsVisible: false,
         tickMarkFormatter: (unixSec) => {
@@ -623,12 +625,27 @@ export default function CandleChart({
       ro.disconnect();
       rulerRef.current?.destroy();
       rulerRef.current = null;
-      removeWavesIndicator(true);
+      removeWavesIndicator(true, chart);
       chart.remove();
     };
   }, []); // eslint-disable-line
 
-  // ── Data update ───────────────────────────────────────────────────────────
+  // ── Update chart colors when theme changes ──────────────────────────────
+  useEffect(() => {
+    if (!chartRef.current) return;
+    chartRef.current.applyOptions({
+      layout: {
+        background: { color: theme === "light" ? "#ffffff" : "#0a0b0f" },
+        textColor: theme === "light" ? "#4a5068" : "#7a8099",
+      },
+      grid: {
+        vertLines: { color: theme === "light" ? "#dde0ea" : "#1e2230" },
+        horzLines: { color: theme === "light" ? "#dde0ea" : "#1e2230" },
+      },
+      rightPriceScale: { borderColor: theme === "light" ? "#dde0ea" : "#1e2230" },
+      timeScale: { borderColor: theme === "light" ? "#dde0ea" : "#1e2230" },
+    });
+  }, [theme]);
   // Depends ONLY on candles. EMA and signals are read from refs (always current).
   // This is the critical fix: emaHighs/emaLows/signals changing reference on
   // every tick no longer triggers this effect.
@@ -707,7 +724,7 @@ export default function CandleChart({
             if (emaL[li] != null && !isNaN(emaL[li])) emaLoRef.current.update({ time: lc.time, value: emaL[li] });
           }
 
-          if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
+          if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL, chartRef.current);
 
           prevCountRef.current = candles.length;
           prevLastCandleKeyRef.current = lastKey;
@@ -776,8 +793,8 @@ export default function CandleChart({
       }
     }
 
-    if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL);
-    else removeWavesIndicator();
+    if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL, chartRef.current);
+    else removeWavesIndicator(false, chartRef.current);
 
     // After setData, markers need a full refresh (series was rebuilt)
     // Reset the key so setMarkersIfChanged always fires after setData
@@ -913,9 +930,9 @@ export default function CandleChart({
     if (!chartRef.current) return;
     if (showWaves) {
       if (candlesRef.current?.length)
-        updateWavesIndicator(candlesRef.current, emaHighsRef.current, emaLowsRef.current);
+        updateWavesIndicator(candlesRef.current, emaHighsRef.current, emaLowsRef.current, chartRef.current);
     } else {
-      removeWavesIndicator();
+      removeWavesIndicator(false, chartRef.current);
     }
     // Waves toggle can shift marker positions — refresh
     refreshMarkers();

@@ -8,6 +8,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { updateWavesIndicatorPure } from "../indicators/WavesIndicator";
 import { BACKEND } from "../config";
+import { useTheme } from "../App";
 import SYMBOLS from "../symbols.json";
 import "./FibDashboardPage.css";
 
@@ -1191,6 +1192,7 @@ function EntryColumn({ symbol }) {
 
 export default function FibDashboardPage() {
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
 
   const [symbol, setSymbol] = useState(() => {
     try {
@@ -1208,11 +1210,15 @@ export default function FibDashboardPage() {
     <div className="fdb-page">
       {/* Topbar */}
       <div className="fdb-topbar">
-        <button className="fdb-back-btn" onClick={() => navigate("/HomePage.js")} title="Back to HomePage">
+        <button className="fdb-back-btn" onClick={() => navigate("/")} title="Back to Home">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 12H5M12 5l-7 7 7 7" />
           </svg>
         </button>
+
+        <div className="fdb-logo-wrap">
+          <img src="/tg-levels-logo.png" alt="TG Levels" className="fdb-logo-img" />
+        </div>
 
         <div className="fdb-topbar-left">
           <span className="fdb-symbol-label">{symbol}</span>
@@ -1221,6 +1227,13 @@ export default function FibDashboardPage() {
 
         <div className="fdb-topbar-right">
           <SymbolSearch symbol={symbol} onSelect={handleSymbolSelect} />
+          <button
+            className="fdb-theme-btn"
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {theme === "dark" ? "☀" : "🌙"}
+          </button>
         </div>
       </div>
 

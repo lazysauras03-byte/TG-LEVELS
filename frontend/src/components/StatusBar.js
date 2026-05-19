@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, memo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMarketStatus } from "../hooks/useMarketStatus";
-
+import { useTheme } from "../App";
 import { BACKEND } from "../config";
 
 // Load symbols from backend API (merges symbols.json + Excel files).
@@ -48,6 +49,8 @@ function StatusBar({
   dualMode,
   onDualToggle,
 }) {
+  const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
   const lastUpdate = chartData?.lastUpdate
     ? new Date(chartData.lastUpdate).toLocaleTimeString("en-IN", {
       hour: "2-digit", minute: "2-digit", second: "2-digit",
@@ -286,6 +289,18 @@ function StatusBar({
   return (
     <header style={styles.bar}>
 
+      {/* Home button */}
+      <button
+        onClick={() => navigate("/")}
+        title="Back to Home"
+        style={styles.homeBtn}
+      >
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor" style={{ display: "block", flexShrink: 0 }}>
+          <path d="M10 2L2 8.5V18h6v-5h4v5h6V8.5L10 2z" />
+        </svg>
+        <span>HOME</span>
+      </button>
+
       {/* Logo */}
       <div style={styles.logo}>
         <img src="/tg-levels-logo.png" alt="TG Levels" style={styles.logoImg} />
@@ -388,8 +403,15 @@ function StatusBar({
         </div>
       )}
 
-      {/* Right side: Refresh + Sidebar toggle */}
+      {/* Right side: Theme + Refresh + Sidebar toggle */}
       <div style={styles.rightActions}>
+        <button
+          onClick={toggleTheme}
+          title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          style={styles.themeBtn}
+        >
+          {theme === "dark" ? "☀" : "🌙"}
+        </button>
         <button
           onClick={() => onRefresh(symbol, resolution)}
           disabled={loading}
@@ -451,6 +473,20 @@ const styles = {
     padding: "0 12px", height: 52,
     background: "var(--bg2)", borderBottom: "1px solid var(--border)",
     flexShrink: 0, flexWrap: "nowrap", zIndex: 100, overflow: "visible",
+  },
+  homeBtn: {
+    display: "flex", alignItems: "center", gap: 5,
+    background: "var(--bg3)",
+    border: "1px solid var(--border2)",
+    borderRadius: 5,
+    color: "var(--text2)",
+    fontFamily: "var(--font-mono)",
+    fontSize: 11, fontWeight: 700,
+    padding: "3px 10px",
+    cursor: "pointer",
+    letterSpacing: "0.05em",
+    flexShrink: 0,
+    transition: "background 0.15s, color 0.15s, border-color 0.15s",
   },
   logo: { display: "flex", alignItems: "center", flexShrink: 0, padding: "0 4px" },
   logoImg: { height: 32, width: "auto", objectFit: "contain", display: "block" },
@@ -517,6 +553,18 @@ const styles = {
     cursor: "pointer",
     lineHeight: 1,
     flexShrink: 0,
+  },
+  themeBtn: {
+    background: "var(--bg3)",
+    border: "1px solid var(--border2)",
+    borderRadius: 5,
+    color: "var(--text2)",
+    fontSize: 15,
+    padding: "4px 10px",
+    cursor: "pointer",
+    lineHeight: 1,
+    flexShrink: 0,
+    transition: "background 0.15s, border-color 0.15s",
   },
   dot: { width: 7, height: 7, borderRadius: "50%", animation: "pulse 2s infinite" },
   dualBtn: {

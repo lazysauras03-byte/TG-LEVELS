@@ -736,6 +736,28 @@
   cursor: not-allowed;
 }
 
+.cr-theme-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  color: var(--text2);
+  font-size: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 4px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.cr-theme-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
 /* ─── Loading / error overlay ────────────────────────────────────────────── */
 .cr-state-overlay {
   display: flex;
@@ -774,4 +796,25 @@
   width: auto;
   object-fit: contain;
   display: block;
+}
+
+/* ─── Responsive ─────────────────────────────────────── */
+@media (max-width: 768px) {
+  .cr-topbar {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 8px;
+    gap: 6px;
+  }
+
+  .cr-tf-group {
+    order: 10;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .cr-topbar-search {
+    display: none;
+  }
 }
