@@ -1,0 +1,436 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#f0f4f8;padding:20px;}
+.page{background:#fff;max-width:900px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);}
+
+.header{background:linear-gradient(135deg,#1a2e4a 0%,#2d5a8e 100%);color:#fff;text-align:center;padding:22px 20px 16px;}
+.header h1{font-size:22px;font-weight:700;letter-spacing:1.5px;margin-bottom:8px;}
+.header-steps{display:flex;justify-content:center;align-items:center;gap:0;flex-wrap:nowrap;}
+.hs{background:rgba(255,255,255,0.13);border:1.5px solid rgba(255,255,255,0.25);border-radius:8px;padding:6px 14px;font-size:11px;font-weight:600;color:#fff;min-width:100px;text-align:center;}
+.hs span{display:block;font-size:9px;font-weight:400;color:rgba(255,255,255,0.7);margin-top:2px;}
+.hs.execute{background:#e8a020;border-color:#e8a020;}
+.arrow-h{color:rgba(255,255,255,0.5);font-size:18px;margin:0 4px;}
+
+.step1-bg{background:#f8faff;border-top:3px solid #2d5a8e;padding:14px 16px 16px;}
+.step1-header{background:#2d5a8e;color:#fff;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:0.5px;margin-bottom:12px;}
+.step1-content{display:grid;grid-template-columns:1fr 2fr;gap:12px;}
+.checklist{background:#fff;border:1px solid #d0dff0;border-radius:8px;padding:12px;font-size:11px;}
+.checklist-item{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;}
+.cn{width:18px;height:18px;border-radius:50%;background:#2d5a8e;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;margin-top:1px;}
+.checklist-item p{color:#2c3e50;line-height:1.4;font-size:11px;}
+.checklist-item p strong{color:#1a2e4a;}
+.fib-note{margin-top:10px;background:#eaf2ff;border-left:3px solid #2d5a8e;border-radius:0 6px 6px 0;padding:8px 10px;font-size:10px;color:#1a2e4a;}
+.cases-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.case-card{border-radius:8px;overflow:hidden;border:1.5px solid;}
+.case-title{padding:6px 8px;font-size:10px;font-weight:700;text-align:center;letter-spacing:0.3px;}
+.case-body{padding:8px;font-size:10px;line-height:1.5;background:#fff;}
+.case-body p{margin-bottom:4px;color:#333;}
+.case-body p::before{content:"• ";}
+.case-ib{border-color:#1a7a4a;}.case-ib .case-title{background:#1a7a4a;color:#fff;}
+.case-ibr{border-color:#c0392b;}.case-ibr .case-title{background:#c0392b;color:#fff;}
+.case-ob{border-color:#e67e22;}.case-ob .case-title{background:#e67e22;color:#fff;}
+.case-obr{border-color:#7f8c8d;}.case-obr .case-title{background:#7f8c8d;color:#fff;}
+
+.fib-bg{background:#f8faff;border-top:3px solid #8e44ad;padding:14px 16px;}
+.fib-header{background:#8e44ad;color:#fff;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:0.5px;margin-bottom:12px;}
+.fib-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.fib-table{width:100%;border-collapse:collapse;font-size:11px;}
+.fib-table tr{border-bottom:1px solid #eee;}
+.fib-table td{padding:5px 8px;vertical-align:middle;color:#222;}
+.fib-level{font-weight:700;font-size:12px;}
+.fib-trap{background:#ffeaea;}.fib-trap td{color:#c0392b !important;}
+.fib-target{background:#eafff0;}.fib-target td{color:#1a7a4a !important;}
+.fib-key{background:#eaf2ff;}.fib-key td{color:#2d5a8e !important;}
+.fib-caution{background:#fff8e1;}.fib-caution td{color:#b7770d !important;}
+
+.alerts-box{background:#fff;border:1.5px solid #e67e22;border-radius:8px;padding:12px;}
+.alert-title{font-size:11px;font-weight:700;color:#1a2e4a;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;}
+.alert-item{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;padding:8px;border-radius:6px;}
+.alert-item:first-of-type{background:#fff8e1;border:1px solid #f0c040;}
+.alert-item:last-of-type{background:#fff0e0;border:1px solid #e67e22;}
+.alert-icon{font-size:18px;flex-shrink:0;}
+.alert-text{font-size:10px;line-height:1.5;color:#333;}
+.alert-text strong{color:#c0392b;font-size:11px;display:block;margin-top:2px;}
+
+.trap-bg{background:#fff5f5;border-top:3px solid #c0392b;padding:14px 16px;}
+.trap-header{background:#c0392b;color:#fff;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:0.5px;margin-bottom:12px;}
+.trap-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.trap-card{border-radius:8px;padding:10px;font-size:10px;line-height:1.6;border:1.5px solid;}
+.trap-card h4{font-size:11px;font-weight:700;margin-bottom:6px;text-align:center;}
+.trap-1{background:#fff0f0;border-color:#e57373;}.trap-1 h4{color:#c0392b;}
+.trap-2{background:#f0fff4;border-color:#66bb6a;}.trap-2 h4{color:#1a7a4a;}
+.trap-3{background:#fff8e1;border-color:#ffb300;}.trap-3 h4{color:#b7770d;}
+.numbered-item{display:flex;gap:6px;margin-bottom:5px;align-items:flex-start;color:#333;}
+.num-badge{width:16px;height:16px;border-radius:50%;font-size:9px;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
+.nb-red{background:#c0392b;}.nb-green{background:#1a7a4a;}.nb-orange{background:#e67e22;}
+
+.flow-arrow{text-align:center;padding:6px 0;color:#2d5a8e;font-size:20px;}
+
+.step2-bg{background:#f0fff4;border-top:3px solid #1a7a4a;padding:14px 16px;}
+.step2-header{background:#1a7a4a;color:#fff;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:0.5px;margin-bottom:12px;}
+.step2-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+.sr-card{background:#fff;border:1.5px solid #1a7a4a;border-radius:8px;padding:10px;font-size:10px;line-height:1.5;text-align:center;}
+.sr-icon{font-size:20px;margin-bottom:4px;}
+.sr-card h4{font-size:11px;font-weight:700;color:#1a7a4a;margin-bottom:4px;}
+.sr-card p{color:#333;}
+
+/* ===== STEP 3 FIXED ===== */
+.step3-bg{background:#fff8f0;border-top:3px solid #e67e22;padding:14px 16px;}
+.step3-header{background:#e67e22;color:#fff;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:0.5px;margin-bottom:12px;}
+.step3-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.entry-card{border-radius:8px;padding:12px;font-size:10px;line-height:1.6;}
+.entry-up{background:#f0fff4;border:1.5px solid #1a7a4a;}
+.entry-up h4{color:#1a7a4a;font-size:12px;font-weight:700;margin-bottom:8px;}
+.entry-dn{background:#fff5f5;border:1.5px solid #c0392b;}
+.entry-dn h4{color:#c0392b;font-size:12px;font-weight:700;margin-bottom:8px;}
+.entry-item{display:flex;gap:6px;align-items:flex-start;margin-bottom:5px;}
+.entry-item span:first-child{font-weight:700;flex-shrink:0;}
+.entry-item span:last-child{color:#222;font-size:10px;line-height:1.5;}
+.tick{color:#1a7a4a;}
+.cross-r{color:#c0392b;}
+.step3-note{background:#fff;border:1.5px solid #e67e22;border-radius:8px;padding:10px;margin-top:10px;font-size:10px;color:#333;line-height:1.6;}
+.step3-note strong{color:#1a2e4a;}
+
+.strength-bg{background:#f8f4ff;border-top:3px solid #8e44ad;padding:14px 16px;}
+.strength-header{background:#8e44ad;color:#fff;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:0.5px;margin-bottom:12px;}
+.strength-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.strength-sub{border-radius:8px;overflow:hidden;border:1.5px solid #ddd;}
+.strength-sub-title{padding:6px 10px;font-size:11px;font-weight:700;color:#fff;text-align:center;}
+.strength-inner{display:grid;grid-template-columns:1fr 1fr;gap:0;}
+.sw-box{padding:10px;font-size:10px;line-height:1.5;}
+.sw-box h5{font-size:10px;font-weight:700;margin-bottom:5px;}
+.sw-box p{color:#333;}
+.sw-strong{background:#f0fff4;border-right:1px solid #ddd;}
+.sw-weak{background:#fff5f5;}
+
+.trade-bg{background:#f8faff;border-top:3px solid #2d5a8e;padding:14px 16px;}
+.trade-header{background:#1a2e4a;color:#fff;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:0.5px;margin-bottom:12px;}
+.trade-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.trade-card{border-radius:8px;padding:12px;font-size:10px;line-height:1.7;}
+.trade-up{background:#f0fff4;border:1.5px solid #1a7a4a;}
+.trade-up h4{color:#1a7a4a;font-size:11px;font-weight:700;margin-bottom:6px;}
+.trade-dn{background:#fff5f5;border:1.5px solid #c0392b;}
+.trade-dn h4{color:#c0392b;font-size:11px;font-weight:700;margin-bottom:6px;}
+.trade-row{display:flex;justify-content:space-between;padding:3px 6px;border-radius:4px;margin-bottom:3px;}
+.tr-label{font-weight:600;color:#444;}
+.tr-val{font-weight:700;}
+.tr-trap{background:#ffeaea;}.tr-trap .tr-val{color:#c0392b;}
+.tr-t1{background:#e8f5e9;}.tr-t1 .tr-val{color:#1a7a4a;}
+.tr-t2{background:#e3f2fd;}.tr-t2 .tr-val{color:#1565c0;}
+.tr-sl{background:#fff8e1;}.tr-sl .tr-val{color:#b7770d;}
+
+.summary-bg{background:linear-gradient(135deg,#1a2e4a 0%,#2d5a8e 100%);padding:16px;}
+.summary-header{color:#fff;font-size:13px;font-weight:700;text-align:center;letter-spacing:0.8px;margin-bottom:12px;}
+.summary-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.sum-card{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:10px;font-size:10px;color:#fff;line-height:1.5;}
+.sum-card h4{font-size:11px;font-weight:700;color:#ffd166;margin-bottom:6px;}
+.sum-card p{margin-bottom:3px;color:#e0e8f0;}
+.sum-card p::before{content:"→ ";color:rgba(255,255,255,0.4);}
+.execute-final{background:#e8a020 !important;border-color:#e8a020 !important;}
+.execute-final h4{color:#fff !important;}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- HEADER -->
+<div class="header">
+  <h1>MULTI TIMEFRAME APPROACH</h1>
+  <div class="header-steps">
+    <div class="hs">1 HOUR<span>Mother Wave</span></div>
+    <div class="arrow-h">→</div>
+    <div class="hs">15 MINUTE<span>Support &amp; Resistance</span></div>
+    <div class="arrow-h">→</div>
+    <div class="hs">3 MINUTE<span>Entry Zone · 9 EMA</span></div>
+    <div class="arrow-h">→</div>
+    <div class="hs execute">EXECUTE TRADE<span>Align · Confirm · Execute</span></div>
+  </div>
+</div>
+
+<!-- STEP 1 -->
+<div class="step1-bg">
+  <div class="step1-header">STEP 1 — 1 HOUR · MOTHER WAVE (MARKET STRUCTURE)</div>
+  <div class="step1-content">
+    <div class="checklist">
+      <div class="checklist-item"><div class="cn">1</div><p>Identify Mother Wave on 1 Hour chart</p></div>
+      <div class="checklist-item"><div class="cn">2</div><p>Check if current price is <strong>inside or outside</strong> the Mother Wave (high to low range)</p></div>
+      <div class="checklist-item"><div class="cn">3</div><p><strong>IT WILL FURTHER DIVIDE INTO 4 CASES</strong></p></div>
+      <div class="checklist-item"><div class="cn">4</div><p>Draw Fibonacci on Mother Wave and check where current price lies</p></div>
+      <div class="fib-note">
+        <strong>Bullish MW →</strong> Fib Bottom to Top (1=Low, 0=High)<br>
+        <strong>Bearish MW →</strong> Fib Top to Bottom (1=High, 0=Low)
+      </div>
+    </div>
+    <div>
+      <div style="font-size:11px;font-weight:700;color:#2d5a8e;margin-bottom:8px;letter-spacing:0.5px;">4 MARKET CONDITIONS (CASES)</div>
+      <div class="cases-grid">
+        <div class="case-card case-ib">
+          <div class="case-title">1. INSIDE BULLISH</div>
+          <div class="case-body">
+            <p>Price inside the Mother Wave range</p>
+            <p>Waves inside are bullish (HH + HL)</p>
+            <p>Price consolidating with bullish momentum</p>
+          </div>
+        </div>
+        <div class="case-card case-ibr">
+          <div class="case-title">2. INSIDE BEARISH</div>
+          <div class="case-body">
+            <p>Price inside the Mother Wave range</p>
+            <p>Waves inside are bearish (LL + LH)</p>
+            <p>Price consolidating with bearish momentum</p>
+          </div>
+        </div>
+        <div class="case-card case-ob">
+          <div class="case-title">3. OUTSIDE BULLISH</div>
+          <div class="case-body">
+            <p>Price broke above Mother Wave high</p>
+            <p>The move outside is bullish</p>
+            <p>Weak / breakout pattern</p>
+          </div>
+        </div>
+        <div class="case-card case-obr">
+          <div class="case-title">4. OUTSIDE BEARISH</div>
+          <div class="case-body">
+            <p>Price broke below Mother Wave low</p>
+            <p>The move outside is bearish</p>
+            <p>Weak / breakout pattern</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="flow-arrow">↓</div>
+
+<!-- FIBONACCI + ALERTS -->
+<div class="fib-bg">
+  <div class="fib-header">FIBONACCI LEVELS ON MOTHER WAVE</div>
+  <div class="fib-grid">
+    <table class="fib-table">
+      <tr class="fib-target"><td class="fib-level">-1.618</td><td>=</td><td>Extended Target</td></tr>
+      <tr class="fib-target"><td class="fib-level">-1</td><td>=</td><td>Target Level</td></tr>
+      <tr class="fib-trap"><td class="fib-level">-0.236 to 0.236</td><td>=</td><td><strong>Trap Zone (No Trading)</strong></td></tr>
+      <tr><td class="fib-level" style="color:#222;">0</td><td style="color:#222;">=</td><td style="color:#222;">High (Reference)</td></tr>
+      <tr class="fib-key"><td class="fib-level">0.382</td><td>=</td><td>Initial support — retracement &amp; continuation</td></tr>
+      <tr class="fib-key"><td class="fib-level">0.500</td><td>=</td><td>Mid point — can act as support</td></tr>
+      <tr class="fib-key"><td class="fib-level">0.618</td><td>=</td><td>Final reversal zone — plan trade here</td></tr>
+      <tr class="fib-caution"><td class="fib-level">0.786</td><td>=</td><td>If touched → high chance of sideways</td></tr>
+      <tr><td class="fib-level" style="color:#222;">1</td><td style="color:#222;">=</td><td style="color:#222;">Low (Reference)</td></tr>
+    </table>
+    <div class="alerts-box">
+      <div class="alert-title">🔔 Alerts (on 1 Hour Chart)</div>
+      <div class="alert-item">
+        <div class="alert-icon">🔔</div>
+        <div class="alert-text">
+          When current price touches any of the three key Fibonacci levels (0.382, 0.500, 0.618) for the first time
+          <strong>"GET READY FOR TRADE"</strong>
+        </div>
+      </div>
+      <div class="alert-item">
+        <div class="alert-icon">🔔</div>
+        <div class="alert-text">
+          When current price is sitting between any two of these key levels
+          <strong>"CURRENTLY IN BETWEEN SWING — CHECK IF PRICE MOVED ABOVE OR BELOW CURRENT LEVEL"</strong>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="flow-arrow">↓</div>
+
+<!-- TRAP ZONE -->
+<div class="trap-bg">
+  <div class="trap-header">TRAP ZONE RULES (-0.236 to +0.236)</div>
+  <div class="trap-grid">
+    <div class="trap-card trap-1">
+      <h4>1. PRICE INSIDE TRAP ZONE</h4>
+      <p style="margin-bottom:6px;color:#333;">Switch to 15 min Support &amp; Resistance for guidance</p>
+      <div class="numbered-item"><div class="num-badge nb-red">▲</div><span><strong style="color:#c0392b;">Upper side (-0.236)</strong> → bias is SHORT</span></div>
+      <div class="numbered-item"><div class="num-badge nb-green">▼</div><span><strong style="color:#1a7a4a;">Lower side (0.236)</strong> → bias is BUY</span></div>
+    </div>
+    <div class="trap-card trap-2">
+      <h4>2. BREAKS BELOW 0.236 (BULLISH MW)</h4>
+      <p style="margin-bottom:6px;color:#333;">Two opportunities:</p>
+      <div class="numbered-item"><div class="num-badge nb-red">1</div><span>Sell from 0.236 → ride down till 0.382 → 0.500 → 0.618</span></div>
+      <div class="numbered-item"><div class="num-badge nb-green">2</div><span>Buy at 0.382, 0.500, 0.618 → direction of bullish MW</span></div>
+    </div>
+    <div class="trap-card trap-3">
+      <h4>3. BREAKS ABOVE 0.236 (BEARISH MW)</h4>
+      <p style="margin-bottom:6px;color:#333;">Two opportunities:</p>
+      <div class="numbered-item"><div class="num-badge nb-green">1</div><span>Buy from 0.236 → ride up till 0.382 → 0.500 → 0.618</span></div>
+      <div class="numbered-item"><div class="num-badge nb-red">2</div><span>Sell at 0.382, 0.500, 0.618 → direction of bearish MW</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="flow-arrow">↓</div>
+
+<!-- STEP 2 -->
+<div class="step2-bg">
+  <div class="step2-header">STEP 2 — 15 MINUTE · SUPPORT &amp; RESISTANCE</div>
+  <div class="step2-grid">
+    <div class="sr-card">
+      <div class="sr-icon">📈</div>
+      <h4>Previous Swing Highs</h4>
+      <p>Act as Resistance levels</p>
+    </div>
+    <div class="sr-card">
+      <div class="sr-icon">📉</div>
+      <h4>Previous Swing Lows</h4>
+      <p>Act as Support levels</p>
+    </div>
+    <div class="sr-card">
+      <div class="sr-icon">🎯</div>
+      <h4>Repeated Reversal Zones</h4>
+      <p>Key S&amp;R zones — pure price action only</p>
+    </div>
+  </div>
+</div>
+
+<div class="flow-arrow">↓</div>
+
+<!-- STEP 3 FIXED -->
+<div class="step3-bg">
+  <div class="step3-header">STEP 3 — 3 MINUTE · ENTRY ZONE (9 EMA STRATEGY)</div>
+  <div class="step3-grid">
+    <div class="entry-card entry-up">
+      <h4>📈 IN AN UPTREND (BUY SETUP)</h4>
+      <div class="entry-item">
+        <span class="tick">✔</span>
+        <span>Wait for price to pull back towards the 9 EMA band</span>
+      </div>
+      <div class="entry-item">
+        <span class="tick">✔</span>
+        <span>Once price touches or comes close to <strong>9 EMA Low</strong> and shows signs of reversal → this becomes the entry zone</span>
+      </div>
+      <div class="entry-item">
+        <span class="tick">✔</span>
+        <span>A valid <strong>Higher Low</strong> or a <strong>Bullish Fractal</strong> forming near the EMA band confirms the entry</span>
+      </div>
+    </div>
+    <div class="entry-card entry-dn">
+      <h4>📉 IN A DOWNTREND (SELL SETUP)</h4>
+      <div class="entry-item">
+        <span class="cross-r">✔</span>
+        <span>Wait for price to pull back towards the 9 EMA band</span>
+      </div>
+      <div class="entry-item">
+        <span class="cross-r">✔</span>
+        <span>Once price touches or comes close to <strong>9 EMA High</strong> and shows signs of reversal → this becomes the entry zone</span>
+      </div>
+      <div class="entry-item">
+        <span class="cross-r">✔</span>
+        <span>A valid <strong>Higher High</strong> or a <strong>Bearish Fractal</strong> forming near the EMA band confirms the entry</span>
+      </div>
+    </div>
+  </div>
+  <div class="step3-note">
+    🎯 <strong>The 3 minute entry zone acts as the final trigger</strong> — it is the point where all three timeframes align and the trade is executed with full confirmation from the top-down analysis.
+  </div>
+</div>
+
+<div class="flow-arrow">↓</div>
+
+<!-- WAVE STRENGTH -->
+<div class="strength-bg">
+  <div class="strength-header">INTERNAL WAVE STRENGTH OR WEAKNESS</div>
+  <div class="strength-grid">
+    <div class="strength-sub">
+      <div class="strength-sub-title" style="background:#1a7a4a;">IN UPTREND (BULLISH MOTHER WAVE)</div>
+      <div class="strength-inner">
+        <div class="sw-box sw-strong">
+          <h5 style="color:#1a7a4a;">✔ Strong Wave (High Probability)</h5>
+          <p>Price approaches 0.382 or 0.618 and stays <strong>above</strong> that level without closing below → confirms strong bullish momentum → higher probability</p>
+        </div>
+        <div class="sw-box sw-weak">
+          <h5 style="color:#c0392b;">✖ Weak Wave (Low Probability)</h5>
+          <p>Price approaches 0.382 or 0.618 but <strong>closes below</strong> that level → signals weakness → likely sideways or less probable to reach target</p>
+        </div>
+      </div>
+    </div>
+    <div class="strength-sub">
+      <div class="strength-sub-title" style="background:#c0392b;">IN DOWNTREND (BEARISH MOTHER WAVE)</div>
+      <div class="strength-inner">
+        <div class="sw-box sw-strong">
+          <h5 style="color:#1a7a4a;">✔ Strong Wave (High Probability)</h5>
+          <p>Price approaches 0.382 or 0.618 and stays <strong>below</strong> that level without closing above → confirms strong bearish momentum → higher probability</p>
+        </div>
+        <div class="sw-box sw-weak">
+          <h5 style="color:#c0392b;">✖ Weak Wave (Low Probability)</h5>
+          <p>Price approaches 0.382 or 0.618 but <strong>closes above</strong> that level → signals weakness → likely sideways or less probable to reach target</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="flow-arrow">↓</div>
+
+<!-- TRADE PLAN -->
+<div class="trade-bg">
+  <div class="trade-header">FIBONACCI TRADE PLAN</div>
+  <div class="trade-grid">
+    <div class="trade-card trade-up">
+      <h4>📈 UPTREND — Fib from HH (Top) → HL (Bottom)</h4>
+      <div class="trade-row tr-trap"><span class="tr-label">Trap Zone</span><span class="tr-val">-0.236 to +0.236 → No entry</span></div>
+      <div class="trade-row tr-t1"><span class="tr-label">Target 1</span><span class="tr-val">-1 level (±0.01 deviation)</span></div>
+      <div class="trade-row tr-t2"><span class="tr-label">Target 2</span><span class="tr-val">1.618 (extended target)</span></div>
+      <div class="trade-row tr-sl"><span class="tr-label">Stop Loss</span><span class="tr-val">Fractal Low</span></div>
+    </div>
+    <div class="trade-card trade-dn">
+      <h4>📉 DOWNTREND — Fib from HL (Bottom) → HH (Top)</h4>
+      <div class="trade-row tr-trap"><span class="tr-label">Trap Zone</span><span class="tr-val">-0.236 to +0.236 → No entry</span></div>
+      <div class="trade-row tr-t1"><span class="tr-label">Target 1</span><span class="tr-val">-1 level (±0.01 deviation)</span></div>
+      <div class="trade-row tr-t2"><span class="tr-label">Target 2</span><span class="tr-val">1.618 (extended target)</span></div>
+      <div class="trade-row tr-sl"><span class="tr-label">Stop Loss</span><span class="tr-val">Fractal High</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="flow-arrow">↓</div>
+
+<!-- SUMMARY -->
+<div class="summary-bg">
+  <div class="summary-header">SUMMARY — THE COMPLETE PROCESS</div>
+  <div class="summary-steps">
+    <div class="sum-card">
+      <h4>1 HOUR</h4>
+      <p>Identify Mother Wave</p>
+      <p>Determine Case (1 of 4)</p>
+      <p>Draw Fibonacci</p>
+      <p>Check Alerts</p>
+      <p>Apply Trap Zone Rules</p>
+    </div>
+    <div class="sum-card">
+      <h4>15 MINUTE</h4>
+      <p>Mark Key S&amp;R Levels</p>
+      <p>Pure price action only</p>
+      <p>Confirm trap zone bias</p>
+    </div>
+    <div class="sum-card">
+      <h4>3 MINUTE</h4>
+      <p>Use 9 EMA Strategy</p>
+      <p>Find Entry Zone</p>
+      <p>Confirm with HL/HH or Fractal</p>
+      <p>Check wave strength</p>
+    </div>
+    <div class="sum-card execute-final">
+      <h4>EXECUTE TRADE</h4>
+      <p>Trade in MW direction</p>
+      <p>Respect Trap Zone Rules</p>
+      <p>Use S&amp;R for confirmation</p>
+      <p>Enter with 9 EMA precision</p>
+      <p>Manage risk &amp; protect capital</p>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
