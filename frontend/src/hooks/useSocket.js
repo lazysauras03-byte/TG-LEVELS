@@ -125,6 +125,10 @@ export function useSocket() {
     socket.on("connect", () => {
       setConnected(true);
       setError(null);
+      // DUAL-PANEL FIX: tell server this socket's symbol immediately on connect
+      // so the server's socketSymbols map is populated before any refresh fires.
+      if (activeSymbolRef.current) socket.emit("set_symbol", activeSymbolRef.current);
+      if (activeResolutionRef.current) socket.emit("set_resolution", activeResolutionRef.current);
       // Only fall back to a GET fetch if there's genuinely no data and nothing is in-flight.
       // ChartsPage calls refresh() (POST) on mount which already covers the initial load.
       // The latestRequestIdRef check inside fetchChart prevents stale responses from landing.
@@ -240,7 +244,12 @@ export function useSocket() {
     setLoading(true);
     const reqId = ++latestRequestIdRef.current;
 
-    if (symbol != null) activeSymbolRef.current = symbol;
+    if (symbol != null) {
+      activeSymbolRef.current = symbol;
+      // DUAL-PANEL FIX: tell server which symbol this socket is watching so
+      // candle-finalize auto-broadcasts only reach the correct panel.
+      if (socketRef.current?.connected) socketRef.current.emit("set_symbol", symbol);
+    }
     if (resolution != null) {
       const numRes = Number(resolution);
       activeResolutionRef.current = numRes;
@@ -254,7 +263,11 @@ export function useSocket() {
     const MAX_ATTEMPTS = 3;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
-        const res = await axios.post(`${BACKEND}/api/chart/refresh`, null, {
+        // DUAL-PANEL FIX: send this socket's id so server emits chart_update
+        // only to THIS socket — not the whole resolution room — preventing the
+        // other panel's chart from being overwritten.
+        const socketId = socketRef.current?.id || null;
+        const res = await axios.post(`${BACKEND}/api/chart/refresh`, { socketId }, {
           params,
           timeout: 25_000,
         });

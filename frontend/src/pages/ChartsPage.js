@@ -523,12 +523,12 @@ export default function ChartsPage() {
             </div>
           </div>
 
-          {/* Right panel — compact dual layout, no sidebar, no DUAL button */}
+          {/* Right panel — compact dual layout, has own sidebar, no DUAL button */}
           <div className="dual-panel-wrap" style={{ flex: 1 }}>
             <ChartPanel
               key="dual-right"
               pfx="right_"
-              showSidebar={false}
+              showSidebar={true}
               dualMode={true}
               onDualToggle={undefined}
               urlSymbol={null}

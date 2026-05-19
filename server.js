@@ -25,7 +25,6 @@ const io = new Server(server, {
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] }));
-app.use(express.json()); // parse JSON body — needed for req.body.socketId in /refresh
 app.use((req, res, next) => {
   res.setHeader('ngrok-skip-browser-warning', 'true');
   next();
@@ -64,7 +63,6 @@ const WATCHDOG_GRACE_MS = parseInt(process.env.WATCHDOG_GRACE_MS || "30000");
 const symbolCacheMap = new Map();
 let autoRefreshTimer = null;
 const socketResolutions = new Map();
-const socketSymbols = new Map(); // socket.id → active symbol (for dual-panel filtering)
 let lastTickAt = 0;
 let lastConnectAt = 0;
 
@@ -156,26 +154,15 @@ function getOrCreateBuilder(symbol) {
         });
         // Deferred broadcast: send chart_update once per candle finalize,
         // but only after the incremental tick_update has settled on the client.
-        //
-        // DUAL-PANEL FIX: emit per-socket using socketSymbols map so two panels
-        // on the same resolution but different symbols don't overwrite each other.
         setTimeout(() => {
           const b = candleBuilders.get(symbol);
           if (!b) return;
           for (const res of [1, 3, 5, 15, 60, 1440, 10080]) {
             const room = `res:${res}`;
-            const roomSockets = io.sockets.adapter.rooms.get(room);
-            if (!roomSockets?.size) continue;
+            if (!io.sockets.adapter.rooms.get(room)?.size) continue;
             const cache = getCache(symbol, res);
             if (!cache.result || !cache.candles.length) continue;
-            const payload = buildPayload(cache.candles, cache.result, symbol, res, true);
-            // Only send to sockets that are watching this exact symbol
-            for (const sid of roomSockets) {
-              const sock = io.sockets.sockets.get(sid);
-              if (!sock) continue;
-              const sockSymbol = socketSymbols.get(sid) || SYMBOL;
-              if (sockSymbol === symbol) sock.emit("chart_update", payload);
-            }
+            io.to(room).emit("chart_update", buildPayload(cache.candles, cache.result, symbol, res, true));
           }
         }, 250);
       },
@@ -425,30 +412,20 @@ app.get("/api/chart", async (req, res) => {
  * POST /api/chart/refresh?symbol=X&resolution=Y
  * Manual refresh — always fetches fresh from Fyers REST.
  * Works on weekends, after hours, for any symbol from Excel.
- *
- * DUAL-PANEL FIX: frontend sends { socketId } in body. Server emits
- * chart_update only to that socket — not the whole room — so the other
- * panel's chart is never overwritten by a sibling panel's refresh.
- * Falls back to room broadcast if socketId is absent (legacy clients).
+ * Broadcasts fresh data to all connected socket clients.
  */
 app.post("/api/chart/refresh", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
-  const requestingSocketId = req.body?.socketId || null;
 
   console.log(
-    `[REFRESH] symbol=${symbol} res=${resolution}m socket=${requestingSocketId || "broadcast"} liveMarket=${isLiveMarket()} tradingDay=${isTradingDay()}`
+    `[REFRESH] symbol=${symbol} res=${resolution}m liveMarket=${isLiveMarket()} tradingDay=${isTradingDay()}`
   );
 
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
     const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
-    if (requestingSocketId) {
-      // Only notify the panel that asked — keeps the other panel untouched
-      io.to(requestingSocketId).emit("chart_update", { ...payload, isAutoRefresh: false });
-    } else {
-      io.to(`res:${resolution}`).emit("chart_update", { ...payload, isAutoRefresh: true });
-    }
+    io.to(`res:${resolution}`).emit("chart_update", { ...payload, isAutoRefresh: true });
     res.json(payload);
   } catch (err) {
     const cache = getCache(symbol, resolution);
@@ -589,9 +566,7 @@ io.on("connection", (socket) => {
   console.log(`[WS] Client connected: ${socket.id}`);
 
   let currentResolution = RESOLUTION;
-  let currentSymbol = SYMBOL;
   socketResolutions.set(socket.id, currentResolution);
-  socketSymbols.set(socket.id, currentSymbol); // track per-socket symbol for dual-panel
   socket.join(`res:${currentResolution}`);
 
   // Send cached data immediately — chart appears without a round-trip
@@ -609,15 +584,6 @@ io.on("connection", (socket) => {
     tradingDay: isTradingDay(),
   });
 
-  // DUAL-PANEL: frontend notifies server of its active symbol so auto-broadcasts
-  // (candle finalize) are only sent to sockets watching that symbol.
-  socket.on("set_symbol", (sym) => {
-    if (!sym) return;
-    currentSymbol = sym;
-    socketSymbols.set(socket.id, sym);
-    console.log(`[WS] ${socket.id} → symbol=${sym}`);
-  });
-
   socket.on("set_resolution", (res) => {
     const newRes = parseInt(res);
     if (isNaN(newRes) || newRes === currentResolution) return;
@@ -628,11 +594,11 @@ io.on("connection", (socket) => {
     socket.join(`res:${newRes}`);
     console.log(`[WS] ${socket.id} → res=${newRes}`);
 
-    const newCache = getCache(currentSymbol, newRes);
+    const newCache = getCache(SYMBOL, newRes);
     if (newCache.result && newCache.candles.length > 0 && Date.now() - newCache.lastFetch < 120_000) {
       socket.emit(
         "chart_update",
-        buildPayload(newCache.candles, newCache.result, currentSymbol, newRes, true)
+        buildPayload(newCache.candles, newCache.result, SYMBOL, newRes, true)
       );
     }
   });
@@ -643,16 +609,15 @@ io.on("connection", (socket) => {
       socket.emit("error", { message: "Not authenticated. Please set up Fyers token." });
       return;
     }
-    fetchAndProcess(currentSymbol, currentResolution)
+    fetchAndProcess(SYMBOL, currentResolution)
       .then(({ candles, result }) => {
-        socket.emit("chart_update", buildPayload(candles, result, currentSymbol, currentResolution, false));
+        socket.emit("chart_update", buildPayload(candles, result, SYMBOL, currentResolution, false));
       })
       .catch((e) => socket.emit("error", { message: e.message }));
   });
 
   socket.on("disconnect", () => {
     socketResolutions.delete(socket.id);
-    socketSymbols.delete(socket.id);
     console.log(`[WS] Client disconnected: ${socket.id}`);
   });
 });

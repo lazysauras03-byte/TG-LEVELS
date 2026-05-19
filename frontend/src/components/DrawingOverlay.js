@@ -214,6 +214,16 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         return Math.abs(py - c.y) < HIT_SLOP;
       }
       if (drawing.type === "fibRetracement") {
+        const c1 = dtc(drawing.p1.time, drawing.p1.price);
+        const c2 = dtc(drawing.p2.time, drawing.p2.price);
+        // Resolve X with pixel fallback for right-of-candles anchors
+        const ax1 = c1.x ?? drawing.p1.px ?? null;
+        const ax2 = c2.x ?? drawing.p2.px ?? null;
+        if (ax1 == null || ax2 == null) return false;
+        // Only hit-test inside the rectangle's X bounds
+        const bx1 = Math.min(ax1, ax2);
+        const bx2 = Math.max(ax1, ax2);
+        if (px < bx1 || px > bx2) return false; // cursor outside rectangle — no hit
         const priceRange = drawing.p2.price - drawing.p1.price;
         for (const lvl of FIB_LEVELS) {
           const price = drawing.p1.price + priceRange * lvl.ratio;
@@ -252,8 +262,17 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     if (!dtc) return null;
     const c1 = dtc(drawing.p1.time, drawing.p1.price);
     const c2 = dtc(drawing.p2.time, drawing.p2.price);
-    if (c1.x != null && Math.hypot(px - c1.x, py - c1.y) < 12) return "p1";
-    if (c2.x != null && Math.hypot(px - c2.x, py - c2.y) < 12) return "p2";
+    // Resolve X with pixel fallback for right-side anchors
+    const ax1 = c1.x ?? drawing.p1.px ?? null;
+    const ax2 = c2.x ?? drawing.p2.px ?? null;
+    // Check handles first (allow slight outside-box tolerance for handle grab)
+    if (ax1 != null && Math.hypot(px - ax1, py - (c1.y ?? 0)) < 12) return "p1";
+    if (ax2 != null && Math.hypot(px - ax2, py - (c2.y ?? 0)) < 12) return "p2";
+    // Body hit — must be inside X bounds
+    if (ax1 == null || ax2 == null) return null;
+    const bx1 = Math.min(ax1, ax2);
+    const bx2 = Math.max(ax1, ax2);
+    if (px < bx1 || px > bx2) return null;
     const priceRange = drawing.p2.price - drawing.p1.price;
     for (const lvl of FIB_LEVELS) {
       const price = drawing.p1.price + priceRange * lvl.ratio;
@@ -449,18 +468,21 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         let newP2 = { ...ed.origP2 };
 
         if (ed.mode === "move") {
+          const dPx = x - ed.startCoord.x;
           newP1 = {
             price: ed.origP1.price + dPrice,
             time: ed.origP1.time != null ? ed.origP1.time + dTime : null,
+            px: ed.origP1.px != null ? ed.origP1.px + dPx : null,
           };
           newP2 = {
             price: ed.origP2.price + dPrice,
             time: ed.origP2.time != null ? ed.origP2.time + dTime : null,
+            px: ed.origP2.px != null ? ed.origP2.px + dPx : null,
           };
         } else if (ed.mode === "p1") {
-          newP1 = { price: cur.price, time: cur.time };
+          newP1 = { price: cur.price, time: cur.time, px: x };
         } else if (ed.mode === "p2") {
-          newP2 = { price: cur.price, time: cur.time };
+          newP2 = { price: cur.price, time: cur.time, px: x };
         }
 
         const updated = [...drawingsRef.current];
@@ -808,10 +830,11 @@ function buildDrawing({ tool, start, current }) {
   if (tool === "fibRetracement") {
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
     if (start.price == null || current.price == null) return null;
+    // Store pixel X as fallback when time is null (right of last candle = blank area)
     return {
       id: uid(), type: "fibRetracement",
-      p1: { price: start.price, time: start.time },
-      p2: { price: current.price, time: current.time },
+      p1: { price: start.price, time: start.time, px: start.x },
+      p2: { price: current.price, time: current.time, px: current.x },
     };
   }
   return null;
@@ -867,54 +890,83 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
   if (tool === "fibRetracement") {
     if (start.price == null || current.price == null) return null;
     const priceRange = current.price - start.price;
-    const x1 = Math.min(start.x, current.x);
     const PRICE_SCALE_W = 70;
-    const x2 = Math.min(Math.max(start.x, current.x), svgW - PRICE_SCALE_W);
+    const maxX = svgW - PRICE_SCALE_W;
+
+    // Strict box — exactly anchor to anchor, clamped to visible plot area
+    const rawX1 = Math.min(start.x, current.x);
+    const rawX2 = Math.max(start.x, current.x);
+    const boxX1 = Math.max(rawX1, 0);
+    const boxX2 = Math.min(rawX2, maxX);
+    if (boxX2 <= boxX1) return null;
+
+    const previewClipId = "fib-preview-clip";
+    const LABEL_PAD = 6;
 
     return (
       <g style={{ pointerEvents: "none" }}>
-        {FIB_ZONE_FILLS.map((zone) => {
-          const prA = start.price + priceRange * zone.from;
-          const prB = start.price + priceRange * zone.to;
-          const cA = dataToCoord(null, prA);
-          const cB = dataToCoord(null, prB);
-          if (cA.y == null || cB.y == null) return null;
-          const zy = Math.min(cA.y, cB.y);
-          const zh = Math.abs(cB.y - cA.y);
-          return (
-            <rect
-              key={`z${zone.from}`}
-              x={x1} y={zy}
-              width={x2 - x1} height={Math.max(zh, 1)}
-              fill={zone.color} opacity={zone.opacity}
-            />
-          );
-        })}
+        <defs>
+          <clipPath id={previewClipId}>
+            <rect x={boxX1} y={0} width={boxX2 - boxX1} height={svgH} />
+          </clipPath>
+        </defs>
 
+        {/* Zone fills strictly inside box */}
+        <g clipPath={`url(#${previewClipId})`}>
+          {FIB_ZONE_FILLS.map((zone) => {
+            const prA = start.price + priceRange * zone.from;
+            const prB = start.price + priceRange * zone.to;
+            const cA = dataToCoord(null, prA);
+            const cB = dataToCoord(null, prB);
+            if (cA.y == null || cB.y == null) return null;
+            const zy = Math.min(cA.y, cB.y);
+            const zh = Math.abs(cB.y - cA.y);
+            return (
+              <rect
+                key={`z${zone.from}`}
+                x={boxX1} y={zy}
+                width={boxX2 - boxX1} height={Math.max(zh, 1)}
+                fill={zone.color} opacity={zone.opacity}
+              />
+            );
+          })}
+
+          {/* Level lines strictly inside box */}
+          {FIB_LEVELS.map((lvl) => {
+            const price = start.price + priceRange * lvl.ratio;
+            const coord = dataToCoord(null, price);
+            if (coord.y == null) return null;
+            const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
+            return (
+              <line
+                key={lvl.ratio}
+                x1={boxX1} y1={coord.y} x2={boxX2} y2={coord.y}
+                stroke={lvl.color}
+                strokeWidth={isEdge ? 1.8 : lvl.width}
+                strokeDasharray={isEdge ? "0" : lvl.dash}
+                opacity={0.85}
+              />
+            );
+          })}
+        </g>
+
+        {/* Labels inside the right edge */}
         {FIB_LEVELS.map((lvl) => {
           const price = start.price + priceRange * lvl.ratio;
           const coord = dataToCoord(null, price);
           if (coord.y == null) return null;
           const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
           return (
-            <g key={lvl.ratio}>
-              <text
-                x={x1 - 6} y={coord.y + 4}
-                fill={lvl.color} fontSize={9}
-                fontFamily="'JetBrains Mono', monospace"
-                fontWeight={isEdge ? 700 : 600}
-                textAnchor="end"
-              >
-                {lvl.label} ({numFmt.format(price)})
-              </text>
-              <line
-                x1={x1} y1={coord.y} x2={x2} y2={coord.y}
-                stroke={lvl.color}
-                strokeWidth={isEdge ? 1.8 : lvl.width}
-                strokeDasharray={isEdge ? "0" : lvl.dash}
-                opacity={0.85}
-              />
-            </g>
+            <text
+              key={`lbl-${lvl.ratio}`}
+              x={boxX2 - LABEL_PAD} y={coord.y - 3}
+              fill={lvl.color} fontSize={9}
+              fontFamily="'JetBrains Mono', monospace"
+              fontWeight={isEdge ? 700 : 600}
+              textAnchor="end"
+            >
+              {lvl.label} ({numFmt.format(price)})
+            </text>
           );
         })}
 
@@ -1051,22 +1103,30 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     );
   }
 
-  // ── Fibonacci Retracement — time+price anchored ──────────────────────────
+  // ── Fibonacci Retracement — time+price anchored, works on blank right side ──
   if (drawing.type === "fibRetracement") {
     const c1 = dataToCoord(drawing.p1.time, drawing.p1.price);
     const c2 = dataToCoord(drawing.p2.time, drawing.p2.price);
 
-    const hasTimeAnchors = c1.x != null && c2.x != null;
+    // Resolve X: prefer time-derived coord, fall back to stored pixel (.px)
+    // This allows fib anchors on the blank right area (no time there).
+    const ax1 = c1.x ?? drawing.p1.px ?? null;
+    const ax2 = c2.x ?? drawing.p2.px ?? null;
+    const hasAnchors = ax1 != null && ax2 != null;
+
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
 
-    // Use EXACT anchor pixel positions — no clamping, no expansion.
-    // A clipPath on the visible plot area handles viewport edges cleanly.
-    const lineX1 = hasTimeAnchors ? Math.min(c1.x, c2.x) : 0;
-    const lineX2 = hasTimeAnchors ? Math.max(c1.x, c2.x) : maxX;
+    // The rectangle strictly spans from anchor to anchor (no expansion to edges)
+    const rawX1 = hasAnchors ? Math.min(ax1, ax2) : 0;
+    const rawX2 = hasAnchors ? Math.max(ax1, ax2) : maxX;
 
-    // Hide entirely if box is fully off-screen or has no width
-    if (lineX2 <= 0 || lineX1 >= maxX || lineX2 <= lineX1) return null;
+    // Clamp to visible plot area — nothing bleeds into price scale or off-screen
+    const boxX1 = Math.max(rawX1, 0);
+    const boxX2 = Math.min(rawX2, maxX);
+
+    // Hide entirely if box has no visible width
+    if (boxX2 <= boxX1 + 1) return null;
 
     // Unique clip ID per drawing so multiple fibs don't interfere
     const clipId = `fib-clip-${drawing.id}`;
@@ -1087,23 +1147,30 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
       return c.y;
     };
 
-    const LABEL_GAP = 6;
-    const LABEL_RIGHT = lineX1 - LABEL_GAP;
+    // Top and bottom Y bounds of the fib rectangle (0 = top level, 1 = bottom)
+    const topY = priceToY(
+      Math.min(...FIB_LEVELS.map((l) => l.ratio))
+    );
+    const botY = priceToY(
+      Math.max(...FIB_LEVELS.map((l) => l.ratio))
+    );
+    const rectTop = topY != null && botY != null ? Math.min(topY, botY) : 0;
+    const rectBot = topY != null && botY != null ? Math.max(topY, botY) : svgH;
 
-    // Clamp rendered box to visible plot area using Math.max/min on the draw coords
-    const visX1 = Math.max(lineX1, 0);
-    const visX2 = Math.min(lineX2, maxX);
+    // Labels sit just inside the right edge of the box
+    const LABEL_PAD = 6;
+    const labelX = boxX2 - LABEL_PAD;
 
     return (
       <g style={{ pointerEvents: "none" }}>
-        {/* clipPath ensures nothing bleeds outside visible plot area */}
+        {/* clipPath — strictly the fib rectangle, not the whole chart */}
         <defs>
           <clipPath id={clipId}>
-            <rect x={0} y={0} width={maxX} height={svgH} />
+            <rect x={boxX1} y={rectTop} width={boxX2 - boxX1} height={Math.max(rectBot - rectTop, 1)} />
           </clipPath>
         </defs>
 
-        {/* Zone fills — clipped to visible area */}
+        {/* Zone fills — clipped strictly inside the rectangle */}
         <g clipPath={`url(#${clipId})`}>
           {FIB_ZONE_FILLS.map((zone) => {
             const y1 = priceToY(zone.from);
@@ -1113,8 +1180,8 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
             return (
               <rect
                 key={`zone-${zone.from}`}
-                x={lineX1} y={zy}
-                width={lineX2 - lineX1} height={Math.max(zh, 1)}
+                x={boxX1} y={zy}
+                width={boxX2 - boxX1} height={Math.max(zh, 1)}
                 fill={zone.color}
                 opacity={hovered ? zone.opacity * 1.6 : zone.opacity}
                 style={{ pointerEvents: "none" }}
@@ -1122,19 +1189,19 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
             );
           })}
 
-          {/* Level lines — clipped */}
+          {/* Level lines — clipped strictly to rectangle */}
           {levelLines.map(({ ratio, label, color: lvlColor, dash, width, price, y }) => {
             const isEdge = ratio === 0 || ratio === 1;
             const lineColor = hovered ? HOVER_COLOR : lvlColor;
             return (
               <g key={ratio}>
                 <line
-                  x1={lineX1} y1={y} x2={lineX2} y2={y}
+                  x1={boxX1} y1={y} x2={boxX2} y2={y}
                   stroke="transparent" strokeWidth={14}
                   style={{ pointerEvents: interactive ? "stroke" : "none" }}
                 />
                 <line
-                  x1={lineX1} y1={y} x2={lineX2} y2={y}
+                  x1={boxX1} y1={y} x2={boxX2} y2={y}
                   stroke={lineColor}
                   strokeWidth={isEdge ? 1.8 : width}
                   strokeDasharray={isEdge ? "0" : dash}
@@ -1146,42 +1213,40 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
           })}
         </g>
 
-        {/* Labels rendered outside clip so they don't get cut off at left edge */}
+        {/* Labels inside the right edge of the rectangle — never overflow */}
         {levelLines.map(({ ratio, label, color: lvlColor, price, y }) => {
           const isEdge = ratio === 0 || ratio === 1;
           const labelText = `${label} (${numFmt.format(price)})`;
           const lineColor = hovered ? HOVER_COLOR : lvlColor;
-          // Only show label if this level is at least partially visible
-          if (y == null || visX1 >= visX2) return null;
-          const labelX = visX1 - LABEL_GAP;
+          if (y == null) return null;
           return (
             <text
               key={`lbl-${ratio}`}
-              x={labelX} y={y + 4}
+              x={labelX} y={y - 3}
               fill={lineColor} fontSize={9.5}
               fontFamily="'JetBrains Mono', monospace"
               fontWeight={isEdge ? 700 : 600}
               textAnchor="end"
-              style={{ pointerEvents: "none" }}
+              style={{ pointerEvents: "none", clipPath: `url(#${clipId})` }}
             >
               {labelText}
             </text>
           );
         })}
 
-        {/* Anchor handles */}
-        {hasTimeAnchors && (
+        {/* Anchor handles — shown at the actual anchor pixel positions */}
+        {hasAnchors && (
           <>
-            <circle cx={c1.x} cy={c1.y} r={3} fill={FIB_COLOR}
+            <circle cx={ax1} cy={c1.y ?? priceToY(0) ?? 0} r={3} fill={FIB_COLOR}
               opacity={hovered ? 0 : 0.35} style={{ pointerEvents: "none" }} />
-            <circle cx={c2.x} cy={c2.y} r={3} fill={FIB_COLOR}
+            <circle cx={ax2} cy={c2.y ?? priceToY(1) ?? 0} r={3} fill={FIB_COLOR}
               opacity={hovered ? 0 : 0.35} style={{ pointerEvents: "none" }} />
             {hovered && (
               <>
-                <circle cx={c1.x} cy={c1.y} r={8} fill={FIB_COLOR} opacity={0.18} style={{ pointerEvents: "none" }} />
-                <circle cx={c1.x} cy={c1.y} r={5} fill={FIB_COLOR} opacity={0.9} stroke="#fff" strokeWidth={1.2} style={{ pointerEvents: "none" }} />
-                <circle cx={c2.x} cy={c2.y} r={8} fill={FIB_COLOR} opacity={0.18} style={{ pointerEvents: "none" }} />
-                <circle cx={c2.x} cy={c2.y} r={5} fill={FIB_COLOR} opacity={0.9} stroke="#fff" strokeWidth={1.2} style={{ pointerEvents: "none" }} />
+                <circle cx={ax1} cy={c1.y ?? priceToY(0) ?? 0} r={8} fill={FIB_COLOR} opacity={0.18} style={{ pointerEvents: "none" }} />
+                <circle cx={ax1} cy={c1.y ?? priceToY(0) ?? 0} r={5} fill={FIB_COLOR} opacity={0.9} stroke="#fff" strokeWidth={1.2} style={{ pointerEvents: "none" }} />
+                <circle cx={ax2} cy={c2.y ?? priceToY(1) ?? 0} r={8} fill={FIB_COLOR} opacity={0.18} style={{ pointerEvents: "none" }} />
+                <circle cx={ax2} cy={c2.y ?? priceToY(1) ?? 0} r={5} fill={FIB_COLOR} opacity={0.9} stroke="#fff" strokeWidth={1.2} style={{ pointerEvents: "none" }} />
               </>
             )}
           </>
