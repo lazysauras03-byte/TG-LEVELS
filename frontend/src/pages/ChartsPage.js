@@ -1,7 +1,7 @@
 // ChartsPage.js
-// ─── Single chart by default. Dual-layout button in topbar toggles Fyers-style
-// split view. Each panel is fully independent (symbol, timeframe, indicators,
-// live tick stream, drawings). Right panel has no sidebar. Divider is draggable.
+// ─── Single chart by default. Dual-layout toggle is inside the StatusBar
+// navbar (after Market Closed/Live). Each panel is fully independent.
+// Divider is draggable left/right. Right panel has no sidebar.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {
   useState, useCallback, useEffect, useRef, useMemo, memo,
@@ -66,13 +66,16 @@ const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onT
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ChartPanel — one fully independent chart panel.
-// pfx            : localStorage namespace e.g. "" | "left_" | "right_"
-// showSidebar    : whether to render the signals/stats sidebar
-// urlSymbol etc. : URL-overridden values (only passed to the primary panel)
+//   pfx         : localStorage namespace "" | "left_" | "right_"
+//   showSidebar : whether to render signals/stats sidebar
+//   dualMode / onDualToggle : passed through to StatusBar for the DUAL button
+//                             only the LEFT (or single) panel gets these
 // ═══════════════════════════════════════════════════════════════════════════════
 const ChartPanel = memo(function ChartPanel({
   pfx,
   showSidebar,
+  dualMode,
+  onDualToggle,
   urlSymbol,
   urlResolution,
   urlWaveTarget,
@@ -81,7 +84,7 @@ const ChartPanel = memo(function ChartPanel({
 }) {
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
 
-  // ── Symbol / resolution / mode state ──────────────────────────────────────
+  // ── Symbol / resolution / mode ─────────────────────────────────────────────
   const [symbol, setSymbol] = useState(() => urlSymbol || loadPref(pfx + "symbol", "NSE:NIFTY50-INDEX"));
   const [resolution, setResolution] = useState(() => urlResolution || loadPref(pfx + "resolution", 3));
   const [todayMode, setTodayMode] = useState(() => {
@@ -246,7 +249,7 @@ const ChartPanel = memo(function ChartPanel({
   return (
     <div className="cp-panel">
 
-      {/* Panel StatusBar */}
+      {/* StatusBar — receives dualMode + onDualToggle only on the primary panel */}
       <div className="cp-statusbar">
         <StatusBar
           connected={connected}
@@ -262,10 +265,12 @@ const ChartPanel = memo(function ChartPanel({
           crosshairBar={crosshairBar}
           onSidebarToggle={handleSidebarToggle}
           tickStreamActive={tickStreamActive}
+          dualMode={dualMode}
+          onDualToggle={onDualToggle}
         />
       </div>
 
-      {/* Panel body: toolbar + chart + sidebar */}
+      {/* Body: toolbar + chart + optional sidebar */}
       <div className="cp-body">
         <TradingToolbar
           selectedTool={selectedTool}
@@ -341,7 +346,7 @@ const ChartPanel = memo(function ChartPanel({
           )}
         </div>
 
-        {/* Sidebar — only in panels where showSidebar=true */}
+        {/* Sidebar — only where showSidebar=true */}
         {showSidebar && anySidebarIndicator && (
           <div className={`sidebar ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
             <div className="sidebar-sections">
@@ -391,7 +396,7 @@ const ChartPanel = memo(function ChartPanel({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ChartsPage — top-level: single chart OR dual layout depending on toggle
+// ChartsPage — orchestrates single vs dual mode
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function ChartsPage() {
   const navigate = useNavigate();
@@ -404,6 +409,9 @@ export default function ChartsPage() {
       savePref("dualMode", !v);
       return !v;
     });
+    // After React paints the new layout, tell charts to re-measure
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
   }, []);
 
   // ── Draggable divider — % width of left panel (clamped 20–80) ──────────────
@@ -426,12 +434,16 @@ export default function ChartsPage() {
       const clamped = Math.min(80, Math.max(20, raw));
       setSplitPct(clamped);
       savePref("splitPct", clamped);
+      // Tell every ResizeObserver / lightweight-charts instance to re-measure
+      window.dispatchEvent(new Event("resize"));
     }
     function onMouseUp() {
       if (!isDragging.current) return;
       isDragging.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      // Final resize flush after drag ends
+      window.dispatchEvent(new Event("resize"));
     }
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
@@ -467,7 +479,7 @@ export default function ChartsPage() {
   return (
     <div className="charts-page app-layout">
 
-      {/* ══ Topbar: home btn + dual-layout toggle ══════════════════════════════ */}
+      {/* ══ Topbar — original: home btn only. StatusBar lives inside ChartPanel. ══ */}
       <div className="charts-topbar">
         <button className="charts-home-btn" onClick={() => navigate("/")} title="Home">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -475,38 +487,23 @@ export default function ChartsPage() {
             <polyline points="9 22 9 12 15 12 15 22" />
           </svg>
         </button>
-
-        {/* Dual-layout toggle button */}
-        <button
-          className={`dual-layout-btn${dualMode ? " dual-layout-btn--active" : ""}`}
-          onClick={handleDualToggle}
-          title={dualMode ? "Back to single chart" : "Split: dual chart layout"}
-        >
-          {/* Two-pane icon */}
-          <svg viewBox="0 0 20 14" width="17" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" style={{ flexShrink: 0 }}>
-            <rect x="0.9" y="0.9" width="7.8" height="12.2" rx="1.2" />
-            <rect x="11.3" y="0.9" width="7.8" height="12.2" rx="1.2" />
-          </svg>
-          <span>{dualMode ? "Single" : "Dual"}</span>
-        </button>
-
-        {/* In single mode, StatusBar is rendered INSIDE ChartPanel's cp-statusbar,
-            which fills the whole topbar row below. The topbar here is just the
-            home + dual toggle buttons — ChartPanel renders its own status bar.
-            We add a flex-1 spacer so topbar height stays consistent. */}
-        <div style={{ flex: 1 }} />
+        {/* StatusBar fills the rest — rendered inside ChartPanel below */}
+        <div className="charts-status-bar-wrapper" />
       </div>
 
-      {/* ══ Content ════════════════════════════════════════════════════════════ */}
+      {/* ══ Content ══════════════════════════════════════════════════════════ */}
       {dualMode ? (
-        /* ── DUAL: two ChartPanel instances with draggable divider ─────────── */
+        /* ── DUAL: two ChartPanel instances + draggable divider ─────────── */
         <div className="dual-container" ref={containerRef}>
 
-          {/* Left panel */}
+          {/* Left panel — has DUAL button + sidebar */}
           <div className="dual-panel-wrap" style={{ width: `${splitPct}%` }}>
             <ChartPanel
+              key="dual-left"
               pfx="left_"
               showSidebar={true}
+              dualMode={dualMode}
+              onDualToggle={handleDualToggle}
               urlSymbol={urlParams.symbol}
               urlResolution={urlParams.resolution}
               urlWaveTarget={urlParams.waveTarget}
@@ -516,17 +513,24 @@ export default function ChartsPage() {
           </div>
 
           {/* Draggable divider */}
-          <div className="dual-divider" onMouseDown={onDividerMouseDown} title="Drag to resize panels">
+          <div
+            className="dual-divider"
+            onMouseDown={onDividerMouseDown}
+            title="Drag to resize panels"
+          >
             <div className="dual-divider-grip">
               <span /><span /><span />
             </div>
           </div>
 
-          {/* Right panel — no sidebar, no URL overrides */}
+          {/* Right panel — compact dual layout, no sidebar, no DUAL button */}
           <div className="dual-panel-wrap" style={{ flex: 1 }}>
             <ChartPanel
+              key="dual-right"
               pfx="right_"
               showSidebar={false}
+              dualMode={true}
+              onDualToggle={undefined}
               urlSymbol={null}
               urlResolution={null}
               urlWaveTarget={null}
@@ -537,11 +541,14 @@ export default function ChartsPage() {
 
         </div>
       ) : (
-        /* ── SINGLE: original layout — one ChartPanel, full sidebar ────────── */
+        /* ── SINGLE: original layout — one ChartPanel, full sidebar ─────── */
         <div className="main-content">
           <ChartPanel
+            key="single"
             pfx=""
             showSidebar={true}
+            dualMode={dualMode}
+            onDualToggle={handleDualToggle}
             urlSymbol={urlParams.symbol}
             urlResolution={urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget}

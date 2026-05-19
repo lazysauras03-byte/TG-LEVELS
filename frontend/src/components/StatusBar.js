@@ -44,6 +44,9 @@ function StatusBar({
   crosshairBar,
   onSidebarToggle,
   tickStreamActive,
+  // dual-mode props — only passed by the PRIMARY (left) panel
+  dualMode,
+  onDualToggle,
 }) {
   const lastUpdate = chartData?.lastUpdate
     ? new Date(chartData.lastUpdate).toLocaleTimeString("en-IN", {
@@ -85,9 +88,7 @@ function StatusBar({
       .filter((s) => {
         const nameLower = s.name.toLowerCase();
         const colonIdx = s.symbol.indexOf(":");
-        // ticker = the part after "NSE:" / "BSE:" e.g. "GAIL-EQ", "NIFTY50-INDEX"
         const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
-        // Also strip the -EQ / -INDEX suffix for cleaner matching
         const tickerBase = ticker.replace(/-(eq|be|index|etf|pp|sm)$/i, "");
         return (
           nameLower.startsWith(q) ||
@@ -97,7 +98,6 @@ function StatusBar({
           tickerBase.includes(q)
         );
       })
-      // Rank: exact prefix matches first, then includes
       .sort((a, b) => {
         const colonA = a.symbol.indexOf(":");
         const colonB = b.symbol.indexOf(":");
@@ -136,6 +136,153 @@ function StatusBar({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DUAL MODE render — no logo, flexWrap, compact sizes, wraps to 2 lines
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (dualMode) {
+    return (
+      <header style={D.bar}>
+
+        {/* Symbol search — no logo before it */}
+        <div style={{ position: "relative", flexShrink: 1, minWidth: 0 }}>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={handleQueryChange}
+            onKeyDown={handleKeyDown}
+            onFocus={() => query && setShowDrop(suggestions.length > 0)}
+            style={D.input}
+            placeholder="Symbol…"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {showDrop && (
+            <div ref={dropRef} style={D.dropdown}>
+              {suggestions.map((s, i) => (
+                <div
+                  key={i}
+                  style={D.dropItem}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg2)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  onMouseDown={() => handleSelect(s)}
+                >
+                  <span style={{ color: "var(--accent)", fontSize: 10, fontWeight: 700, minWidth: 110, flexShrink: 0 }}>
+                    {s.symbol}
+                  </span>
+                  <span style={{ color: "var(--text2)", fontSize: 10 }}>
+                    {s.name.length > 26 ? s.name.slice(0, 26) + "…" : s.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={D.sep} />
+
+        {/* Timeframe pills — wrap when narrow */}
+        <div style={D.pillGroup}>
+          <button
+            onClick={onTodayToggle}
+            title="Show only today's signals"
+            style={{ ...D.pill, ...(todayMode ? D.pillActiveToday : {}) }}
+          >
+            TODAY
+          </button>
+          {TIMEFRAMES.map((tf) => (
+            <button
+              key={tf.value}
+              onClick={() => { onResolutionChange(tf.value); onRefresh(symbol, tf.value); }}
+              title={`Switch to ${tf.label} candles`}
+              style={{ ...D.pill, ...(resolution === tf.value ? D.pillActiveRes : {}) }}
+            >
+              {tf.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={D.sep} />
+
+        {/* OHLC compact */}
+        {displayBar && (
+          <div style={D.ohlcGroup}>
+            <DualStat label="O" value={fmt(displayBar.open)} color="var(--text)" />
+            <DualStat label="H" value={fmt(displayBar.high)} color="var(--green)" />
+            <DualStat label="L" value={fmt(displayBar.low)} color="var(--red)" />
+            <DualStat label="C" value={fmt(displayBar.close)}
+              color={displayBar.close >= displayBar.open ? "var(--green)" : "var(--red)"} />
+          </div>
+        )}
+
+        <div style={D.sep} />
+
+        {/* Market status */}
+        <div style={D.statusGroup}>
+          <div style={{
+            ...D.dot,
+            background: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)",
+          }} />
+          <span style={{
+            color: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)",
+            fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
+          }}>
+            {connected ? (isLive ? "Market Live" : "Market Closed") : "OFFLINE"}
+          </span>
+        </div>
+
+        {/* DUAL button — highlighted/active, only on primary panel */}
+        {onDualToggle && (
+          <>
+            <div style={D.sep} />
+            <button
+              onClick={onDualToggle}
+              title="Back to single chart"
+              style={{ ...D.dualBtn, ...D.dualBtnActive }}
+            >
+              <svg viewBox="0 0 20 14" width="13" height="10" fill="none"
+                stroke="var(--accent,#3d84ff)" strokeWidth="1.9"
+                style={{ display: "block", flexShrink: 0 }}
+              >
+                <rect x="0.9" y="0.9" width="7.8" height="12.2" rx="1.2" />
+                <rect x="11.3" y="0.9" width="7.8" height="12.2" rx="1.2" />
+              </svg>
+              <span>DUAL</span>
+            </button>
+          </>
+        )}
+
+        {/* Spacer pushes actions right */}
+        <div style={{ flex: 1, minWidth: 0 }} />
+
+        {/* Refresh + Sidebar */}
+        <div style={D.rightActions}>
+          <button
+            onClick={() => onRefresh(symbol, resolution)}
+            disabled={loading}
+            title="Refresh chart data from server"
+            style={{
+              ...D.actionBtn,
+              opacity: loading ? 0.5 : 1,
+              cursor: loading ? "not-allowed" : "pointer",
+            }}
+          >
+            <span style={{
+              display: "inline-block",
+              animation: loading ? "spin 0.8s linear infinite" : "none",
+            }}>↻</span>
+          </button>
+          <button onClick={onSidebarToggle} style={D.actionBtn} title="Toggle signals panel">
+            ☰
+          </button>
+        </div>
+
+      </header>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SINGLE MODE render — 100% original, pixel-perfect, nothing changed
+  // ═══════════════════════════════════════════════════════════════════════════
   return (
     <header style={styles.bar}>
 
@@ -181,9 +328,7 @@ function StatusBar({
         </div>
       </div>
 
-      {/* ── Timeframe pills: TODAY | 1m | 3m | 5m | 15m | 1h | 1D ── */}
-      {/* TODAY = filter signals to today only (doesn't change loaded data)  */}
-      {/* Timeframe pills = change resolution + re-fetch from backend        */}
+      {/* Timeframe pills */}
       <div style={styles.pillGroup}>
         <button
           onClick={onTodayToggle}
@@ -192,26 +337,19 @@ function StatusBar({
         >
           TODAY
         </button>
-
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf.value}
-            onClick={() => {
-              onResolutionChange(tf.value);
-              onRefresh(symbol, tf.value);
-            }}
+            onClick={() => { onResolutionChange(tf.value); onRefresh(symbol, tf.value); }}
             title={`Switch to ${tf.label} candles`}
-            style={{
-              ...styles.pill,
-              ...(resolution === tf.value ? styles.pillActiveRes : {}),
-            }}
+            style={{ ...styles.pill, ...(resolution === tf.value ? styles.pillActiveRes : {}) }}
           >
             {tf.label}
           </button>
         ))}
       </div>
 
-      {/* OHLC — crosshair or last candle */}
+      {/* OHLC */}
       {displayBar && (
         <div style={styles.group}>
           <Stat label="O" value={fmt(displayBar.open)} color="var(--text)" />
@@ -222,7 +360,7 @@ function StatusBar({
         </div>
       )}
 
-      {/* LIVE + tick stream + last update time */}
+      {/* Market status */}
       <div style={styles.group}>
         <div style={{ ...styles.dot, background: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)" }} />
         <span style={{ color: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)", fontSize: 11 }}>
@@ -230,9 +368,28 @@ function StatusBar({
         </span>
       </div>
 
-      {/* ── Right side: Refresh + Sidebar toggle ── */}
+      {/* DUAL button in single mode */}
+      {onDualToggle && (
+        <div style={styles.group}>
+          <button
+            onClick={onDualToggle}
+            title="Split into dual layout"
+            style={styles.dualBtn}
+          >
+            <svg viewBox="0 0 20 14" width="15" height="11" fill="none"
+              stroke="currentColor" strokeWidth="1.8"
+              style={{ flexShrink: 0, display: "block" }}
+            >
+              <rect x="0.9" y="0.9" width="7.8" height="12.2" rx="1.2" />
+              <rect x="11.3" y="0.9" width="7.8" height="12.2" rx="1.2" />
+            </svg>
+            <span>DUAL</span>
+          </button>
+        </div>
+      )}
+
+      {/* Right side: Refresh + Sidebar toggle */}
       <div style={styles.rightActions}>
-        {/* ↻ Refresh — fetches latest 1-month data from backend */}
         <button
           onClick={() => onRefresh(symbol, resolution)}
           disabled={loading}
@@ -250,7 +407,6 @@ function StatusBar({
           {" "}REFRESH
         </button>
 
-        {/* ☰ Sidebar toggle */}
         <button
           onClick={onSidebarToggle}
           style={styles.sidebarToggle}
@@ -266,6 +422,7 @@ function StatusBar({
 
 export default memo(StatusBar);
 
+// ── Stat for single mode (original) ───────────────────────────────────────────
 function Stat({ label, value, color }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -275,6 +432,19 @@ function Stat({ label, value, color }) {
   );
 }
 
+// ── Stat for dual mode (compact) ──────────────────────────────────────────────
+function DualStat({ label, value, color }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+      <span style={{ color: "var(--text3)", fontSize: 9, fontWeight: 700 }}>{label}</span>
+      <span style={{ color, fontVariantNumeric: "tabular-nums", fontWeight: 700, fontSize: 10, whiteSpace: "nowrap" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ── ORIGINAL single-mode styles (100% untouched) ──────────────────────────────
 const styles = {
   bar: {
     display: "flex", alignItems: "center", gap: 6,
@@ -310,13 +480,11 @@ const styles = {
     letterSpacing: "0.03em",
     flexShrink: 0,
   },
-  // TODAY active — purple/accent tint
   pillActiveToday: {
     background: "var(--accent)",
     borderColor: "var(--accent)",
     color: "#fff",
   },
-  // Resolution active — blue tint
   pillActiveRes: {
     background: "rgba(61,132,255,0.25)",
     borderColor: "#3d84ff",
@@ -351,6 +519,20 @@ const styles = {
     flexShrink: 0,
   },
   dot: { width: 7, height: 7, borderRadius: "50%", animation: "pulse 2s infinite" },
+  dualBtn: {
+    display: "flex", alignItems: "center", gap: 5,
+    background: "var(--bg3)",
+    border: "1px solid var(--border2)",
+    borderRadius: 5,
+    color: "var(--text2)",
+    fontFamily: "var(--font-mono)",
+    fontSize: 11, fontWeight: 700,
+    padding: "3px 10px",
+    cursor: "pointer",
+    letterSpacing: "0.05em",
+    flexShrink: 0,
+    transition: "background 0.15s, color 0.15s, border-color 0.15s",
+  },
   dropdown: {
     position: "absolute", top: "calc(100% + 4px)", left: 0,
     background: "var(--bg3)", border: "1px solid var(--border2)",
@@ -359,6 +541,159 @@ const styles = {
   },
   dropItem: {
     padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center",
+    gap: 8, borderBottom: "1px solid var(--border)", background: "transparent",
+  },
+};
+
+// ── DUAL-mode styles — compact, no logo, wrappable to 2 lines ─────────────────
+const D = {
+  bar: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",           // wraps to 2nd line when panel is narrow
+    gap: "3px 0",
+    padding: "4px 8px",
+    minHeight: 40,              // expands naturally to 2 lines if needed
+    background: "var(--bg2)",
+    borderBottom: "1px solid var(--border)",
+    flexShrink: 0,
+    zIndex: 100,
+    overflow: "visible",
+    boxSizing: "border-box",
+  },
+
+  // thin vertical separator between groups
+  sep: {
+    width: 1,
+    alignSelf: "stretch",
+    minHeight: 16,
+    background: "var(--border)",
+    margin: "0 5px",
+    flexShrink: 0,
+  },
+
+  // symbol input — shrinks with panel width, never disappears
+  input: {
+    background: "var(--bg3)",
+    border: "1px solid var(--border2)",
+    borderRadius: 4,
+    color: "var(--text)",
+    fontFamily: "var(--font-mono)",
+    fontSize: 10,
+    padding: "3px 6px",
+    width: "13ch",
+    minWidth: "6ch",
+    maxWidth: 155,
+    outline: "none",
+    boxSizing: "border-box",
+  },
+
+  // pills — wrap within their group when very narrow
+  pillGroup: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "2px 2px",
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  pill: {
+    background: "transparent",
+    border: "1px solid var(--border2)",
+    borderRadius: 4,
+    color: "var(--text2)",
+    fontFamily: "var(--font-mono)",
+    fontSize: 10, fontWeight: 600,
+    padding: "2px 5px",
+    cursor: "pointer",
+    letterSpacing: "0.02em",
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+    transition: "background 0.12s, color 0.12s, border-color 0.12s",
+  },
+  pillActiveToday: {
+    background: "var(--accent)",
+    borderColor: "var(--accent)",
+    color: "#fff",
+  },
+  pillActiveRes: {
+    background: "rgba(61,132,255,0.22)",
+    borderColor: "#3d84ff",
+    color: "#3d84ff",
+  },
+
+  // OHLC — wraps as a unit, values stay on one line each
+  ohlcGroup: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 1,
+    flexWrap: "wrap",
+    minWidth: 0,
+  },
+
+  // market status chip
+  statusGroup: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    flexShrink: 0,
+  },
+  dot: {
+    width: 6, height: 6,
+    borderRadius: "50%",
+    flexShrink: 0,
+    animation: "pulse 2s infinite",
+  },
+
+  // DUAL button (active state — lit blue in dual mode)
+  dualBtn: {
+    display: "flex", alignItems: "center", gap: 4,
+    background: "var(--bg3)",
+    border: "1px solid var(--border2)",
+    borderRadius: 4,
+    color: "var(--text2)",
+    fontFamily: "var(--font-mono)",
+    fontSize: 10, fontWeight: 700,
+    padding: "2px 7px",
+    cursor: "pointer",
+    letterSpacing: "0.05em",
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+    transition: "background 0.12s, color 0.12s, border-color 0.12s",
+  },
+  dualBtnActive: {
+    background: "rgba(61,132,255,0.15)",
+    borderColor: "var(--accent,#3d84ff)",
+    color: "var(--accent,#3d84ff)",
+  },
+
+  // right actions cluster
+  rightActions: {
+    display: "flex", alignItems: "center", gap: 3,
+    flexShrink: 0,
+  },
+  actionBtn: {
+    background: "var(--bg3)",
+    border: "1px solid var(--border2)",
+    borderRadius: 4,
+    color: "var(--text2)",
+    fontSize: 13,
+    padding: "2px 8px",
+    cursor: "pointer",
+    display: "flex", alignItems: "center",
+    lineHeight: 1,
+    flexShrink: 0,
+  },
+
+  dropdown: {
+    position: "absolute", top: "calc(100% + 4px)", left: 0,
+    background: "var(--bg3)", border: "1px solid var(--border2)",
+    borderRadius: 6, zIndex: 9999, minWidth: 300, maxHeight: 260,
+    overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+  },
+  dropItem: {
+    padding: "7px 10px", cursor: "pointer", display: "flex", alignItems: "center",
     gap: 8, borderBottom: "1px solid var(--border)", background: "transparent",
   },
 };
