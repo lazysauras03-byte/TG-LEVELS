@@ -82,6 +82,26 @@
   background: rgba(41, 98, 255, 0.2);
 }
 
+/* Link button — teal accent when linked */
+.tv-link-btn.active {
+  color: #26a69a !important;
+  background: rgba(38, 166, 154, 0.15) !important;
+}
+
+.tv-link-btn.active:hover {
+  background: rgba(38, 166, 154, 0.25) !important;
+}
+
+.tv-link-btn:not(.active) {
+  color: var(--text3);
+  opacity: 0.7;
+}
+
+.tv-link-btn:not(.active):hover {
+  color: var(--text2);
+  opacity: 1;
+}
+
 .tv-tool-btn.danger {
   color: #787b86;
 }

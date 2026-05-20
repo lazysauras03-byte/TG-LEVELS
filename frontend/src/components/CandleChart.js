@@ -372,6 +372,10 @@ export default function CandleChart({
   srLines = [],              // [{price, color, label, lineStyle}] drawn as price lines
   onSRLinesDrawn = null,     // callback(bool) when sr lines are applied/removed
   drawColor = "white",
+  // ── Drawing sync (link feature) ─────────────────────────────────────────
+  linkColor = null,
+  sharedDrawings = [],
+  onPublishDrawings = null,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -1034,6 +1038,9 @@ export default function CandleChart({
         hidden={drawingsHidden}
         drawColor={drawColor}
         lastBarTime={candles?.length ? candles[candles.length - 1].time : null}
+        linkColor={linkColor}
+        sharedDrawings={sharedDrawings || []}
+        onPublishDrawings={onPublishDrawings}
       />
 
       {/* Hint labels */}

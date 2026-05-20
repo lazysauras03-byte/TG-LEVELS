@@ -1,42 +1,32 @@
 // DrawingContext.js
-// Module-level store for shared drawings between linked panels.
-// Panels with the same linkColor share drawings in real-time.
-// linkColor: null = unlinked (private drawings only)
-// linkColor: "yellow"|"blue"|"green"|"red" = shared group
+// Symbol-based drawing sync between linked panels.
+// Each panel can toggle "linked" ON/OFF.
+// When ON, any drawing added/changed is mirrored to ALL other panels
+// that share the same symbol AND also have linking ON.
+// No more color groups — just a simple boolean link per panel.
 
 import { createContext, useContext, useCallback, useRef, useState, useEffect } from "react";
 
-// ─── Module-level shared store (survives re-renders) ──────────────────────────
-const _groupDrawings = {}; // { [linkColor]: drawing[] }
-const _groupSubscribers = {}; // { [linkColor]: Set<fn> }
+// ─── Module-level registry (survives re-renders) ──────────────────────────────
+// _panels: Map<panelId, { symbol: string, linked: boolean, notify: fn }>
+const _panels = new Map();
 
-function getGroupDrawings(linkColor) {
-  if (!linkColor) return [];
-  return _groupDrawings[linkColor] || [];
-}
-
-function setGroupDrawings(linkColor, drawings) {
-  if (!linkColor) return;
-  _groupDrawings[linkColor] = drawings;
-  // Notify all subscribers in this group
-  const subs = _groupSubscribers[linkColor];
-  if (subs) subs.forEach((fn) => fn(drawings));
-}
-
-function subscribeGroup(linkColor, fn) {
-  if (!linkColor) return () => { };
-  if (!_groupSubscribers[linkColor]) _groupSubscribers[linkColor] = new Set();
-  _groupSubscribers[linkColor].add(fn);
-  return () => _groupSubscribers[linkColor]?.delete(fn);
+// Broadcast drawings to all panels sharing the same symbol (except the sender)
+function broadcastDrawings(senderId, symbol, drawings) {
+  _panels.forEach((entry, id) => {
+    if (id === senderId) return;
+    if (!entry.linked) return;
+    if (entry.symbol !== symbol) return;
+    entry.notify([...drawings]);
+  });
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
 const DrawingContext = createContext(null);
 
 export function DrawingProvider({ children }) {
-  // Panel link colors — panels register/update via usePanelLink
   return (
-    <DrawingContext.Provider value={{ getGroupDrawings, setGroupDrawings, subscribeGroup }}>
+    <DrawingContext.Provider value={{}}>
       {children}
     </DrawingContext.Provider>
   );
@@ -46,50 +36,50 @@ export function useDrawingContext() {
   return useContext(DrawingContext);
 }
 
-// ─── Hook for a panel to participate in link sync ─────────────────────────────
-// Returns { linkColor, setLinkColor, sharedDrawings, publishDrawings }
-export function usePanelLink(panelId) {
-  const [linkColor, setLinkColor] = useState(null);
-  const linkColorRef = useRef(null);
+// ─── Hook for a panel to participate in symbol-based link sync ────────────────
+// panelId  : unique string e.g. "panel_0"
+// symbol   : current symbol this panel is showing
+// Returns  : { linked, setLinked, sharedDrawings, publishDrawings }
+export function usePanelLink(panelId, symbol) {
+  const [linked, setLinkedState] = useState(false);
+  // sharedDrawings — last set received from another panel; stable array (never null)
   const [sharedDrawings, setSharedDrawings] = useState([]);
+  const linkedRef = useRef(false);
+  const symbolRef = useRef(symbol);
 
-  // Keep ref in sync for use inside closures
-  useEffect(() => {
-    linkColorRef.current = linkColor;
-  }, [linkColor]);
+  // Keep refs in sync
+  useEffect(() => { symbolRef.current = symbol; }, [symbol]);
+  useEffect(() => { linkedRef.current = linked; }, [linked]);
 
-  // Subscribe/unsubscribe when linkColor changes
+  // Register / update this panel in the global registry
   useEffect(() => {
-    if (!linkColor) {
-      setSharedDrawings([]);
-      return;
-    }
-    // On subscribe, immediately load existing shared drawings
-    setSharedDrawings(getGroupDrawings(linkColor));
-    const unsub = subscribeGroup(linkColor, (drawings) => {
-      setSharedDrawings([...drawings]);
+    _panels.set(panelId, {
+      symbol,
+      linked,
+      notify: (drawings) => setSharedDrawings(drawings),
     });
-    return unsub;
-  }, [linkColor]);
+    return () => { _panels.delete(panelId); };
+  }, [panelId, symbol, linked]);
 
-  // publishDrawings — called by DrawingOverlay when local drawings change
-  const publishDrawings = useCallback((drawings, linkedOnly) => {
-    const lc = linkColorRef.current;
-    if (!lc) return; // not linked — nothing to broadcast
-    // Only publish drawings flagged as linked (or all if linkedOnly=false)
-    const toShare = linkedOnly
-      ? drawings.filter((d) => d.linked)
-      : drawings;
-    setGroupDrawings(lc, toShare);
-  }, []);
+  // When we unlink, clear shared drawings so they don't linger on screen
+  useEffect(() => {
+    if (!linked) setSharedDrawings([]);
+  }, [linked]);
 
-  return { linkColor, setLinkColor, sharedDrawings, publishDrawings };
+  // Toggle linked state
+  const setLinked = useCallback((val) => {
+    setLinkedState(val);
+    linkedRef.current = val;
+    // Update registry immediately so next broadcast sees the new value
+    const existing = _panels.get(panelId);
+    if (existing) _panels.set(panelId, { ...existing, linked: val });
+  }, [panelId]);
+
+  // Call when local drawings change — broadcasts to matching symbol panels
+  const publishDrawings = useCallback((drawings) => {
+    if (!linkedRef.current) return;
+    broadcastDrawings(panelId, symbolRef.current, drawings);
+  }, [panelId]);
+
+  return { linked, setLinked, sharedDrawings, publishDrawings };
 }
-
-// ─── Link color palette (matches TradingView dots) ───────────────────────────
-export const LINK_COLORS = [
-  { id: "yellow", label: "Yellow", hex: "#f5c518", dim: "rgba(245,197,24,0.18)" },
-  { id: "blue", label: "Blue", hex: "#2d7ef5", dim: "rgba(45,126,245,0.18)" },
-  { id: "green", label: "Green", hex: "#26a69a", dim: "rgba(38,166,154,0.18)" },
-  { id: "red", label: "Red", hex: "#ef5350", dim: "rgba(239,83,80,0.18)" },
-];

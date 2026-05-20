@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { useMarketStatus } from "../hooks/useMarketStatus";
 import { useTheme } from "../App";
 import { BACKEND } from "../config";
-import { LayoutPicker, LinkDotButton } from "../pages/ChartsPage";
+import { LayoutPicker } from "../pages/ChartsPage";
 
 // ── Symbols loader ────────────────────────────────────────────────────────────
 let _symbolsCache = [];
@@ -52,7 +52,6 @@ const TIMEFRAMES = [
 //   onSidebarToggle                              — sidebar toggle
 //   tickStreamActive                             — live tick indicator
 //   layoutId, onLayoutChange                     — layout picker (primary panel only)
-//   linkColor, onSetLink                         — drawing link dot
 //   dualMode, onDualToggle                       — KEPT as dead props so callers
 //                                                   don't need to be updated yet
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,9 +69,6 @@ function StatusBar({
   // Layout picker — only primary panel passes these
   layoutId,
   onLayoutChange,
-  // Drawing link dot
-  linkColor,
-  onSetLink,
 }) {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
@@ -285,11 +281,6 @@ function StatusBar({
         >
           {theme === "dark" ? "☀" : "🌙"}
         </button>
-
-        {/* Link dot */}
-        {onSetLink && (
-          <LinkDotButton linkColor={linkColor} onSetLink={onSetLink} />
-        )}
 
         {/* Refresh */}
         <button

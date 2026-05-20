@@ -76,6 +76,20 @@ const icons = {
       <line x1="3" y1="3" x2="15" y2="15" strokeLinecap="round" />
     </svg>
   ),
+  // Link chain icon — solid when linked, broken when not
+  linkOn: (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M7 11l-2 2a2.83 2.83 0 1 1-4-4l2-2" strokeLinecap="round" />
+      <path d="M11 7l2-2a2.83 2.83 0 1 1 4 4l-2 2" strokeLinecap="round" />
+      <line x1="6.5" y1="11.5" x2="11.5" y2="6.5" strokeLinecap="round" />
+    </svg>
+  ),
+  linkOff: (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M7 11l-2 2a2.83 2.83 0 1 1-4-4l2-2" strokeLinecap="round" strokeDasharray="2,1.5" />
+      <path d="M11 7l2-2a2.83 2.83 0 1 1 4 4l-2 2" strokeLinecap="round" strokeDasharray="2,1.5" />
+    </svg>
+  ),
   trash: (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
       <line x1="2" y1="5" x2="16" y2="5" strokeLinecap="round" />
@@ -130,6 +144,7 @@ const TOOL_GROUPS = [
   },
   { id: "divider1", divider: true },
   { id: "hide", icon: icons.eye, label: "Hide / Show All Drawings", toggle: true, subtools: [] },
+  // "link" is injected here (below eye, above trash) only when panelCount > 1
   { id: "divider2", divider: true },
   { id: "trash", icon: icons.trash, label: "Remove All Drawings", action: true, danger: true, subtools: [] },
 ];
@@ -212,6 +227,10 @@ export default function TradingToolbar({
   srLinesDrawn = false,
   drawColor,
   setDrawColor,
+  // Link sync props — only used when panelCount > 1
+  panelCount = 1,
+  linked = false,
+  onLinkToggle,
 }) {
   const [openDrawer, setOpenDrawer] = useState(null);
   const [drawerPos, setDrawerPos] = useState(0);
@@ -226,6 +245,20 @@ export default function TradingToolbar({
 
   const btnRefs = useRef({});
   const toolbarRef = useRef(null);
+
+  // Build final tool list — inject link tool when multi-panel
+  const toolList = React.useMemo(() => {
+    if (panelCount <= 1) return TOOL_GROUPS;
+    // Inject after "hide" (before divider2)
+    const result = [];
+    for (const g of TOOL_GROUPS) {
+      result.push(g);
+      if (g.id === "hide") {
+        result.push({ id: "link", isLink: true });
+      }
+    }
+    return result;
+  }, [panelCount]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -311,8 +344,33 @@ export default function TradingToolbar({
 
   return (
     <div className="tv-toolbar" ref={toolbarRef}>
-      {TOOL_GROUPS.map((group) => {
+      {toolList.map((group) => {
+        // Divider
         if (group.divider) return <div key={group.id} className="tv-toolbar-divider" />;
+
+        // ── Link toggle button ──────────────────────────────────────────────
+        if (group.isLink) {
+          return (
+            <div
+              key="link"
+              className={`tv-tool-wrap ${linked ? "active" : ""}`}
+              title={linked ? "Unlink drawings from other panels (same symbol)" : "Link drawings — syncs to panels with same symbol"}
+            >
+              <button
+                ref={(el) => (btnRefs.current["link"] = el)}
+                className={`tv-tool-btn tv-link-btn ${linked ? "active" : ""}`}
+                onClick={() => onLinkToggle && onLinkToggle(!linked)}
+                title={linked ? "Linked — drawings sync to same-symbol panels" : "Click to link drawings across same-symbol panels"}
+              >
+                <span className="tv-tool-icon">
+                  {linked ? icons.linkOn : icons.linkOff}
+                </span>
+              </button>
+            </div>
+          );
+        }
+
+        // ── Regular tool ────────────────────────────────────────────────────
         const active = isGroupActive(group);
         const hasChevron = (group.subtools && group.subtools.length > 0) || group.hasDraw;
         const drawerOpen = openDrawer === group.id;

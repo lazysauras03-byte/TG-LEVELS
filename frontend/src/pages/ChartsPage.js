@@ -20,7 +20,7 @@ import WaveStatsPanel from "../components/WaveStatsPanel";
 import IndicatorPanel from "../components/IndicatorPanel";
 import EmaFloatPanel from "../components/EmaFloatPanel";
 import TradingToolbar from "../components/TradingToolbar";
-import { DrawingProvider, usePanelLink, LINK_COLORS } from "../components/DrawingContext";
+import { DrawingProvider, usePanelLink } from "../components/DrawingContext";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import "./ChartsPage.css";
@@ -173,91 +173,6 @@ export function LayoutPicker({ currentLayout, onSelect }) {
   );
 }
 
-// ─── Link Dot Button (exported → used by StatusBar) ───────────────────────────
-export function LinkDotButton({ linkColor, onSetLink }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    function handler(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const active = LINK_COLORS.find((c) => c.id === linkColor);
-
-  return (
-    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title={linkColor ? `Linked (${linkColor}) — click to change` : "Link drawings to other panels"}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          width: 28, height: 28,
-          background: "var(--bg3)",
-          border: `1.5px solid ${active ? active.hex : "var(--border2)"}`,
-          borderRadius: "50%",
-          cursor: "pointer",
-          transition: "border-color 0.15s",
-          padding: 0,
-          flexShrink: 0,
-        }}
-      >
-        <span style={{
-          display: "block", width: 9, height: 9, borderRadius: "50%",
-          background: active ? active.hex : "var(--text3)",
-          flexShrink: 0,
-        }} />
-      </button>
-
-      {open && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 6px)", right: 0,
-          background: "var(--bg3)", border: "1px solid var(--border2)",
-          borderRadius: 8, zIndex: 9999, padding: 8,
-          boxShadow: "0 8px 32px var(--shadow)", minWidth: 150,
-        }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text3)", textTransform: "uppercase", marginBottom: 6 }}>
-            Link Drawings
-          </div>
-          <button
-            onClick={() => { onSetLink(null); setOpen(false); }}
-            style={{
-              display: "flex", alignItems: "center", gap: 8, width: "100%",
-              background: linkColor == null ? "var(--bg2)" : "transparent",
-              border: "none", borderRadius: 4, padding: "5px 8px",
-              color: "var(--text2)", cursor: "pointer", fontSize: 11, fontFamily: "var(--font-mono)",
-              fontWeight: linkColor == null ? 700 : 400,
-            }}
-          >
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--text3)", display: "block", flexShrink: 0 }} />
-            Unlinked
-          </button>
-          {LINK_COLORS.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => { onSetLink(c.id); setOpen(false); }}
-              style={{
-                display: "flex", alignItems: "center", gap: 8, width: "100%",
-                background: linkColor === c.id ? c.dim : "transparent",
-                border: "none", borderRadius: 4, padding: "5px 8px",
-                color: linkColor === c.id ? c.hex : "var(--text2)",
-                cursor: "pointer", fontSize: 11, fontFamily: "var(--font-mono)",
-                fontWeight: linkColor === c.id ? 700 : 400,
-              }}
-            >
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.hex, display: "block", flexShrink: 0 }} />
-              {c.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── SidebarSection — defined OUTSIDE so it never remounts ────────────────────
 const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onTabChange, children }) {
   return (
@@ -300,6 +215,7 @@ const ChartPanel = memo(function ChartPanel({
   pfx,
   showSidebar,
   panelIdx,
+  panelCount,
   layoutId,
   onLayoutChange,
   urlSymbol,
@@ -311,9 +227,6 @@ const ChartPanel = memo(function ChartPanel({
   // ── EACH PANEL has its own socket/data — fully independent ─────────────────
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
 
-  // ── Drawing link — per panel, isolated ────────────────────────────────────
-  const { linkColor, setLinkColor, sharedDrawings, publishDrawings } = usePanelLink(`panel_${panelIdx ?? 0}`);
-
   // ── Symbol / resolution / mode — all namespaced by pfx ────────────────────
   const [symbol, setSymbol] = useState(() => urlSymbol || loadPref(pfx + "symbol", "NSE:NIFTY50-INDEX"));
   const [resolution, setResolution] = useState(() => urlResolution || loadPref(pfx + "resolution", 3));
@@ -324,6 +237,12 @@ const ChartPanel = memo(function ChartPanel({
   const [sidebarOpen, setSidebarOpen] = useState(() => loadPref(pfx + "sidebarOpen", true));
   const [activeTabs, setActiveTabs] = useState(() =>
     loadPref(pfx + "activeTabs", { bubble: "signals", waves: "signals" })
+  );
+
+  // ── Drawing link — symbol-based sync, only active when panelCount > 1 ────
+  const { linked, setLinked, sharedDrawings, publishDrawings } = usePanelLink(
+    `panel_${panelIdx ?? 0}`,
+    symbol
   );
 
   useEffect(() => { savePref(pfx + "symbol", symbol); }, [symbol]);           // eslint-disable-line
@@ -501,8 +420,6 @@ const ChartPanel = memo(function ChartPanel({
           onDualToggle={undefined}
           layoutId={isPrimary ? layoutId : undefined}
           onLayoutChange={isPrimary ? onLayoutChange : undefined}
-          linkColor={linkColor}
-          onSetLink={setLinkColor}
         />
       </div>
 
@@ -519,6 +436,9 @@ const ChartPanel = memo(function ChartPanel({
           srLinesDrawn={srLinesDrawn}
           drawColor={drawColor}
           setDrawColor={setDrawColor}
+          panelCount={panelCount ?? 1}
+          linked={linked}
+          onLinkToggle={setLinked}
         />
 
         <div className="chart-area">
@@ -578,7 +498,7 @@ const ChartPanel = memo(function ChartPanel({
               srLines={srLinesToDraw}
               onSRLinesDrawn={setSrLinesDrawn}
               drawColor={drawColor}
-              linkColor={linkColor}
+              linkColor={linked ? "linked" : null}
               sharedDrawings={sharedDrawings}
               onPublishDrawings={publishDrawings}
             />
@@ -714,6 +634,7 @@ function LayoutSingle({ urlParams, layoutId, onLayoutChange }) {
         key="p0"
         pfx=""
         panelIdx={0}
+        panelCount={1}
         showSidebar={true}
         layoutId={layoutId}
         onLayoutChange={onLayoutChange}
@@ -733,7 +654,7 @@ function Layout2H({ urlParams, layoutId, onLayoutChange }) {
   return (
     <div className="layout-2h" ref={containerRef}>
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
-        <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={true}
+        <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
           layoutId={layoutId} onLayoutChange={onLayoutChange}
           urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -742,7 +663,7 @@ function Layout2H({ urlParams, layoutId, onLayoutChange }) {
       </div>
       <Divider dir="col" onMouseDown={onDivMouseDown} />
       <div className="layout-cell" style={{ flex: 1 }}>
-        <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+        <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
           layoutId={undefined} onLayoutChange={undefined}
           urlSymbol={null} urlResolution={null}
           urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -758,7 +679,7 @@ function Layout2V({ urlParams, layoutId, onLayoutChange }) {
   return (
     <div className="layout-2v" ref={containerRef}>
       <div className="layout-cell" style={{ height: `${rowPct}%` }}>
-        <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={true}
+        <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
           layoutId={layoutId} onLayoutChange={onLayoutChange}
           urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -767,7 +688,7 @@ function Layout2V({ urlParams, layoutId, onLayoutChange }) {
       </div>
       <Divider dir="row" onMouseDown={onDivMouseDown} />
       <div className="layout-cell" style={{ flex: 1 }}>
-        <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+        <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
           layoutId={undefined} onLayoutChange={undefined}
           urlSymbol={null} urlResolution={null}
           urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -785,7 +706,7 @@ function Layout3({ urlParams, layoutId, onLayoutChange }) {
     <div className="layout-3" ref={containerRef}>
       {/* Left column */}
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
-        <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={true}
+        <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={3} showSidebar={true}
           layoutId={layoutId} onLayoutChange={onLayoutChange}
           urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -796,7 +717,7 @@ function Layout3({ urlParams, layoutId, onLayoutChange }) {
       {/* Right column — split top/bottom */}
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPct}%` }}>
-          <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={3} showSidebar={false}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -804,7 +725,7 @@ function Layout3({ urlParams, layoutId, onLayoutChange }) {
         </div>
         <Divider dir="row" onMouseDown={onRowMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
-          <ChartPanel key="p2" pfx="p3_" panelIdx={2} showSidebar={false}
+          <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={3} showSidebar={false}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -825,7 +746,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
       {/* Left column */}
       <div className="layout-col" style={{ width: `${colPct}%` }} ref={leftRef}>
         <div className="layout-cell" style={{ height: `${rowPctL}%` }}>
-          <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={false}
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={4} showSidebar={false}
             layoutId={layoutId} onLayoutChange={onLayoutChange}
             urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -834,7 +755,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
         </div>
         <Divider dir="row" onMouseDown={onRowLMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
-          <ChartPanel key="p2" pfx="p3_" panelIdx={2} showSidebar={false}
+          <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={4} showSidebar={false}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -845,7 +766,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
       {/* Right column */}
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPctR}%` }}>
-          <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={4} showSidebar={false}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -853,7 +774,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
         </div>
         <Divider dir="row" onMouseDown={onRowRMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
-          <ChartPanel key="p3" pfx="p4_" panelIdx={3} showSidebar={false}
+          <ChartPanel key="p3" pfx="p4_" panelIdx={3} panelCount={4} showSidebar={false}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
