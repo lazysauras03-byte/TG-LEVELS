@@ -101,6 +101,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     drawColor = "white",
     drawThickness = 1,
     lastBarTime = null,
+    onContextMenu = null,
     // Drawing sync props
     linkColor = null,
     sharedDrawings = [],
@@ -593,6 +594,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     getDrawings() { return localDrawingsRef.current; },
     addFibDrawing({ p1Price, p1Time = null, p2Price, p2Time = null }) {
       if (p1Price == null || p2Price == null) return;
+      // p1 = wave tip (ratio 0), p2 = wave origin (ratio 1) — as sent by FibDashboard
+      // Bull: p1=High(0=top), p2=Low(1=bottom)   Bear: p1=Low(0=bottom), p2=High(1=top)
       const linked = !!linkColorRef.current;
       const next = [...localDrawingsRef.current, {
         id: uid(), type: "fibRetracement",
@@ -738,6 +741,10 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          if (onContextMenu) onContextMenu(e);
+        }}
       >
         {/* Transparent hit surface for drawing tools */}
         {isDrawing && (
@@ -857,10 +864,15 @@ function buildDrawing({ tool, start, current }, linked = false) {
   if (tool === "fibRetracement") {
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
     if (start.price == null || current.price == null) return null;
+    // p1 = where you RELEASE (drag end) = ratio 0 (wave tip / 0-line)
+    // p2 = where you STARTED dragging   = ratio 1 (wave origin / 1-line)
+    // Bull drag bottom→top: p1=High(0=top), p2=Low(1=bottom)  → trap zone near 0 = top ✓
+    // Bear drag top→bottom: p1=Low(0=bottom), p2=High(1=top)  → trap zone near 0 = bottom ✓
+    // Exactly matches FibDashboard: p1=toPrice(tip), p2=fromPrice(origin)
     return {
       id: uid(), type: "fibRetracement", linked,
-      p1: { price: start.price, time: start.time, px: start.x },
-      p2: { price: current.price, time: current.time, px: current.x },
+      p1: { price: current.price, time: current.time, px: current.x },
+      p2: { price: start.price, time: start.time, px: start.x },
     };
   }
   return null;
@@ -915,7 +927,13 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
 
   if (tool === "fibRetracement") {
     if (start.price == null || current.price == null) return null;
-    const priceRange = current.price - start.price;
+    // p1 = current (drag end = tip = ratio 0), p2 = start (origin = ratio 1)
+    // Bull drag up:   current=High(0=top), start=Low(1=bottom)  — priceRange = Low-High < 0
+    // Bear drag down: current=Low(0=bot),  start=High(1=top)    — priceRange = High-Low > 0
+    const tipPrice = current.price;   // ratio 0
+    const originPrice = start.price;     // ratio 1
+    const priceRange = originPrice - tipPrice; // p2 - p1 (same as DrawingShape uses)
+
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
     const rawX1 = Math.min(start.x, current.x);
@@ -937,8 +955,8 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
 
         <g clipPath={`url(#${previewClipId})`}>
           {FIB_ZONE_FILLS.map((zone) => {
-            const prA = start.price + priceRange * zone.from;
-            const prB = start.price + priceRange * zone.to;
+            const prA = tipPrice + priceRange * zone.from;
+            const prB = tipPrice + priceRange * zone.to;
             const cA = dataToCoord(null, prA);
             const cB = dataToCoord(null, prB);
             if (cA.y == null || cB.y == null) return null;
@@ -955,7 +973,7 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
           })}
 
           {FIB_LEVELS.map((lvl) => {
-            const price = start.price + priceRange * lvl.ratio;
+            const price = tipPrice + priceRange * lvl.ratio;
             const coord = dataToCoord(null, price);
             if (coord.y == null) return null;
             const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
@@ -973,7 +991,7 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
         </g>
 
         {FIB_LEVELS.map((lvl) => {
-          const price = start.price + priceRange * lvl.ratio;
+          const price = tipPrice + priceRange * lvl.ratio;
           const coord = dataToCoord(null, price);
           if (coord.y == null) return null;
           const isEdge = lvl.ratio === 0 || lvl.ratio === 1;

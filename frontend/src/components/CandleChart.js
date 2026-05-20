@@ -614,13 +614,14 @@ export default function CandleChart({
     el.addEventListener("contextmenu", onContextMenu);
 
     const ro = new ResizeObserver(() => {
-      if (containerRef.current) {
+      if (!chartRef.current || !containerRef.current) return;
+      try {
         chart.applyOptions({
           width: containerRef.current.clientWidth,
           height: containerRef.current.clientHeight,
         });
         rulerRef.current?._onResize();
-      }
+      } catch { }
     });
     ro.observe(el);
 
@@ -630,7 +631,10 @@ export default function CandleChart({
       rulerRef.current?.destroy();
       rulerRef.current = null;
       removeWavesIndicator(true, chart);
-      chart.remove();
+      // Null refs before deferred remove so any queued RAF paint callbacks bail cleanly
+      chartRef.current = null;
+      candleRef.current = null;
+      setTimeout(() => { try { chart.remove(); } catch { } }, 0);
     };
   }, []); // eslint-disable-line
 
@@ -1041,6 +1045,7 @@ export default function CandleChart({
         linkColor={linkColor}
         sharedDrawings={sharedDrawings || []}
         onPublishDrawings={onPublishDrawings}
+        onContextMenu={resetView}
       />
 
       {/* Hint labels */}
