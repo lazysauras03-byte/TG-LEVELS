@@ -7,6 +7,8 @@
 //   - Hover works in BOTH cursor mode and drawing mode
 //   - Fib: time+price anchored, stretches with zoom/scroll like Fyers
 //   - Fib drag: fully window-level so it works regardless of SVG pointerEvents state
+//   - Drawings stored in {time, price} coordinates — move with chart on pan/zoom
+//   - Link sync: when linkColor is set, linked drawings are shared with other panels
 
 import React, {
   useEffect,
@@ -22,7 +24,6 @@ import { DRAW_COLORS } from "./TradingToolbar";
 const DRAW_COLOR = "#2962ff";
 const HOVER_COLOR = "#5b8fff";
 const FIB_COLOR = "#f0c040";
-const TEXT_COLOR = "#e0e3eb";
 const HANDLE_R = 5;
 const HIT_SLOP = 10;
 const LS_KEY = "tgg_drawings_v2";
@@ -100,14 +101,19 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     drawColor = "white",
     drawThickness = 1,
     lastBarTime = null,
+    // Drawing sync props
+    linkColor = null,
+    sharedDrawings = [],
+    onPublishDrawings = null,
   },
   ref
 ) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
 
-  const drawingsRef = useRef(loadDrawings());
-  const [drawings, setDrawings] = useState(drawingsRef.current);
+  // Local (private) drawings — loaded from localStorage
+  const localDrawingsRef = useRef(loadDrawings());
+  const [localDrawings, setLocalDrawings] = useState(localDrawingsRef.current);
 
   const [pendingText, setPendingText] = useState(null);
   const pendingTextRef = useRef(null);
@@ -117,37 +123,51 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const freehandRef = useRef({ active: false, points: [] });
   const [freehandPreview, setFreehandPreview] = useState(null);
 
-  // keep a ref so event handlers always see the latest color (avoids stale closure)
+  // keep a ref so event handlers always see the latest color
   const drawColorRef = useRef(drawColor);
   useEffect(() => { drawColorRef.current = drawColor; }, [drawColor]);
 
-  // ── Arrow-key nudge for horizontal lines: fixed step of 5 ──────────────
+  // keep a ref to linkColor
+  const linkColorRef = useRef(linkColor);
+  useEffect(() => { linkColorRef.current = linkColor; }, [linkColor]);
+
+  // ── All drawings = local (unlinked) + shared (linked, from context) ────────
+  // Local drawings that are NOT linked to any group
+  // + sharedDrawings from the link group
+  // When linked, newly created drawings get flagged {linked:true} and are published
+  const allDrawings = [
+    ...localDrawingsRef.current.filter((d) => !d.linked),
+    ...sharedDrawings,
+  ];
+
   const NUDGE_STEP = 0.05;
 
-  const commitDrawings = useCallback((next) => {
-    drawingsRef.current = next;
+  // commitLocalDrawings — saves and re-renders local drawings
+  const commitLocalDrawings = useCallback((next) => {
+    localDrawingsRef.current = next;
     saveDrawings(next);
-    setDrawings([...next]);
+    setLocalDrawings([...next]);
   }, []);
 
-  // ── New-drawing drag (trendline / horizontal / fib while drawing) ────────
+  // publishLinked — after adding a linked drawing, broadcast to group
+  const publishLinked = useCallback((allLocal) => {
+    const linked = allLocal.filter((d) => d.linked);
+    if (onPublishDrawings) onPublishDrawings(linked, false);
+  }, [onPublishDrawings]);
+
+  // ── New-drawing drag ────────────────────────────────────────────────────────
   const dragRef = useRef({ active: false, tool: null, start: null, current: null });
 
-  // ── Edit drag: move/resize existing fib — stored entirely in a ref so
-  //    window-level handlers always see the latest state without re-registering
+  // ── Edit drag for fib ───────────────────────────────────────────────────────
   const editDragRef = useRef({
-    active: false,
-    id: null,
-    mode: null,           // "move" | "p1" | "p2"
-    startCoord: null,     // { price, time, x, y } at mousedown
-    origP1: null,
-    origP2: null,
+    active: false, id: null, mode: null,
+    startCoord: null, origP1: null, origP2: null,
+    isShared: false,
   });
 
   const [hoveredId, setHoveredId] = useState(null);
   const hoveredIdRef = useRef(null);
 
-  // ── Selected horizontal line (click-to-select, Escape/click-away deselects)
   const [selectedHLineId, setSelectedHLineId] = useState(null);
   const selectedHLineIdRef = useRef(null);
   const setSelectedHL = (id) => {
@@ -155,8 +175,6 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     setSelectedHLineId(id);
   };
 
-  // We need stable refs to coordToData / dataToCoord so window listeners
-  // can call them without being registered every render.
   const coordToDataRef = useRef(null);
   const dataToCoordRef = useRef(null);
   const hitTestRef = useRef(null);
@@ -179,14 +197,15 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     } catch { return { x: null, y: null }; }
   }, [chartRef, candleSeriesRef]);
 
-  // Keep refs current so window handlers can always call the latest version
   useEffect(() => { coordToDataRef.current = coordToData; }, [coordToData]);
   useEffect(() => { dataToCoordRef.current = dataToCoord; }, [dataToCoord]);
 
-  // Repaint when chart scrolls/zooms
+  // Repaint when chart scrolls/zooms — drawings follow the price/time axes
   useEffect(() => {
     if (!chartRef.current) return;
-    const repaint = () => setDrawings((d) => [...d]);
+    const repaint = () => {
+      setLocalDrawings((d) => [...d]);
+    };
     chartRef.current.timeScale().subscribeVisibleLogicalRangeChange(repaint);
     chartRef.current.subscribeCrosshairMove(repaint);
     return () => {
@@ -197,7 +216,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     };
   }, [chartRef]);
 
-  // ── Hit test ─────────────────────────────────────────────────────────────
+  // ── Hit test (works on both local and shared drawings) ───────────────────
   const hitTest = useCallback((drawing, px, py) => {
     const dtc = dataToCoordRef.current;
     if (!dtc) return false;
@@ -216,14 +235,12 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       if (drawing.type === "fibRetracement") {
         const c1 = dtc(drawing.p1.time, drawing.p1.price);
         const c2 = dtc(drawing.p2.time, drawing.p2.price);
-        // Resolve X with pixel fallback for right-of-candles anchors
         const ax1 = c1.x ?? drawing.p1.px ?? null;
         const ax2 = c2.x ?? drawing.p2.px ?? null;
         if (ax1 == null || ax2 == null) return false;
-        // Only hit-test inside the rectangle's X bounds
         const bx1 = Math.min(ax1, ax2);
         const bx2 = Math.max(ax1, ax2);
-        if (px < bx1 || px > bx2) return false; // cursor outside rectangle — no hit
+        if (px < bx1 || px > bx2) return false;
         const priceRange = drawing.p2.price - drawing.p1.price;
         for (const lvl of FIB_LEVELS) {
           const price = drawing.p1.price + priceRange * lvl.ratio;
@@ -255,20 +272,17 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
 
   useEffect(() => { hitTestRef.current = hitTest; }, [hitTest]);
 
-  // ── Fib hit detail: "p1" | "p2" | "body" | null ─────────────────────────
+  // ── Fib hit detail ───────────────────────────────────────────────────────
   const fibHitDetail = useCallback((drawing, px, py) => {
     if (drawing.type !== "fibRetracement") return null;
     const dtc = dataToCoordRef.current;
     if (!dtc) return null;
     const c1 = dtc(drawing.p1.time, drawing.p1.price);
     const c2 = dtc(drawing.p2.time, drawing.p2.price);
-    // Resolve X with pixel fallback for right-side anchors
     const ax1 = c1.x ?? drawing.p1.px ?? null;
     const ax2 = c2.x ?? drawing.p2.px ?? null;
-    // Check handles first (allow slight outside-box tolerance for handle grab)
     if (ax1 != null && Math.hypot(px - ax1, py - (c1.y ?? 0)) < 12) return "p1";
     if (ax2 != null && Math.hypot(px - ax2, py - (c2.y ?? 0)) < 12) return "p2";
-    // Body hit — must be inside X bounds
     if (ax1 == null || ax2 == null) return null;
     const bx1 = Math.min(ax1, ax2);
     const bx2 = Math.max(ax1, ax2);
@@ -287,18 +301,19 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   // ── Delete a drawing ──────────────────────────────────────────────────────
   const deleteDrawing = useCallback((id, e) => {
     if (e) { e.stopPropagation(); e.preventDefault(); }
-    const next = drawingsRef.current.filter((d) => d.id !== id);
     hoveredIdRef.current = null;
     setHoveredId(null);
-    commitDrawings(next);
-  }, [commitDrawings]);
+    // Try local first, then shared (shared can only be removed from their own panel)
+    const nextLocal = localDrawingsRef.current.filter((d) => d.id !== id);
+    commitLocalDrawings(nextLocal);
+    publishLinked(nextLocal);
+  }, [commitLocalDrawings, publishLinked]);
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
 
-      // Escape — deselect horizontal line
       if (e.key === "Escape") {
         if (selectedHLineIdRef.current != null) {
           e.preventDefault();
@@ -309,15 +324,16 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault();
-        if (drawingsRef.current.length === 0) return;
+        if (localDrawingsRef.current.length === 0) return;
         hoveredIdRef.current = null;
         setHoveredId(null);
         setSelectedHL(null);
-        commitDrawings(drawingsRef.current.slice(0, -1));
+        const next = localDrawingsRef.current.slice(0, -1);
+        commitLocalDrawings(next);
+        publishLinked(next);
         return;
       }
 
-      // Delete — works on selected hline OR any hovered drawing
       if (e.key === "Delete" || e.key === "Backspace") {
         const target = selectedHLineIdRef.current ?? hoveredIdRef.current;
         if (target == null) return;
@@ -327,26 +343,25 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         return;
       }
 
-      // ── Arrow key nudge for SELECTED horizontal line ──────────────────
       if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         const hid = selectedHLineIdRef.current;
         if (hid == null) return;
-        const sel = drawingsRef.current.find((d) => d.id === hid);
+        const sel = localDrawingsRef.current.find((d) => d.id === hid);
         if (!sel || sel.type !== "horizontal") return;
         e.preventDefault();
         const dir = e.key === "ArrowUp" ? 1 : -1;
-        // Snap to nearest multiple of 5, then step
         const snapped = Math.round(sel.price / NUDGE_STEP) * NUDGE_STEP;
         const newPrice = snapped + NUDGE_STEP * dir;
-        const next = drawingsRef.current.map((d) =>
+        const next = localDrawingsRef.current.map((d) =>
           d.id === hid ? { ...d, price: Math.round(newPrice * 1e6) / 1e6 } : d
         );
-        commitDrawings(next);
+        commitLocalDrawings(next);
+        publishLinked(next);
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [commitDrawings, deleteDrawing]);
+  }, [commitLocalDrawings, deleteDrawing, publishLinked]);
 
   // ── Text commit ───────────────────────────────────────────────────────────
   const commitTextInput = useCallback((value) => {
@@ -355,12 +370,17 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     setPendingText(null);
     pendingTextRef.current = null;
     if (!value || !value.trim()) return;
-    commitDrawings([...drawingsRef.current, {
+    const linked = !!linkColorRef.current;
+    const newDrawing = {
       id: uid(), type: "text", content: value.trim(),
       price: pt.price, time: pt.time, x: pt.x, y: pt.y,
-      fontSize: 13, color: TEXT_COLOR,
-    }]);
-  }, [commitDrawings]);
+      fontSize: 13, color: "var(--text)",
+      linked,
+    };
+    const next = [...localDrawingsRef.current, newDrawing];
+    commitLocalDrawings(next);
+    publishLinked(next);
+  }, [commitLocalDrawings, publishLinked]);
 
   useEffect(() => {
     if (pendingText && textInputRef.current) setTimeout(() => textInputRef.current?.focus(), 30);
@@ -373,48 +393,49 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }, []);
 
+  // ── All drawings for hit-testing (local unlinked + shared) ───────────────
+  const getAllDrawingsForHit = useCallback(() => {
+    return [
+      ...localDrawingsRef.current.filter((d) => !d.linked),
+      ...sharedDrawings,
+      ...localDrawingsRef.current.filter((d) => d.linked),
+    ];
+  }, [sharedDrawings]);
+
   // ────────────────────────────────────────────────────────────────────────────
   // WINDOW-LEVEL MOUSE HANDLERS
-  // These run unconditionally so they work even when the SVG has
-  // pointerEvents:none (cursor mode with nothing hovered).
   // ────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     function onWindowMouseDown(e) {
       if (e.button !== 0) return;
       if (hidden) return;
-
       const selectedToolVal = selectedToolRef.current;
       if (selectedToolVal !== "cursor") return;
 
       const { x, y } = svgRelCoord(e);
+      const allForHit = getAllDrawingsForHit();
 
-      // ── Check every drawing for a hit at this click point ────────────
       let hitId = null;
-      for (const d of drawingsRef.current) {
+      for (const d of allForHit) {
         if (hitTestRef.current?.(d, x, y)) { hitId = d.id; break; }
       }
 
       const clickedDrawing = hitId != null
-        ? drawingsRef.current.find((d) => d.id === hitId)
+        ? allForHit.find((d) => d.id === hitId)
         : null;
 
-      // ── Horizontal line: click-to-select / click-away-to-deselect ────
       if (clickedDrawing?.type === "horizontal") {
         e.stopPropagation();
         e.preventDefault();
-        // Toggle: clicking already-selected line deselects it
         const alreadySelected = selectedHLineIdRef.current === hitId;
         setSelectedHL(alreadySelected ? null : hitId);
         return;
       }
 
-      // ── Clicking anything else deselects the horizontal line ─────────
       if (selectedHLineIdRef.current != null) {
         setSelectedHL(null);
-        // Don't stop propagation — let chart pan on click-away
       }
 
-      // ── Fib: drag to move/resize ──────────────────────────────────────
       if (clickedDrawing?.type === "fibRetracement") {
         const detail = fibHitDetailRef.current?.(clickedDrawing, x, y);
         if (!detail) return;
@@ -428,8 +449,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
           startCoord: { price: pt.price, time: pt.time, x, y },
           origP1: { ...clickedDrawing.p1 },
           origP2: { ...clickedDrawing.p2 },
+          isShared: !!clickedDrawing.linked || sharedDrawings.some((d) => d.id === clickedDrawing.id),
         };
-        setDrawings((d) => [...d]);
+        setLocalDrawings((d) => [...d]);
       }
     }
 
@@ -441,28 +463,25 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       const x = e.clientX - r.left;
       const y = e.clientY - r.top;
 
-      // ── freehand: accumulate points ───────────────────────────────────
       if (freehandRef.current.active) {
         freehandRef.current.points.push({ x, y });
         setFreehandPreview([...freehandRef.current.points]);
         return;
       }
 
-      // ── edit drag: move/resize committed fib ──────────────────────────
       if (editDragRef.current.active) {
         const ed = editDragRef.current;
         const cur = coordToDataRef.current?.(x, y);
         if (!cur || cur.price == null) return;
 
-        const idx = drawingsRef.current.findIndex((d) => d.id === ed.id);
+        // Edit local drawings (including linked ones)
+        const idx = localDrawingsRef.current.findIndex((d) => d.id === ed.id);
         if (idx < 0) return;
-        const d = drawingsRef.current[idx];
+        const d = localDrawingsRef.current[idx];
 
         const dPrice = cur.price - ed.startCoord.price;
-        const dTime =
-          cur.time != null && ed.startCoord.time != null
-            ? cur.time - ed.startCoord.time
-            : 0;
+        const dTime = cur.time != null && ed.startCoord.time != null
+          ? cur.time - ed.startCoord.time : 0;
 
         let newP1 = { ...ed.origP1 };
         let newP2 = { ...ed.origP2 };
@@ -485,21 +504,20 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
           newP2 = { price: cur.price, time: cur.time, px: x };
         }
 
-        const updated = [...drawingsRef.current];
+        const updated = [...localDrawingsRef.current];
         updated[idx] = { ...d, p1: newP1, p2: newP2 };
-        drawingsRef.current = updated;
-        setDrawings([...updated]);
+        localDrawingsRef.current = updated;
+        setLocalDrawings([...updated]);
         return;
       }
 
-      // ── new-drawing drag ──────────────────────────────────────────────
       if (dragRef.current.active) {
         dragRef.current.current = coordToDataRef.current?.(x, y);
-        setDrawings((d) => [...d]);
+        setLocalDrawings((d) => [...d]);
         return;
       }
 
-      // ── hover hit-test (only if cursor inside SVG) ────────────────────
+      // hover hit-test
       const inside =
         e.clientX >= r.left && e.clientX <= r.right &&
         e.clientY >= r.top && e.clientY <= r.bottom;
@@ -509,8 +527,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         return;
       }
 
+      const allForHit = getAllDrawingsForHit();
       let hitId = null;
-      for (const drawing of drawingsRef.current) {
+      for (const drawing of allForHit) {
         if (hitTestRef.current?.(drawing, x, y)) { hitId = drawing.id; break; }
       }
       if (hitId !== hoveredIdRef.current) {
@@ -518,10 +537,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         setHoveredId(hitId);
       }
 
-      // Cursor style
       if (svgEl) {
         if (hitId != null) {
-          const hd = drawingsRef.current.find((d) => d.id === hitId);
+          const hd = allForHit.find((d) => d.id === hitId);
           if (hd?.type === "fibRetracement") {
             const detail = fibHitDetailRef.current?.(hd, x, y);
             svgEl.style.cursor = (detail === "p1" || detail === "p2") ? "ew-resize" : "move";
@@ -535,19 +553,18 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     }
 
     function onWindowMouseUp(e) {
-      // commit edit drag
       if (editDragRef.current.active) {
         editDragRef.current = {
           active: false, id: null, mode: null,
-          startCoord: null, origP1: null, origP2: null,
+          startCoord: null, origP1: null, origP2: null, isShared: false,
         };
-        saveDrawings(drawingsRef.current);
-        setDrawings((d) => [...d]); // repaint to clear cursor override
+        saveDrawings(localDrawingsRef.current);
+        publishLinked(localDrawingsRef.current);
+        setLocalDrawings((d) => [...d]);
         return;
       }
     }
 
-    // Use capture so we intercept before the chart sees mousedown
     window.addEventListener("mousedown", onWindowMouseDown, { capture: true });
     window.addEventListener("mousemove", onWindowMouseMove);
     window.addEventListener("mouseup", onWindowMouseUp);
@@ -556,10 +573,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       window.removeEventListener("mousemove", onWindowMouseMove);
       window.removeEventListener("mouseup", onWindowMouseUp);
     };
-  }, [hidden, svgRelCoord]);
+  }, [hidden, svgRelCoord, getAllDrawingsForHit, publishLinked]); // eslint-disable-line
 
-  // Stable ref for selectedTool so the window mousedown handler
-  // always sees the current value without re-registering
   const selectedToolRef = useRef(selectedTool);
   useEffect(() => { selectedToolRef.current = selectedTool; }, [selectedTool]);
 
@@ -572,20 +587,24 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       pendingTextRef.current = null;
       freehandRef.current = { active: false, points: [] };
       setFreehandPreview(null);
-      commitDrawings([]);
+      commitLocalDrawings([]);
+      if (onPublishDrawings) onPublishDrawings([], false);
     },
-    getDrawings() { return drawingsRef.current; },
+    getDrawings() { return localDrawingsRef.current; },
     addFibDrawing({ p1Price, p1Time = null, p2Price, p2Time = null }) {
       if (p1Price == null || p2Price == null) return;
-      commitDrawings([...drawingsRef.current, {
+      const linked = !!linkColorRef.current;
+      const next = [...localDrawingsRef.current, {
         id: uid(), type: "fibRetracement",
         p1: { price: p1Price, time: p1Time },
         p2: { price: p2Price, time: p2Time },
-      }]);
+        linked,
+      }];
+      commitLocalDrawings(next);
+      publishLinked(next);
     },
   }));
 
-  // ── Drawing tools list ───────────────────────────────────────────────────
   const DRAWING_TOOLS = ["trendline", "horizontal", "fibRetracement", "text", "draw"];
 
   const relCoord = useCallback((e) => {
@@ -594,15 +613,13 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }, []);
 
-  // ── SVG pointer handlers (new drawings + freehand + text) ────────────────
+  // ── SVG pointer handlers ─────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
-    // Fib drag in cursor mode is handled by window mousedown above — skip here
     if (selectedToolRef.current === "cursor") return;
     if (!DRAWING_TOOLS.includes(selectedToolRef.current)) return;
 
     e.stopPropagation();
-
     const { x, y } = relCoord(e);
     const pt = coordToDataRef.current?.(x, y) ?? { x, y, time: null, price: null };
 
@@ -634,12 +651,11 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     if (dragRef.current.active) {
       const { x, y } = relCoord(e);
       dragRef.current.current = coordToDataRef.current?.(x, y);
-      setDrawings((d) => [...d]);
+      setLocalDrawings((d) => [...d]);
     }
   }, [relCoord]);
 
   const onPointerUp = useCallback((e) => {
-    // commit freehand
     if (freehandRef.current.active) {
       const pts = freehandRef.current.points;
       freehandRef.current = { active: false, points: [] };
@@ -647,9 +663,12 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       if (pts.length > 1) {
         const colorHex =
           DRAW_COLORS.find((c) => c.id === drawColorRef.current)?.hex || "#e0e3eb";
-        commitDrawings([...drawingsRef.current, {
-          id: uid(), type: "freehand", points: pts, color: colorHex, width: 1.8,
-        }]);
+        const linked = !!linkColorRef.current;
+        const next = [...localDrawingsRef.current, {
+          id: uid(), type: "freehand", points: pts, color: colorHex, width: 1.8, linked,
+        }];
+        commitLocalDrawings(next);
+        publishLinked(next);
       }
       return;
     }
@@ -658,10 +677,15 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     if (!drag.active) return;
     const { x, y } = relCoord(e);
     drag.current = coordToDataRef.current?.(x, y);
-    const d = buildDrawing(drag);
-    if (d) commitDrawings([...drawingsRef.current, d]);
+    const linked = !!linkColorRef.current;
+    const d = buildDrawing(drag, linked);
+    if (d) {
+      const next = [...localDrawingsRef.current, d];
+      commitLocalDrawings(next);
+      publishLinked(next);
+    }
     dragRef.current = { active: false, tool: null, start: null, current: null };
-  }, [relCoord, commitDrawings]);
+  }, [relCoord, commitLocalDrawings, publishLinked]);
 
   // ── Render ───────────────────────────────────────────────────────────────
   const drag = dragRef.current;
@@ -670,12 +694,15 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const isDrawing = DRAWING_TOOLS.includes(selectedTool);
   const isEditDragging = editDragRef.current.active;
 
-  // SVG needs pointer events when:
-  //  - any drawing tool is active (to capture new drawings)
-  //  - something is hovered (to show delete/move cursor)
-  //  - we're NOT in cursor mode (drawing tools always need events)
   const needsPointerEvents =
     !hidden && (isDrawing || hoveredId != null || isEditDragging);
+
+  // Combined drawings to render: local unlinked + shared + local linked
+  const drawingsToRender = [
+    ...localDrawings.filter((d) => !d.linked),
+    ...sharedDrawings,
+    ...localDrawings.filter((d) => d.linked),
+  ];
 
   let pendingInputX = 0, pendingInputY = 0;
   if (pendingText) {
@@ -722,7 +749,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         )}
 
         {/* Committed drawings */}
-        {!hidden && drawings.map((d) => (
+        {!hidden && drawingsToRender.map((d) => (
           <DrawingShape
             key={d.id}
             drawing={d}
@@ -736,7 +763,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
           />
         ))}
 
-        {/* Live trendline / fib preview while dragging */}
+        {/* Live preview while dragging */}
         {drag.active && drag.start && drag.current && (
           <LivePreview
             drag={drag}
@@ -758,7 +785,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         )}
       </svg>
 
-      {/* Inline text input */}
+      {/* Inline text input — theme-aware colors */}
       {pendingText && !hidden && (
         <div
           style={{
@@ -784,21 +811,21 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
             }}
             onBlur={(e) => { commitTextInput(e.target.value); }}
             style={{
-              background: "#1e222d",
-              border: "1px solid #2962ff",
+              background: "var(--bg3)",
+              border: "1px solid var(--accent)",
               borderRadius: 3,
-              color: TEXT_COLOR,
+              color: "var(--text)",
               fontSize: 13,
               fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', sans-serif",
               padding: "2px 6px",
               outline: "none",
               minWidth: 120,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+              boxShadow: "0 2px 8px var(--shadow)",
             }}
           />
           <div
             style={{
-              fontSize: 10, color: "#4a4f60", marginTop: 2,
+              fontSize: 10, color: "var(--text3)", marginTop: 2,
               fontFamily: "sans-serif", pointerEvents: "none",
             }}
           >
@@ -813,26 +840,25 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
 export default DrawingOverlay;
 
 // ─── Build drawing from drag ──────────────────────────────────────────────────
-function buildDrawing({ tool, start, current }) {
+function buildDrawing({ tool, start, current }, linked = false) {
   if (!start || !current) return null;
   if (tool === "trendline") {
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
     return {
-      id: uid(), type: "trendline",
+      id: uid(), type: "trendline", linked,
       p1: { price: start.price, time: start.time },
       p2: { price: current.price, time: current.time },
     };
   }
   if (tool === "horizontal") {
     if (start.price == null) return null;
-    return { id: uid(), type: "horizontal", price: start.price };
+    return { id: uid(), type: "horizontal", price: start.price, linked };
   }
   if (tool === "fibRetracement") {
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
     if (start.price == null || current.price == null) return null;
-    // Store pixel X as fallback when time is null (right of last candle = blank area)
     return {
-      id: uid(), type: "fibRetracement",
+      id: uid(), type: "fibRetracement", linked,
       p1: { price: start.price, time: start.time, px: start.x },
       p2: { price: current.price, time: current.time, px: current.x },
     };
@@ -892,8 +918,6 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
     const priceRange = current.price - start.price;
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
-
-    // Strict box — exactly anchor to anchor, clamped to visible plot area
     const rawX1 = Math.min(start.x, current.x);
     const rawX2 = Math.max(start.x, current.x);
     const boxX1 = Math.max(rawX1, 0);
@@ -911,7 +935,6 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
           </clipPath>
         </defs>
 
-        {/* Zone fills strictly inside box */}
         <g clipPath={`url(#${previewClipId})`}>
           {FIB_ZONE_FILLS.map((zone) => {
             const prA = start.price + priceRange * zone.from;
@@ -931,7 +954,6 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
             );
           })}
 
-          {/* Level lines strictly inside box */}
           {FIB_LEVELS.map((lvl) => {
             const price = start.price + priceRange * lvl.ratio;
             const coord = dataToCoord(null, price);
@@ -950,7 +972,6 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
           })}
         </g>
 
-        {/* Labels inside the right edge */}
         {FIB_LEVELS.map((lvl) => {
           const price = start.price + priceRange * lvl.ratio;
           const coord = dataToCoord(null, price);
@@ -995,7 +1016,6 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
       : (drawing.width || 1.5);
     return (
       <g style={{ pointerEvents: pe }}>
-        {/* Wide transparent strip for easy hit-testing */}
         <path
           d={d}
           stroke="transparent"
@@ -1016,7 +1036,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     );
   }
 
-  // ── Trend Line ──────────────────────────────────────────────────────────
+  // ── Trend Line — rendered from time/price coords every frame ────────────
   if (drawing.type === "trendline") {
     const c1 = dataToCoord(drawing.p1.time, drawing.p1.price);
     const c2 = dataToCoord(drawing.p2.time, drawing.p2.price);
@@ -1039,26 +1059,25 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     );
   }
 
-  // ── Horizontal Line ─────────────────────────────────────────────────────
+  // ── Horizontal Line — price-anchored, moves with zoom/pan ───────────────
   if (drawing.type === "horizontal") {
+    // Convert stored price to current pixel y every render
     const c = dataToCoord(null, drawing.price);
     if (c.y == null) return null;
     const label = numFmt.format(drawing.price);
     const isActive = selected || hovered;
-    const lineColor = selected ? "#f0c040"   // gold when selected
+    const lineColor = selected ? "#f0c040"
       : hovered ? HOVER_COLOR
         : DRAW_COLOR;
     const badgeW = 80, badgeH = 20;
     const badgeX = svgW - badgeW - 2;
     return (
       <g style={{ pointerEvents: pe }}>
-        {/* Wide invisible hit strip */}
         <line
           x1={0} y1={c.y} x2={svgW} y2={c.y}
           stroke="transparent" strokeWidth={18}
           style={{ pointerEvents: pe }}
         />
-        {/* Visible line — solid when active, dashed otherwise */}
         <line
           x1={0} y1={c.y} x2={svgW} y2={c.y}
           stroke={lineColor}
@@ -1066,7 +1085,6 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
           strokeDasharray={isActive ? "0" : "7 4"}
           style={{ pointerEvents: "none" }}
         />
-        {/* Price badge */}
         <rect
           x={badgeX} y={c.y - badgeH / 2}
           width={badgeW} height={badgeH} rx={3}
@@ -1081,7 +1099,6 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
         >
           {label}
         </text>
-        {/* ↑↓ hint badge — only when selected */}
         {selected && (
           <g style={{ pointerEvents: "none" }}>
             <rect
@@ -1103,13 +1120,11 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     );
   }
 
-  // ── Fibonacci Retracement — time+price anchored, works on blank right side ──
+  // ── Fibonacci Retracement — time+price anchored ─────────────────────────
   if (drawing.type === "fibRetracement") {
     const c1 = dataToCoord(drawing.p1.time, drawing.p1.price);
     const c2 = dataToCoord(drawing.p2.time, drawing.p2.price);
 
-    // Resolve X: prefer time-derived coord, fall back to stored pixel (.px)
-    // This allows fib anchors on the blank right area (no time there).
     const ax1 = c1.x ?? drawing.p1.px ?? null;
     const ax2 = c2.x ?? drawing.p2.px ?? null;
     const hasAnchors = ax1 != null && ax2 != null;
@@ -1117,20 +1132,14 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
 
-    // The rectangle strictly spans from anchor to anchor (no expansion to edges)
     const rawX1 = hasAnchors ? Math.min(ax1, ax2) : 0;
     const rawX2 = hasAnchors ? Math.max(ax1, ax2) : maxX;
-
-    // Clamp to visible plot area — nothing bleeds into price scale or off-screen
     const boxX1 = Math.max(rawX1, 0);
     const boxX2 = Math.min(rawX2, maxX);
 
-    // Hide entirely if box has no visible width
     if (boxX2 <= boxX1 + 1) return null;
 
-    // Unique clip ID per drawing so multiple fibs don't interfere
     const clipId = `fib-clip-${drawing.id}`;
-
     const priceRange = drawing.p2.price - drawing.p1.price;
 
     const levelLines = FIB_LEVELS.map((lvl) => {
@@ -1147,30 +1156,22 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
       return c.y;
     };
 
-    // Top and bottom Y bounds of the fib rectangle (0 = top level, 1 = bottom)
-    const topY = priceToY(
-      Math.min(...FIB_LEVELS.map((l) => l.ratio))
-    );
-    const botY = priceToY(
-      Math.max(...FIB_LEVELS.map((l) => l.ratio))
-    );
+    const topY = priceToY(Math.min(...FIB_LEVELS.map((l) => l.ratio)));
+    const botY = priceToY(Math.max(...FIB_LEVELS.map((l) => l.ratio)));
     const rectTop = topY != null && botY != null ? Math.min(topY, botY) : 0;
     const rectBot = topY != null && botY != null ? Math.max(topY, botY) : svgH;
 
-    // Labels sit just inside the right edge of the box
     const LABEL_PAD = 6;
     const labelX = boxX2 - LABEL_PAD;
 
     return (
       <g style={{ pointerEvents: "none" }}>
-        {/* clipPath — strictly the fib rectangle, not the whole chart */}
         <defs>
           <clipPath id={clipId}>
             <rect x={boxX1} y={rectTop} width={boxX2 - boxX1} height={Math.max(rectBot - rectTop, 1)} />
           </clipPath>
         </defs>
 
-        {/* Zone fills — clipped strictly inside the rectangle */}
         <g clipPath={`url(#${clipId})`}>
           {FIB_ZONE_FILLS.map((zone) => {
             const y1 = priceToY(zone.from);
@@ -1189,7 +1190,6 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
             );
           })}
 
-          {/* Level lines — clipped strictly to rectangle */}
           {levelLines.map(({ ratio, label, color: lvlColor, dash, width, price, y }) => {
             const isEdge = ratio === 0 || ratio === 1;
             const lineColor = hovered ? HOVER_COLOR : lvlColor;
@@ -1213,7 +1213,6 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
           })}
         </g>
 
-        {/* Labels inside the right edge of the rectangle — never overflow */}
         {levelLines.map(({ ratio, label, color: lvlColor, price, y }) => {
           const isEdge = ratio === 0 || ratio === 1;
           const labelText = `${label} (${numFmt.format(price)})`;
@@ -1234,7 +1233,6 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
           );
         })}
 
-        {/* Anchor handles — shown at the actual anchor pixel positions */}
         {hasAnchors && (
           <>
             <circle cx={ax1} cy={c1.y ?? priceToY(0) ?? 0} r={3} fill={FIB_COLOR}
@@ -1255,7 +1253,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     );
   }
 
-  // ── Text Label ──────────────────────────────────────────────────────────
+  // ── Text Label — time+price anchored ────────────────────────────────────
   if (drawing.type === "text") {
     const c = dataToCoord(drawing.time, drawing.price);
     const cx = c.x ?? drawing.x ?? 100;
@@ -1263,7 +1261,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     if (cx == null || cy == null) return null;
     const textContent = drawing.content || "";
     const fontSize = drawing.fontSize || 13;
-    const textCol = hovered ? HOVER_COLOR : (drawing.color || TEXT_COLOR);
+    const textCol = hovered ? HOVER_COLOR : (drawing.color || "#e0e3eb");
     const approxW = textContent.length * (fontSize * 0.62) + 16;
     const approxH = fontSize + 8;
     return (
@@ -1277,7 +1275,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
         <rect
           x={cx - 4} y={cy - approxH + 2}
           width={approxW} height={approxH - 2} rx={3}
-          fill={hovered ? "rgba(91,143,255,0.15)" : "rgba(30,34,45,0.75)"}
+          fill={hovered ? "rgba(91,143,255,0.15)" : "rgba(0,0,0,0.45)"}
           style={{ pointerEvents: "none" }}
         />
         <text

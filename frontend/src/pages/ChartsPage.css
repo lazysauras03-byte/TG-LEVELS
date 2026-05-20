@@ -204,7 +204,32 @@ button.report-link {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   DUAL MODE
+   MULTI-PANEL GRID
+   .panels-grid is a CSS grid; each cell is .panel-cell
+   ══════════════════════════════════════════════════════════════ */
+
+.panels-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  /* borders applied inline per-cell */
+}
+
+/* Remove double borders on last column/row */
+.panel-cell:last-child {
+  border-right: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DUAL MODE (legacy — kept for backward compat, no longer used)
    .dual-container holds two .dual-panel-wrap + .dual-divider
    ══════════════════════════════════════════════════════════════ */
 

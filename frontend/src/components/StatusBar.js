@@ -1,8 +1,16 @@
+// StatusBar.js
+// ─── ORIGINAL logic 100% preserved (DUAL button, dual-mode render, all styles).
+// ─── NEW additions: LayoutPicker + LinkDotButton imported from ChartsPage.
+// ─────  Single/multi panel mode: Layout picker sits alongside the DUAL button.
+// ─────  Link dot (drawing sync) sits in right actions on all panels.
+// ─────────────────────────────────────────────────────────────────────────────
 import React, { useState, useRef, useEffect, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMarketStatus } from "../hooks/useMarketStatus";
 import { useTheme } from "../App";
 import { BACKEND } from "../config";
+// NEW: layout picker + link dot imported from ChartsPage (they are exported there)
+import { LayoutPicker, LinkDotButton } from "../pages/ChartsPage";
 
 // Load symbols from backend API (merges symbols.json + Excel files).
 // Falls back to empty array gracefully if backend is unavailable.
@@ -45,9 +53,15 @@ function StatusBar({
   crosshairBar,
   onSidebarToggle,
   tickStreamActive,
-  // dual-mode props — only passed by the PRIMARY (left) panel
+  // ── ORIGINAL dual-mode props — only passed by the PRIMARY (left) panel ───
   dualMode,
   onDualToggle,
+  // ── NEW: layout picker props — only passed by primary panel ──────────────
+  layoutId,
+  onLayoutChange,
+  // ── NEW: link dot props — passed to every panel ───────────────────────────
+  linkColor,
+  onSetLink,
 }) {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
@@ -140,7 +154,8 @@ function StatusBar({
   }, []);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // DUAL MODE render — no logo, flexWrap, compact sizes, wraps to 2 lines
+  // DUAL MODE render — ORIGINAL: no logo, flexWrap, compact sizes, wraps to 2 lines
+  // NEW additions: link dot in right actions (link dot only, no layout picker in dual)
   // ═══════════════════════════════════════════════════════════════════════════
   if (dualMode) {
     return (
@@ -233,7 +248,7 @@ function StatusBar({
           </span>
         </div>
 
-        {/* DUAL button — highlighted/active, only on primary panel */}
+        {/* ORIGINAL: DUAL button — highlighted/active, only on primary panel */}
         {onDualToggle && (
           <>
             <div style={D.sep} />
@@ -257,8 +272,12 @@ function StatusBar({
         {/* Spacer pushes actions right */}
         <div style={{ flex: 1, minWidth: 0 }} />
 
-        {/* Refresh + Sidebar */}
+        {/* Refresh + Link Dot + Sidebar */}
         <div style={D.rightActions}>
+          {/* NEW: Link dot (drawing sync) */}
+          {onSetLink && (
+            <LinkDotButton linkColor={linkColor} onSetLink={onSetLink} />
+          )}
           <button
             onClick={() => onRefresh(symbol, resolution)}
             disabled={loading}
@@ -284,12 +303,14 @@ function StatusBar({
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SINGLE MODE render — 100% original, pixel-perfect, nothing changed
+  // SINGLE MODE render — ORIGINAL pixel-perfect, nothing changed.
+  // NEW additions: Layout picker sits alongside the DUAL button.
+  //               Link dot sits in right actions.
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <header style={styles.bar}>
 
-      {/* Home button */}
+      {/* Home button — ORIGINAL */}
       <button
         onClick={() => navigate("/")}
         title="Back to Home"
@@ -301,12 +322,12 @@ function StatusBar({
         <span>HOME</span>
       </button>
 
-      {/* Logo */}
+      {/* Logo — ORIGINAL */}
       <div style={styles.logo}>
         <img src="/tg-levels-logo.png" alt="TG Levels" style={styles.logoImg} />
       </div>
 
-      {/* Symbol search */}
+      {/* Symbol search — ORIGINAL */}
       <div style={{ ...styles.group, position: "relative" }}>
         <div style={{ position: "relative" }}>
           <input
@@ -343,7 +364,7 @@ function StatusBar({
         </div>
       </div>
 
-      {/* Timeframe pills */}
+      {/* Timeframe pills — ORIGINAL */}
       <div style={styles.pillGroup}>
         <button
           onClick={onTodayToggle}
@@ -364,7 +385,7 @@ function StatusBar({
         ))}
       </div>
 
-      {/* OHLC */}
+      {/* OHLC — ORIGINAL */}
       {displayBar && (
         <div style={styles.group}>
           <Stat label="O" value={fmt(displayBar.open)} color="var(--text)" />
@@ -375,7 +396,7 @@ function StatusBar({
         </div>
       )}
 
-      {/* Market status */}
+      {/* Market status — ORIGINAL */}
       <div style={styles.group}>
         <div style={{ ...styles.dot, background: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)" }} />
         <span style={{ color: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)", fontSize: 11 }}>
@@ -383,7 +404,7 @@ function StatusBar({
         </span>
       </div>
 
-      {/* DUAL button in single mode */}
+      {/* ORIGINAL: DUAL button in single mode */}
       {onDualToggle && (
         <div style={styles.group}>
           <button
@@ -403,8 +424,16 @@ function StatusBar({
         </div>
       )}
 
-      {/* Right side: Theme + Refresh + Sidebar toggle */}
+      {/* NEW: Layout picker — sits right after DUAL button, only on primary panel */}
+      {onLayoutChange && (
+        <div style={styles.group}>
+          <LayoutPicker currentLayout={layoutId} onSelect={onLayoutChange} />
+        </div>
+      )}
+
+      {/* Right side: Theme + Link Dot + Refresh + Sidebar toggle */}
       <div style={styles.rightActions}>
+        {/* Theme toggle — ORIGINAL */}
         <button
           onClick={toggleTheme}
           title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
@@ -412,6 +441,13 @@ function StatusBar({
         >
           {theme === "dark" ? "☀" : "🌙"}
         </button>
+
+        {/* NEW: Link dot (drawing sync) */}
+        {onSetLink && (
+          <LinkDotButton linkColor={linkColor} onSetLink={onSetLink} />
+        )}
+
+        {/* Refresh — ORIGINAL */}
         <button
           onClick={() => onRefresh(symbol, resolution)}
           disabled={loading}
@@ -429,6 +465,7 @@ function StatusBar({
           {" "}REFRESH
         </button>
 
+        {/* Sidebar toggle — ORIGINAL */}
         <button
           onClick={onSidebarToggle}
           style={styles.sidebarToggle}
@@ -593,7 +630,7 @@ const styles = {
   },
 };
 
-// ── DUAL-mode styles — compact, no logo, wrappable to 2 lines ─────────────────
+// ── DUAL-mode styles — ORIGINAL compact, no logo, wrappable to 2 lines ────────
 const D = {
   bar: {
     display: "flex",
@@ -694,7 +731,7 @@ const D = {
     animation: "pulse 2s infinite",
   },
 
-  // DUAL button (active state — lit blue in dual mode)
+  // ORIGINAL: DUAL button (active state — lit blue in dual mode)
   dualBtn: {
     display: "flex", alignItems: "center", gap: 4,
     background: "var(--bg3)",

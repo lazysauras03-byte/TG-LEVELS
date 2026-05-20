@@ -204,9 +204,9 @@
 }
 
 .cr-tf-btn.active {
-  background: #185FA5;
-  color: #E6F1FB;
-  border-color: #185FA5;
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
 }
 
 /* ─── Body ───────────────────────────────────────────────────────────────── */
@@ -509,7 +509,7 @@
 }
 
 .cr-row-clickable:hover .cr-w-num {
-  color: #3d84ff;
+  color: var(--blue);
 }
 
 .cr-row-clickable:active {
@@ -596,13 +596,13 @@
 }
 
 .cr-badge-bull {
-  background: #1e3a0a;
-  color: #7dc844;
+  background: var(--green-dim);
+  color: var(--green);
 }
 
 .cr-badge-bear {
-  background: #3a0a0a;
-  color: #e87070;
+  background: var(--red-dim);
+  color: var(--red);
 }
 
 .cr-badge-sm {
@@ -611,18 +611,18 @@
 }
 
 .cr-badge-med {
-  background: #3a2200;
-  color: #e8a050;
+  background: var(--yellow-dim);
+  color: var(--yellow);
 }
 
 .cr-badge-lg-bull {
-  background: #2a4a0a;
-  color: #a8e060;
+  background: var(--green-dim);
+  color: var(--green);
 }
 
 .cr-badge-lg-bear {
-  background: #4a1010;
-  color: #f09090;
+  background: var(--red-dim);
+  color: var(--red);
 }
 
 /* Delta value */
@@ -633,11 +633,11 @@
 }
 
 .cr-bull {
-  color: #7dc844;
+  color: var(--green);
 }
 
 .cr-bear {
-  color: #e87070;
+  color: var(--red);
 }
 
 /* Strength bar */
@@ -685,27 +685,27 @@
 }
 
 .cr-rank-1 {
-  background: #FFD700;
-  color: #5A4000;
+  background: var(--yellow);
+  color: #1a0a00;
 }
 
 .cr-rank-2 {
-  background: #a0a0a0;
-  color: #222;
+  background: var(--text3);
+  color: var(--bg);
 }
 
 .cr-rank-3 {
-  background: #CD7F32;
+  background: #a05c1a;
   color: #fff;
 }
 
 /* ─── Color helpers (stats) ──────────────────────────────────────────────── */
 .cr-stat-val.cr-bull {
-  color: #7dc844;
+  color: var(--green);
 }
 
 .cr-stat-val.cr-bear {
-  color: #e87070;
+  color: var(--red);
 }
 
 /* ─── Reload button ──────────────────────────────────────────────────────── */
