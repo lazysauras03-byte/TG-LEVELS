@@ -1,12 +1,11 @@
 // ChartsPage.js
-// ─── Original logic 100% preserved:
-// ─────  Single chart by default. Dual-layout toggle (DUAL button) inside StatusBar.
-// ─────  Divider is draggable left/right (splitPct, containerRef, onDividerMouseDown).
-// ─────  Right panel has no sidebar.
-// ─── NEW additions on top (do not break anything above):
-// ─────  LayoutPicker dropdown (1 / 2h / 2v / 3 / 4 panels) exported for StatusBar.
-// ─────  LinkDotButton + DrawingContext for per-panel drawing sync.
-// ─────  DrawingProvider wraps the whole page; each panel uses usePanelLink.
+// ─── Each panel is 100% independent (TradingView-style):
+// ─────  Own navbar, own symbol, own resolution, own drawings, own indicators
+// ─────  Nothing bleeds between panels
+// ─── Layout: LAYOUT button only (no DUAL button)
+// ─────  Single / 2 Side-by-Side / 2 Stacked / 3 Panels / 4 Panels
+// ─── Draggable dividers in ALL multi-panel layouts
+// ─────  col-resize handle between columns, row-resize handle between rows
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {
   useState, useCallback, useEffect, useRef, useMemo, memo,
@@ -41,8 +40,7 @@ function toISTDate(tsMs) {
   return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
-// ─── NEW: Layout definitions ──────────────────────────────────────────────────
-// These are used by LayoutPicker (exported) and StatusBar.
+// ─── Layout definitions ────────────────────────────────────────────────────────
 export const LAYOUTS = [
   { id: "1", label: "Single", cols: 1, rows: 1, panels: 1, icon: "1x1" },
   { id: "2h", label: "2 Side-by-Side", cols: 2, rows: 1, panels: 2, icon: "2h" },
@@ -51,7 +49,7 @@ export const LAYOUTS = [
   { id: "4", label: "4 Panels", cols: 2, rows: 2, panels: 4, icon: "4" },
 ];
 
-// ─── NEW: Layout Icon SVG ──────────────────────────────────────────────────────
+// ─── Layout Icon SVG ───────────────────────────────────────────────────────────
 function LayoutIcon({ icon, size = 18 }) {
   const s = size, p = 2, gap = 2;
   const inner = s - p * 2;
@@ -86,7 +84,7 @@ function LayoutIcon({ icon, size = 18 }) {
   }
 }
 
-// ─── NEW: Layout Picker Dropdown (exported → used by StatusBar) ───────────────
+// ─── Layout Picker Dropdown (exported → used by StatusBar) ────────────────────
 export function LayoutPicker({ currentLayout, onSelect }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -127,7 +125,7 @@ export function LayoutPicker({ currentLayout, onSelect }) {
 
       {open && (
         <div style={{
-          position: "absolute", top: "calc(100% + 6px)", left: 0,
+          position: "absolute", top: "calc(100% + 6px)", right: 0,
           background: "var(--bg3)", border: "1px solid var(--border2)",
           borderRadius: 8, zIndex: 9999, padding: 10,
           boxShadow: "0 8px 32px var(--shadow)", minWidth: 210,
@@ -175,7 +173,7 @@ export function LayoutPicker({ currentLayout, onSelect }) {
   );
 }
 
-// ─── NEW: Link Dot Button (exported → used by StatusBar) ──────────────────────
+// ─── Link Dot Button (exported → used by StatusBar) ───────────────────────────
 export function LinkDotButton({ linkColor, onSetLink }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -290,38 +288,33 @@ const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onT
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ChartPanel — one fully independent chart panel.
-//   pfx            : localStorage namespace "" | "left_" | "right_"
+// ChartPanel — one fully independent chart panel (TradingView style).
+//   pfx            : localStorage namespace "" | "p2_" | "p3_" | "p4_"
 //   showSidebar    : whether to render signals/stats sidebar
-//   dualMode       : ORIGINAL — passed through to StatusBar for the DUAL button
-//   onDualToggle   : ORIGINAL — only the LEFT (or single) panel gets this
-//   panelIdx       : NEW — 0-based index; panel 0 is primary (gets Layout picker)
-//   onLayoutChange : NEW — called when Layout picker changes layout
-//   linkColor/onSetLink: NEW — per-panel link dot for drawing sync
+//   panelIdx       : 0-based index; panel 0 gets Layout picker in its navbar
+//   onLayoutChange : called when Layout picker changes layout (panel 0 only)
+//   layoutId       : current layout (panel 0 only, for picker display)
+//   urlSymbol/etc  : URL params (panel 0 only)
 // ═══════════════════════════════════════════════════════════════════════════════
 const ChartPanel = memo(function ChartPanel({
   pfx,
   showSidebar,
-  // ── ORIGINAL props ────────────────────────────────────────────────────────
-  dualMode,
-  onDualToggle,
-  // ── NEW props ─────────────────────────────────────────────────────────────
   panelIdx,
   layoutId,
   onLayoutChange,
-  // ── URL props (original) ──────────────────────────────────────────────────
   urlSymbol,
   urlResolution,
   urlWaveTarget,
   urlFibDrawing,
   urlSrLines,
 }) {
+  // ── EACH PANEL has its own socket/data — fully independent ─────────────────
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
 
-  // ── NEW: Drawing link ──────────────────────────────────────────────────────
+  // ── Drawing link — per panel, isolated ────────────────────────────────────
   const { linkColor, setLinkColor, sharedDrawings, publishDrawings } = usePanelLink(`panel_${panelIdx ?? 0}`);
 
-  // ── Symbol / resolution / mode ─────────────────────────────────────────────
+  // ── Symbol / resolution / mode — all namespaced by pfx ────────────────────
   const [symbol, setSymbol] = useState(() => urlSymbol || loadPref(pfx + "symbol", "NSE:NIFTY50-INDEX"));
   const [resolution, setResolution] = useState(() => urlResolution || loadPref(pfx + "resolution", 3));
   const [todayMode, setTodayMode] = useState(() => {
@@ -333,11 +326,11 @@ const ChartPanel = memo(function ChartPanel({
     loadPref(pfx + "activeTabs", { bubble: "signals", waves: "signals" })
   );
 
-  useEffect(() => { savePref(pfx + "symbol", symbol); }, [symbol]);      // eslint-disable-line
-  useEffect(() => { savePref(pfx + "resolution", resolution); }, [resolution]);  // eslint-disable-line
-  useEffect(() => { savePref(pfx + "todayMode", todayMode); }, [todayMode]);   // eslint-disable-line
+  useEffect(() => { savePref(pfx + "symbol", symbol); }, [symbol]);           // eslint-disable-line
+  useEffect(() => { savePref(pfx + "resolution", resolution); }, [resolution]); // eslint-disable-line
+  useEffect(() => { savePref(pfx + "todayMode", todayMode); }, [todayMode]);    // eslint-disable-line
   useEffect(() => { savePref(pfx + "sidebarOpen", sidebarOpen); }, [sidebarOpen]); // eslint-disable-line
-  useEffect(() => { savePref(pfx + "activeTabs", activeTabs); }, [activeTabs]);  // eslint-disable-line
+  useEffect(() => { savePref(pfx + "activeTabs", activeTabs); }, [activeTabs]); // eslint-disable-line
 
   // ── Drawing / tool state ───────────────────────────────────────────────────
   const [selectedTool, setSelectedTool] = useState("cursor");
@@ -482,15 +475,13 @@ const ChartPanel = memo(function ChartPanel({
 
   const handleTodayToggle = useCallback(() => setTodayMode((p) => !p), []);
 
-  // NEW: is this the primary (panel 0)?
   const isPrimary = (panelIdx ?? 0) === 0;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="cp-panel">
 
-      {/* StatusBar — receives dualMode + onDualToggle only on the primary panel */}
-      {/* NEW: also receives layoutId/onLayoutChange and linkColor/onSetLink */}
+      {/* StatusBar — each panel has its OWN statusbar, fully independent */}
       <div className="cp-statusbar">
         <StatusBar
           connected={connected}
@@ -506,8 +497,8 @@ const ChartPanel = memo(function ChartPanel({
           crosshairBar={crosshairBar}
           onSidebarToggle={handleSidebarToggle}
           tickStreamActive={tickStreamActive}
-          dualMode={dualMode}
-          onDualToggle={onDualToggle}
+          dualMode={false}
+          onDualToggle={undefined}
           layoutId={isPrimary ? layoutId : undefined}
           onLayoutChange={isPrimary ? onLayoutChange : undefined}
           linkColor={linkColor}
@@ -644,45 +635,36 @@ const ChartPanel = memo(function ChartPanel({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ChartsPage — orchestrates single vs dual mode
+// useDraggableSplit — draggable divider returning [pct, ref, onMouseDown]
+//   dir: "col" (left/right) or "row" (top/bottom)
+//   storageKey: localStorage key
+//   min/max: clamp range (default 15–85)
 // ═══════════════════════════════════════════════════════════════════════════════
-export default function ChartsPage() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  // ── ORIGINAL: Dual-layout toggle — persisted ───────────────────────────────
-  const [dualMode, setDualMode] = useState(() => loadPref("dualMode", false));
-  const handleDualToggle = useCallback(() => {
-    setDualMode((v) => {
-      savePref("dualMode", !v);
-      return !v;
-    });
-    // After React paints the new layout, tell charts to re-measure
-    setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
-    setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
-  }, []);
-
-  // ── ORIGINAL: Draggable divider — % width of left panel (clamped 20–80) ────
-  const [splitPct, setSplitPct] = useState(() => loadPref("splitPct", 50));
+function useDraggableSplit(dir, storageKey, min = 15, max = 85) {
+  const [pct, setPct] = useState(() => loadPref(storageKey, 50));
   const isDragging = useRef(false);
   const containerRef = useRef(null);
 
-  const onDividerMouseDown = useCallback((e) => {
+  const onMouseDown = useCallback((e) => {
     e.preventDefault();
     isDragging.current = true;
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = dir === "col" ? "col-resize" : "row-resize";
     document.body.style.userSelect = "none";
-  }, []);
+  }, [dir]);
 
   useEffect(() => {
     function onMouseMove(e) {
       if (!isDragging.current || !containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      const raw = ((e.clientX - rect.left) / rect.width) * 100;
-      const clamped = Math.min(80, Math.max(20, raw));
-      setSplitPct(clamped);
-      savePref("splitPct", clamped);
-      // Tell every ResizeObserver / lightweight-charts instance to re-measure
+      let raw;
+      if (dir === "col") {
+        raw = ((e.clientX - rect.left) / rect.width) * 100;
+      } else {
+        raw = ((e.clientY - rect.top) / rect.height) * 100;
+      }
+      const clamped = Math.min(max, Math.max(min, raw));
+      setPct(clamped);
+      savePref(storageKey, clamped);
       window.dispatchEvent(new Event("resize"));
     }
     function onMouseUp() {
@@ -690,7 +672,6 @@ export default function ChartsPage() {
       isDragging.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      // Final resize flush after drag ends
       window.dispatchEvent(new Event("resize"));
     }
     window.addEventListener("mousemove", onMouseMove);
@@ -699,26 +680,206 @@ export default function ChartsPage() {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
     };
-  }, []);
+  }, [dir, storageKey, min, max]);
 
-  // ── NEW: Layout picker state (persisted; DUAL button still works alongside) ─
-  // layoutId is only used when dualMode is false and layout !== "1".
-  // When dualMode is true, the DUAL divider takes over exactly as before.
+  return [pct, containerRef, onMouseDown];
+}
+
+// ─── Divider handle component ─────────────────────────────────────────────────
+function Divider({ dir, onMouseDown }) {
+  const isCol = dir === "col";
+  return (
+    <div
+      className={isCol ? "panel-divider-col" : "panel-divider-row"}
+      onMouseDown={onMouseDown}
+      title="Drag to resize"
+    >
+      <div className={isCol ? "divider-grip-col" : "divider-grip-row"}>
+        <span /><span /><span />
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Layout renderers — each layout is its own isolated component with its own
+// draggable splits. Panels are keyed by pfx so they never share state.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Single ────────────────────────────────────────────────────────────────────
+function LayoutSingle({ urlParams, layoutId, onLayoutChange }) {
+  return (
+    <div className="layout-single">
+      <ChartPanel
+        key="p0"
+        pfx=""
+        panelIdx={0}
+        showSidebar={true}
+        layoutId={layoutId}
+        onLayoutChange={onLayoutChange}
+        urlSymbol={urlParams.symbol}
+        urlResolution={urlParams.resolution}
+        urlWaveTarget={urlParams.waveTarget}
+        urlFibDrawing={urlParams.fibDrawing}
+        urlSrLines={urlParams.srLines}
+      />
+    </div>
+  );
+}
+
+// ── 2 Side-by-Side (col split) ────────────────────────────────────────────────
+function Layout2H({ urlParams, layoutId, onLayoutChange }) {
+  const [colPct, containerRef, onDivMouseDown] = useDraggableSplit("col", "split2h_col");
+  return (
+    <div className="layout-2h" ref={containerRef}>
+      <div className="layout-cell" style={{ width: `${colPct}%` }}>
+        <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={true}
+          layoutId={layoutId} onLayoutChange={onLayoutChange}
+          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+          urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+          urlSrLines={urlParams.srLines}
+        />
+      </div>
+      <Divider dir="col" onMouseDown={onDivMouseDown} />
+      <div className="layout-cell" style={{ flex: 1 }}>
+        <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+          layoutId={undefined} onLayoutChange={undefined}
+          urlSymbol={null} urlResolution={null}
+          urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── 2 Stacked (row split) ─────────────────────────────────────────────────────
+function Layout2V({ urlParams, layoutId, onLayoutChange }) {
+  const [rowPct, containerRef, onDivMouseDown] = useDraggableSplit("row", "split2v_row");
+  return (
+    <div className="layout-2v" ref={containerRef}>
+      <div className="layout-cell" style={{ height: `${rowPct}%` }}>
+        <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={true}
+          layoutId={layoutId} onLayoutChange={onLayoutChange}
+          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+          urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+          urlSrLines={urlParams.srLines}
+        />
+      </div>
+      <Divider dir="row" onMouseDown={onDivMouseDown} />
+      <div className="layout-cell" style={{ flex: 1 }}>
+        <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+          layoutId={undefined} onLayoutChange={undefined}
+          urlSymbol={null} urlResolution={null}
+          urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── 3 Panels: left full-height | right top + right bottom ────────────────────
+function Layout3({ urlParams, layoutId, onLayoutChange }) {
+  const [colPct, containerRef, onColMouseDown] = useDraggableSplit("col", "split3_col");
+  const [rowPct, rightRef, onRowMouseDown] = useDraggableSplit("row", "split3_row");
+  return (
+    <div className="layout-3" ref={containerRef}>
+      {/* Left column */}
+      <div className="layout-cell" style={{ width: `${colPct}%` }}>
+        <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={true}
+          layoutId={layoutId} onLayoutChange={onLayoutChange}
+          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+          urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+          urlSrLines={urlParams.srLines}
+        />
+      </div>
+      <Divider dir="col" onMouseDown={onColMouseDown} />
+      {/* Right column — split top/bottom */}
+      <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
+        <div className="layout-cell" style={{ height: `${rowPct}%` }}>
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+          />
+        </div>
+        <Divider dir="row" onMouseDown={onRowMouseDown} />
+        <div className="layout-cell" style={{ flex: 1 }}>
+          <ChartPanel key="p2" pfx="p3_" panelIdx={2} showSidebar={false}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 4 Panels: 2×2 grid with col + two row dividers ────────────────────────────
+function Layout4({ urlParams, layoutId, onLayoutChange }) {
+  const [colPct, containerRef, onColMouseDown] = useDraggableSplit("col", "split4_col");
+  const [rowPctL, leftRef, onRowLMouseDown] = useDraggableSplit("row", "split4_rowL");
+  const [rowPctR, rightRef, onRowRMouseDown] = useDraggableSplit("row", "split4_rowR");
+  return (
+    <div className="layout-4" ref={containerRef}>
+      {/* Left column */}
+      <div className="layout-col" style={{ width: `${colPct}%` }} ref={leftRef}>
+        <div className="layout-cell" style={{ height: `${rowPctL}%` }}>
+          <ChartPanel key="p0" pfx="" panelIdx={0} showSidebar={false}
+            layoutId={layoutId} onLayoutChange={onLayoutChange}
+            urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+            urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+            urlSrLines={urlParams.srLines}
+          />
+        </div>
+        <Divider dir="row" onMouseDown={onRowLMouseDown} />
+        <div className="layout-cell" style={{ flex: 1 }}>
+          <ChartPanel key="p2" pfx="p3_" panelIdx={2} showSidebar={false}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+          />
+        </div>
+      </div>
+      <Divider dir="col" onMouseDown={onColMouseDown} />
+      {/* Right column */}
+      <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
+        <div className="layout-cell" style={{ height: `${rowPctR}%` }}>
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} showSidebar={false}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+          />
+        </div>
+        <Divider dir="row" onMouseDown={onRowRMouseDown} />
+        <div className="layout-cell" style={{ flex: 1 }}>
+          <ChartPanel key="p3" pfx="p4_" panelIdx={3} showSidebar={false}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ChartsPage — top-level: only manages layoutId + URL params
+// ═══════════════════════════════════════════════════════════════════════════════
+export default function ChartsPage() {
+  const location = useLocation();
+
+  // ── Layout state ───────────────────────────────────────────────────────────
   const [layoutId, setLayoutId] = useState(() => loadPref("layoutId", "1"));
   const handleLayoutChange = useCallback((id) => {
     setLayoutId(id);
     savePref("layoutId", id);
-    // If user picks "2h" from LayoutPicker and dualMode is already on,
-    // turn dualMode off so the grid takes over instead.
-    if (id !== "1") {
-      setDualMode(false);
-      savePref("dualMode", false);
-    }
     setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
     setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
   }, []);
 
-  // ── ORIGINAL: URL params — applied to the primary (single / left) panel ────
+  // ── URL params — panel 0 only ──────────────────────────────────────────────
   const urlParams = useMemo(() => {
     const p = new URLSearchParams(location.search);
     const waveFrom = p.get("waveFrom");
@@ -741,157 +902,22 @@ export default function ChartsPage() {
     return { waveTarget, symbol, resolution, fibDrawing, srLines };
   }, []); // eslint-disable-line
 
-  // ── NEW: compute grid for multi-panel layouts (only used when !dualMode) ────
-  function getGridStyle(id) {
-    switch (id) {
-      case "2h": return { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr" };
-      case "2v": return { gridTemplateColumns: "1fr", gridTemplateRows: "1fr 1fr" };
-      case "3": return { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
-      case "4": return { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
-      default: return { gridTemplateColumns: "1fr", gridTemplateRows: "1fr" };
+  // ── Render the right layout ────────────────────────────────────────────────
+  function renderLayout() {
+    const props = { urlParams, layoutId, onLayoutChange: handleLayoutChange };
+    switch (layoutId) {
+      case "2h": return <Layout2H {...props} />;
+      case "2v": return <Layout2V {...props} />;
+      case "3": return <Layout3  {...props} />;
+      case "4": return <Layout4  {...props} />;
+      default: return <LayoutSingle {...props} />;
     }
   }
-  function getPanelGridStyle(id, idx) {
-    if (id === "3" && idx === 0) return { gridRow: "1 / 3" };
-    return {};
-  }
-  const PANEL_PREFIXES = ["", "p2_", "p3_", "p4_"];
-  const layout = LAYOUTS.find((l) => l.id === layoutId) || LAYOUTS[0];
 
   return (
-    // NEW: DrawingProvider wraps everything so panels can share drawings
     <DrawingProvider>
       <div className="charts-page app-layout">
-
-        {/* ══ Topbar — original: home btn only. StatusBar lives inside ChartPanel. ══ */}
-        <div className="charts-topbar">
-          <button className="charts-home-btn" onClick={() => navigate("/")} title="Home">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              <polyline points="9 22 9 12 15 12 15 22" />
-            </svg>
-          </button>
-          {/* StatusBar fills the rest — rendered inside ChartPanel below */}
-          <div className="charts-status-bar-wrapper" />
-        </div>
-
-        {/* ══ Content ══════════════════════════════════════════════════════════ */}
-        {dualMode ? (
-          /* ── ORIGINAL DUAL: two ChartPanel instances + draggable divider ─── */
-          <div className="dual-container" ref={containerRef}>
-
-            {/* Left panel — has DUAL button + sidebar */}
-            <div className="dual-panel-wrap" style={{ width: `${splitPct}%` }}>
-              <ChartPanel
-                key="dual-left"
-                pfx="left_"
-                panelIdx={0}
-                showSidebar={true}
-                dualMode={dualMode}
-                onDualToggle={handleDualToggle}
-                layoutId={layoutId}
-                onLayoutChange={handleLayoutChange}
-                urlSymbol={urlParams.symbol}
-                urlResolution={urlParams.resolution}
-                urlWaveTarget={urlParams.waveTarget}
-                urlFibDrawing={urlParams.fibDrawing}
-                urlSrLines={urlParams.srLines}
-              />
-            </div>
-
-            {/* Draggable divider — ORIGINAL, pixel-perfect */}
-            <div
-              className="dual-divider"
-              onMouseDown={onDividerMouseDown}
-              title="Drag to resize panels"
-            >
-              <div className="dual-divider-grip">
-                <span /><span /><span />
-              </div>
-            </div>
-
-            {/* Right panel — compact dual layout, has own sidebar, no DUAL button */}
-            <div className="dual-panel-wrap" style={{ flex: 1 }}>
-              <ChartPanel
-                key="dual-right"
-                pfx="right_"
-                panelIdx={1}
-                showSidebar={true}
-                dualMode={true}
-                onDualToggle={undefined}
-                layoutId={undefined}
-                onLayoutChange={undefined}
-                urlSymbol={null}
-                urlResolution={null}
-                urlWaveTarget={null}
-                urlFibDrawing={null}
-                urlSrLines={[]}
-              />
-            </div>
-
-          </div>
-        ) : layout.panels === 1 ? (
-          /* ── ORIGINAL SINGLE: one ChartPanel, full sidebar ─────────────── */
-          <div className="main-content">
-            <ChartPanel
-              key="single"
-              pfx=""
-              panelIdx={0}
-              showSidebar={true}
-              dualMode={dualMode}
-              onDualToggle={handleDualToggle}
-              layoutId={layoutId}
-              onLayoutChange={handleLayoutChange}
-              urlSymbol={urlParams.symbol}
-              urlResolution={urlParams.resolution}
-              urlWaveTarget={urlParams.waveTarget}
-              urlFibDrawing={urlParams.fibDrawing}
-              urlSrLines={urlParams.srLines}
-            />
-          </div>
-        ) : (
-          /* ── NEW MULTI-PANEL GRID (2h / 2v / 3 / 4 layouts) ──────────────
-             Only active when dualMode=false AND layoutId != "1".
-             The DUAL button still turns on dualMode normally.          ─── */
-          <div
-            className="panels-grid"
-            style={{
-              display: "grid",
-              flex: 1,
-              minHeight: 0,
-              ...getGridStyle(layoutId),
-            }}
-          >
-            {Array.from({ length: layout.panels }, (_, i) => (
-              <div
-                key={`panel-${i}`}
-                className="panel-cell"
-                style={{
-                  display: "flex", flexDirection: "column",
-                  minWidth: 0, minHeight: 0, overflow: "hidden",
-                  borderRight: "1px solid var(--border)",
-                  borderBottom: "1px solid var(--border)",
-                  ...getPanelGridStyle(layoutId, i),
-                }}
-              >
-                <ChartPanel
-                  pfx={PANEL_PREFIXES[i] || `p${i + 1}_`}
-                  panelIdx={i}
-                  showSidebar={i === 0}
-                  dualMode={false}
-                  onDualToggle={i === 0 ? handleDualToggle : undefined}
-                  layoutId={i === 0 ? layoutId : undefined}
-                  onLayoutChange={i === 0 ? handleLayoutChange : undefined}
-                  urlSymbol={i === 0 ? urlParams.symbol : null}
-                  urlResolution={i === 0 ? urlParams.resolution : null}
-                  urlWaveTarget={i === 0 ? urlParams.waveTarget : null}
-                  urlFibDrawing={i === 0 ? urlParams.fibDrawing : null}
-                  urlSrLines={i === 0 ? urlParams.srLines : []}
-                />
-              </div>
-            ))}
-          </div>
-        )}
+        {renderLayout()}
       </div>
     </DrawingProvider>
   );

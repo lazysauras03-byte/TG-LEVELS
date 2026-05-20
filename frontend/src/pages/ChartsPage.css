@@ -1,7 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════
    ChartsPage.css
-   Original single-chart styles preserved exactly.
-   Dual-layout additions at the bottom.
+   TradingView-style multi-panel layout.
+   Each panel is 100% independent — own navbar, own state.
+   Draggable col/row dividers between panels.
    ═══════════════════════════════════════════════════════════════ */
 
 /* ─── Root page wrapper ───────────────────────────────────────── */
@@ -10,44 +11,76 @@
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--bg);
 }
 
-/* ─── Topbar — home btn only (StatusBar lives inside ChartPanel) ─ */
-.charts-topbar {
+/* ═══════════════════════════════════════════════════════════════
+   LAYOUT SHELLS
+   Each layout fills the full viewport (flex: 1).
+   Panels inside are .layout-cell (flex children).
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Single */
+.layout-single {
   display: flex;
-  align-items: stretch;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  position: relative;
-  z-index: 100;
-  height: 0;
-  /* topbar has zero height — ChartPanel's StatusBar is the navbar */
-  overflow: hidden;
-  border-bottom: none;
-}
-
-/* Home button — hidden because StatusBar already fills the whole navbar */
-.charts-home-btn {
-  display: none;
-}
-
-/* spacer kept for structural compat */
-.charts-status-bar-wrapper {
-  flex: 1;
-  min-width: 0;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   SINGLE MODE
-   .main-content wraps the single ChartPanel
-   ══════════════════════════════════════════════════════════════ */
-.main-content {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* 2 Side-by-Side: row container with col divider */
+.layout-2h {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 2 Stacked: col container with row divider */
+.layout-2v {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
+}
+
+/* 3 Panels: left col | right col (split top+bottom) */
+.layout-3 {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 4 Panels: left col (2 rows) | right col (2 rows) */
+.layout-4 {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Column wrapper inside 3/4 layouts */
+.layout-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Individual panel cell — flex column, holds ChartPanel */
+.layout-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  /* Border between panels via divider, not cell edge */
 }
 
 /* ─── ChartPanel shell ─────────────────────────────────────────── */
@@ -56,13 +89,15 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
-/* Each panel's StatusBar row */
+/* Each panel's StatusBar row — independent per panel */
 .cp-statusbar {
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
+  /* Width follows the panel width naturally */
 }
 
 /* Panel body: toolbar (absolute) + chart + sidebar */
@@ -203,53 +238,14 @@ button.report-link {
   left: -9999px !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   MULTI-PANEL GRID
-   .panels-grid is a CSS grid; each cell is .panel-cell
-   ══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   DRAGGABLE DIVIDERS
+   .panel-divider-col  — vertical bar (col-resize)
+   .panel-divider-row  — horizontal bar (row-resize)
+   ═══════════════════════════════════════════════════════════════ */
 
-.panels-grid {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.panel-cell {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  /* borders applied inline per-cell */
-}
-
-/* Remove double borders on last column/row */
-.panel-cell:last-child {
-  border-right: none !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   DUAL MODE (legacy — kept for backward compat, no longer used)
-   .dual-container holds two .dual-panel-wrap + .dual-divider
-   ══════════════════════════════════════════════════════════════ */
-
-.dual-container {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* Each panel wrapper — width set inline via style prop */
-.dual-panel-wrap {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-}
-
-/* Draggable divider */
-.dual-divider {
+/* ── Column divider (vertical bar between side-by-side panels) ── */
+.panel-divider-col {
   width: 5px;
   flex-shrink: 0;
   background: var(--border);
@@ -260,22 +256,25 @@ button.report-link {
   transition: background 0.15s;
   position: relative;
   z-index: 200;
+  /* Extend clickable area without changing visual width */
+  margin: 0 -2px;
+  padding: 0 2px;
+  box-sizing: content-box;
 }
 
-.dual-divider:hover,
-.dual-divider:active {
+.panel-divider-col:hover,
+.panel-divider-col:active {
   background: var(--accent, #3d84ff);
 }
 
-/* Three-dot grip */
-.dual-divider-grip {
+.divider-grip-col {
   display: flex;
   flex-direction: column;
   gap: 3px;
   pointer-events: none;
 }
 
-.dual-divider-grip span {
+.divider-grip-col span {
   display: block;
   width: 3px;
   height: 3px;
@@ -284,18 +283,87 @@ button.report-link {
   opacity: 0.5;
 }
 
-.dual-divider:hover .dual-divider-grip span {
+.panel-divider-col:hover .divider-grip-col span {
   background: #fff;
   opacity: 0.9;
 }
 
-/* ─── Responsive extra fixes ─────────────────────────── */
-@media (max-width: 900px) {
-  .dual-container {
+/* ── Row divider (horizontal bar between stacked panels) ───────── */
+.panel-divider-row {
+  height: 5px;
+  flex-shrink: 0;
+  background: var(--border);
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 200;
+  margin: -2px 0;
+  padding: 2px 0;
+  box-sizing: content-box;
+}
+
+.panel-divider-row:hover,
+.panel-divider-row:active {
+  background: var(--accent, #3d84ff);
+}
+
+.divider-grip-row {
+  display: flex;
+  flex-direction: row;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.divider-grip-row span {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text3);
+  opacity: 0.5;
+}
+
+.panel-divider-row:hover .divider-grip-row span {
+  background: #fff;
+  opacity: 0.9;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE — on very narrow screens stack everything
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+
+  .layout-2h,
+  .layout-3,
+  .layout-4 {
     flex-direction: column !important;
   }
 
-  .dual-divider {
-    display: none !important;
+  .panel-divider-col {
+    width: 100% !important;
+    height: 4px !important;
+    cursor: row-resize !important;
   }
+}
+
+/* ─── Legacy dual-mode classes (kept so old CSS refs don't crash) ── */
+.dual-container {
+  display: none;
+}
+
+.main-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panels-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
