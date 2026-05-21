@@ -1061,6 +1061,7 @@ export default function CandleChart({
         hidden={drawingsHidden}
         drawColor={drawColor}
         lastBarTime={candles?.length ? candles[candles.length - 1].time : null}
+        secondLastBarTime={candles?.length >= 2 ? candles[candles.length - 2].time : null}
         linkColor={linkColor}
         sharedDrawings={sharedDrawings || []}
         onPublishDrawings={onPublishDrawings}

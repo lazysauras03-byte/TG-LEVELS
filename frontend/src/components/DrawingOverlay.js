@@ -105,6 +105,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     drawColor = "white",
     drawThickness = 1,
     lastBarTime = null,
+    secondLastBarTime = null,
     onContextMenu = null,
     // Drawing sync props
     linkColor = null,
@@ -195,21 +196,62 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const fibHitDetailRef = useRef(null);
 
   // ── Coordinate helpers ───────────────────────────────────────────────────
+
+  const getPxPerBar = useCallback(() => {
+    try {
+      const ts = chartRef.current?.timeScale();
+      if (!ts || lastBarTime == null || secondLastBarTime == null) return null;
+      const x1 = ts.timeToCoordinate(secondLastBarTime);
+      const x2 = ts.timeToCoordinate(lastBarTime);
+      if (x1 == null || x2 == null) return null;
+      const diff = Math.abs(x2 - x1);
+      return diff > 0 ? diff : null;
+    } catch { return null; }
+  }, [chartRef, lastBarTime, secondLastBarTime]);
+
   const coordToData = useCallback((x, y) => {
     try {
-      const time = chartRef.current?.timeScale().coordinateToTime(x) ?? null;
-      const price = candleSeriesRef.current?.coordinateToPrice(y) ?? null;
-      return { x, y, time, price };
-    } catch { return { x, y, time: null, price: null }; }
-  }, [chartRef, candleSeriesRef]);
+      const ts = chartRef.current?.timeScale();
+      let time = ts?.coordinateToTime(x) ?? null;
+      let barOffset = null;
 
-  const dataToCoord = useCallback((time, price) => {
+      // x is past the last candle — coordinateToTime returns null here.
+      // Compute barOffset = how many bars to the right of lastBarTime.
+      if (time == null && ts != null && lastBarTime != null) {
+        try {
+          const anchorX = ts.timeToCoordinate(lastBarTime);
+          const pxPerBar = getPxPerBar();
+          if (anchorX != null && pxPerBar != null && pxPerBar > 0) {
+            barOffset = (x - anchorX) / pxPerBar;
+          }
+        } catch { /* stays null */ }
+      }
+
+      const price = candleSeriesRef.current?.coordinateToPrice(y) ?? null;
+      return { x, y, time, price, barOffset };
+    } catch { return { x, y, time: null, price: null, barOffset: null }; }
+  }, [chartRef, candleSeriesRef, lastBarTime, getPxPerBar]);
+
+  const dataToCoord = useCallback((time, price, barOffset = null) => {
     try {
-      const x = time != null ? chartRef.current?.timeScale().timeToCoordinate(time) : null;
+      const ts = chartRef.current?.timeScale();
+      let x = null;
+
+      if (time == null && barOffset != null && ts != null && lastBarTime != null) {
+        // Future point: anchor to lastBarTime pixel + barOffset × current pxPerBar
+        const anchorX = ts.timeToCoordinate(lastBarTime);
+        const pxPerBar = getPxPerBar();
+        if (anchorX != null && pxPerBar != null) {
+          x = anchorX + barOffset * pxPerBar;
+        }
+      } else if (time != null) {
+        x = ts?.timeToCoordinate(time) ?? null;
+      }
+
       const y = price != null ? candleSeriesRef.current?.priceToCoordinate(price) : null;
       return { x, y };
     } catch { return { x: null, y: null }; }
-  }, [chartRef, candleSeriesRef]);
+  }, [chartRef, candleSeriesRef, lastBarTime, getPxPerBar]);
 
   useEffect(() => { coordToDataRef.current = coordToData; }, [coordToData]);
   useEffect(() => { dataToCoordRef.current = dataToCoord; }, [dataToCoord]);
@@ -236,10 +278,15 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     if (!dtc) return false;
     try {
       if (drawing.type === "trendline") {
-        const c1 = dtc(drawing.p1.time, drawing.p1.price);
-        const c2 = dtc(drawing.p2.time, drawing.p2.price);
-        if (c1.x == null || c2.x == null) return false;
-        return distToSegment(px, py, c1.x, c1.y, c2.x, c2.y) < HIT_SLOP;
+        const c1 = dtc(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
+        const c2 = dtc(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
+        if (c1.y == null || c2.y == null) return false;
+        const isFuture1 = drawing.p1.time == null && drawing.p1.barOffset != null;
+        const isFuture2 = drawing.p2.time == null && drawing.p2.barOffset != null;
+        const x1 = c1.x ?? (isFuture1 ? 9999 : null);
+        const x2 = c2.x ?? (isFuture2 ? 9999 : null);
+        if (x1 == null || x2 == null) return false;
+        return distToSegment(px, py, x1, c1.y, x2, c2.y) < HIT_SLOP;
       }
       if (drawing.type === "horizontal") {
         const c = dtc(null, drawing.price);
@@ -887,8 +934,8 @@ function buildDrawing({ tool, start, current }, linked = false) {
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
     return {
       id: uid(), type: "trendline", linked,
-      p1: { price: start.price, time: start.time },
-      p2: { price: current.price, time: current.time },
+      p1: { price: start.price, time: start.time, barOffset: start.barOffset ?? null },
+      p2: { price: current.price, time: current.time, barOffset: current.barOffset ?? null },
     };
   }
   if (tool === "horizontal") {
@@ -937,18 +984,13 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
 
   if (tool === "trendline") {
     // Reproject start and current via time+price if available (survives pan during drag)
-    const x1 = (start.time != null)
-      ? (dataToCoord(start.time, start.price)?.x ?? start.x)
-      : start.x;
-    const y1 = (start.price != null)
-      ? (dataToCoord(start.time, start.price)?.y ?? start.y)
-      : start.y;
-    const x2 = (current.time != null)
-      ? (dataToCoord(current.time, current.price)?.x ?? current.x)
-      : current.x;
-    const y2 = (current.price != null)
-      ? (dataToCoord(current.time, current.price)?.y ?? current.y)
-      : current.y;
+    // Pass barOffset so points dragged past last candle stay correctly positioned
+    const c1 = dataToCoord(start.time, start.price, start.barOffset ?? null);
+    const c2 = dataToCoord(current.time, current.price, current.barOffset ?? null);
+    const x1 = c1.x ?? start.x;
+    const y1 = c1.y ?? start.y;
+    const x2 = c2.x ?? current.x;
+    const y2 = c2.y ?? current.y;
     return (
       <g style={{ pointerEvents: "none" }}>
         <line
@@ -1111,23 +1153,42 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
 
   // ── Trend Line — rendered from time/price coords every frame ────────────
   if (drawing.type === "trendline") {
-    const c1 = dataToCoord(drawing.p1.time, drawing.p1.price);
-    const c2 = dataToCoord(drawing.p2.time, drawing.p2.price);
-    if (c1.x == null || c2.x == null) return null;
+    const PRICE_SCALE_W = 70;
+    const maxX = svgW - PRICE_SCALE_W;
+
+    const c1 = dataToCoord(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
+    const c2 = dataToCoord(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
+
+    // For future-space endpoints (barOffset set, time null), clamp x to right wall
+    // exactly like fib clamps its boxX2 — stable on any pan/zoom
+    const isFuture1 = drawing.p1.time == null && drawing.p1.barOffset != null;
+    const isFuture2 = drawing.p2.time == null && drawing.p2.barOffset != null;
+
+    const rawX1 = c1.x ?? (isFuture1 ? maxX : null);
+    const rawX2 = c2.x ?? (isFuture2 ? maxX : null);
+
+    if (rawX1 == null || rawX2 == null) return null;
+    if (c1.y == null || c2.y == null) return null;
+
+    // Clamp future endpoints to the chart's drawable area
+    const x1 = isFuture1 ? Math.min(rawX1, maxX) : rawX1;
+    const y1 = c1.y;
+    const x2 = isFuture2 ? Math.min(rawX2, maxX) : rawX2;
+    const y2 = c2.y;
     return (
       <g style={{ pointerEvents: pe }}>
         <line
-          x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y}
+          x1={x1} y1={y1} x2={x2} y2={y2}
           stroke="transparent" strokeWidth={18}
           style={{ pointerEvents: pe }}
         />
         <line
-          x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y}
+          x1={x1} y1={y1} x2={x2} y2={y2}
           stroke={color} strokeWidth={strokeW}
           style={{ pointerEvents: "none" }}
         />
-        <circle cx={c1.x} cy={c1.y} r={HANDLE_R} fill={color} opacity={hovered ? 1 : 0.6} style={{ pointerEvents: "none" }} />
-        <circle cx={c2.x} cy={c2.y} r={HANDLE_R} fill={color} opacity={hovered ? 1 : 0.6} style={{ pointerEvents: "none" }} />
+        <circle cx={x1} cy={y1} r={HANDLE_R} fill={color} opacity={hovered ? 1 : 0.6} style={{ pointerEvents: "none" }} />
+        <circle cx={x2} cy={y2} r={HANDLE_R} fill={color} opacity={hovered ? 1 : 0.6} style={{ pointerEvents: "none" }} />
       </g>
     );
   }
