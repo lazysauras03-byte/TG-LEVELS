@@ -6,6 +6,10 @@
 // ─────  Single / 2 Side-by-Side / 2 Stacked / 3 Panels / 4 Panels
 // ─── Draggable dividers in ALL multi-panel layouts
 // ─────  col-resize handle between columns, row-resize handle between rows
+// ─── ONE global TradingToolbar (fixed left) — shared across all panels.
+// ─────  activePanel tracks which panel was last clicked/interacted with.
+// ─────  Only the active panel accepts new drawing input.
+// ─────  When link is ON, drawing broadcasts to all panels with same symbol.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {
   useState, useCallback, useEffect, useRef, useMemo, memo,
@@ -210,6 +214,10 @@ const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onT
 //   onLayoutChange : called when Layout picker changes layout (panel 0 only)
 //   layoutId       : current layout (panel 0 only, for picker display)
 //   urlSymbol/etc  : URL params (panel 0 only)
+//   --- Global toolbar props (lifted to ChartsPage) ---
+//   selectedTool / setSelectedTool / drawColor / drawingsHiddenGlobal
+//   isActivePanel / onPanelActivate
+//   linked / setLinked
 // ═══════════════════════════════════════════════════════════════════════════════
 const ChartPanel = memo(function ChartPanel({
   pfx,
@@ -223,6 +231,16 @@ const ChartPanel = memo(function ChartPanel({
   urlWaveTarget,
   urlFibDrawing,
   urlSrLines,
+  // Global toolbar state (from ChartsPage)
+  selectedTool,
+  setSelectedTool,
+  drawColor,
+  isActivePanel,
+  onPanelActivate,
+  panelActionsRef,
+  setActivePanelHidden,
+  panelLinkRef,
+  setToolbarLinked,
 }) {
   // ── EACH PANEL has its own socket/data — fully independent ─────────────────
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
@@ -251,13 +269,27 @@ const ChartPanel = memo(function ChartPanel({
   useEffect(() => { savePref(pfx + "sidebarOpen", sidebarOpen); }, [sidebarOpen]); // eslint-disable-line
   useEffect(() => { savePref(pfx + "activeTabs", activeTabs); }, [activeTabs]); // eslint-disable-line
 
-  // ── Drawing / tool state ───────────────────────────────────────────────────
-  const [selectedTool, setSelectedTool] = useState("cursor");
-  const [drawColor, setDrawColor] = useState("white");
+  // ── Drawings hidden — per panel ────────────────────────────────────────────
   const [drawingsHidden, setDrawingsHidden] = useState(false);
   const handleToggleHide = useCallback(() => setDrawingsHidden((v) => !v), []);
   const drawingOverlayExtRef = useRef(null);
   const handleTrashAll = useCallback(() => drawingOverlayExtRef.current?.clearAll(), []);
+
+  // Register this panel's actions with the global toolbar when it becomes active
+  useEffect(() => {
+    if (!isActivePanel || !panelActionsRef) return;
+    panelActionsRef.current = {
+      toggleHide: handleToggleHide,
+      trashAll: handleTrashAll,
+      drawingsHidden,
+    };
+    if (setActivePanelHidden) setActivePanelHidden(drawingsHidden);
+    // Register this panel's link state with the global toolbar
+    if (panelLinkRef) {
+      panelLinkRef.current = { linked, setLinked };
+    }
+    if (setToolbarLinked) setToolbarLinked(linked);
+  }, [isActivePanel, drawingsHidden, linked, handleToggleHide, handleTrashAll, panelActionsRef, setActivePanelHidden, panelLinkRef, setToolbarLinked, setLinked]); // eslint-disable-line
 
   // ── SR Lines ───────────────────────────────────────────────────────────────
   const [srLinesToDraw, setSrLinesToDraw] = useState(() => urlSrLines || []);
@@ -269,13 +301,6 @@ const ChartPanel = memo(function ChartPanel({
       setSrLinesToDraw(urlSrLines);
     }
   }, [srLinesDrawn, urlSrLines]); // eslint-disable-line
-
-  // Escape → cursor
-  useEffect(() => {
-    function onKey(e) { if (e.key === "Escape") setSelectedTool("cursor"); }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   // ── Indicators — namespaced per panel ─────────────────────────────────────
   const [indicators, setIndicators] = useState(() => {
@@ -423,24 +448,8 @@ const ChartPanel = memo(function ChartPanel({
         />
       </div>
 
-      {/* Body: toolbar + chart + optional sidebar */}
+      {/* Body: chart + optional sidebar (NO per-panel toolbar — it's global now) */}
       <div className="cp-body">
-        <TradingToolbar
-          selectedTool={selectedTool}
-          setSelectedTool={setSelectedTool}
-          drawingsHidden={drawingsHidden}
-          onToggleHide={handleToggleHide}
-          onTrashAll={handleTrashAll}
-          srLines={srLinesToDraw}
-          onDrawSRLines={handleDrawSRLines}
-          srLinesDrawn={srLinesDrawn}
-          drawColor={drawColor}
-          setDrawColor={setDrawColor}
-          panelCount={panelCount ?? 1}
-          linked={linked}
-          onLinkToggle={setLinked}
-        />
-
         <div className="chart-area">
           {error && <div className="error-bar">⚠ {error}</div>}
 
@@ -501,6 +510,8 @@ const ChartPanel = memo(function ChartPanel({
               linkColor={linked ? "linked" : null}
               sharedDrawings={sharedDrawings}
               onPublishDrawings={publishDrawings}
+              isActivePanel={isActivePanel}
+              onPanelActivate={onPanelActivate}
             />
           )}
         </div>
@@ -622,34 +633,27 @@ function Divider({ dir, onMouseDown }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Layout renderers — each layout is its own isolated component with its own
-// draggable splits. Panels are keyed by pfx so they never share state.
+// Layout renderers — each receives global toolbar props and passes them through.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Single ────────────────────────────────────────────────────────────────────
-function LayoutSingle({ urlParams, layoutId, onLayoutChange }) {
+function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   return (
     <div className="layout-single">
       <ChartPanel
-        key="p0"
-        pfx=""
-        panelIdx={0}
-        panelCount={1}
-        showSidebar={true}
-        layoutId={layoutId}
-        onLayoutChange={onLayoutChange}
-        urlSymbol={urlParams.symbol}
-        urlResolution={urlParams.resolution}
-        urlWaveTarget={urlParams.waveTarget}
-        urlFibDrawing={urlParams.fibDrawing}
+        key="p0" pfx="" panelIdx={0} panelCount={1} showSidebar={true}
+        layoutId={layoutId} onLayoutChange={onLayoutChange}
+        urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+        urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
         urlSrLines={urlParams.srLines}
+        isActivePanel={toolbarProps.activePanel === 0}
+        onPanelActivate={() => toolbarProps.setActivePanel(0)}
+        {...toolbarProps.shared}
       />
     </div>
   );
 }
 
-// ── 2 Side-by-Side (col split) ────────────────────────────────────────────────
-function Layout2H({ urlParams, layoutId, onLayoutChange }) {
+function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   const [colPct, containerRef, onDivMouseDown] = useDraggableSplit("col", "split2h_col");
   return (
     <div className="layout-2h" ref={containerRef}>
@@ -659,6 +663,9 @@ function Layout2H({ urlParams, layoutId, onLayoutChange }) {
           urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
           urlSrLines={urlParams.srLines}
+          isActivePanel={toolbarProps.activePanel === 0}
+          onPanelActivate={() => toolbarProps.setActivePanel(0)}
+          {...toolbarProps.shared}
         />
       </div>
       <Divider dir="col" onMouseDown={onDivMouseDown} />
@@ -667,14 +674,16 @@ function Layout2H({ urlParams, layoutId, onLayoutChange }) {
           layoutId={undefined} onLayoutChange={undefined}
           urlSymbol={null} urlResolution={null}
           urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+          isActivePanel={toolbarProps.activePanel === 1}
+          onPanelActivate={() => toolbarProps.setActivePanel(1)}
+          {...toolbarProps.shared}
         />
       </div>
     </div>
   );
 }
 
-// ── 2 Stacked (row split) ─────────────────────────────────────────────────────
-function Layout2V({ urlParams, layoutId, onLayoutChange }) {
+function Layout2V({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   const [rowPct, containerRef, onDivMouseDown] = useDraggableSplit("row", "split2v_row");
   return (
     <div className="layout-2v" ref={containerRef}>
@@ -684,6 +693,9 @@ function Layout2V({ urlParams, layoutId, onLayoutChange }) {
           urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
           urlSrLines={urlParams.srLines}
+          isActivePanel={toolbarProps.activePanel === 0}
+          onPanelActivate={() => toolbarProps.setActivePanel(0)}
+          {...toolbarProps.shared}
         />
       </div>
       <Divider dir="row" onMouseDown={onDivMouseDown} />
@@ -692,35 +704,41 @@ function Layout2V({ urlParams, layoutId, onLayoutChange }) {
           layoutId={undefined} onLayoutChange={undefined}
           urlSymbol={null} urlResolution={null}
           urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+          isActivePanel={toolbarProps.activePanel === 1}
+          onPanelActivate={() => toolbarProps.setActivePanel(1)}
+          {...toolbarProps.shared}
         />
       </div>
     </div>
   );
 }
 
-// ── 3 Panels: left full-height | right top + right bottom ────────────────────
-function Layout3({ urlParams, layoutId, onLayoutChange }) {
+function Layout3({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   const [colPct, containerRef, onColMouseDown] = useDraggableSplit("col", "split3_col");
   const [rowPct, rightRef, onRowMouseDown] = useDraggableSplit("row", "split3_row");
   return (
     <div className="layout-3" ref={containerRef}>
-      {/* Left column */}
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
         <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={3} showSidebar={true}
           layoutId={layoutId} onLayoutChange={onLayoutChange}
           urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
           urlSrLines={urlParams.srLines}
+          isActivePanel={toolbarProps.activePanel === 0}
+          onPanelActivate={() => toolbarProps.setActivePanel(0)}
+          {...toolbarProps.shared}
         />
       </div>
       <Divider dir="col" onMouseDown={onColMouseDown} />
-      {/* Right column — split top/bottom */}
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPct}%` }}>
           <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={3} showSidebar={false}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 1}
+            onPanelActivate={() => toolbarProps.setActivePanel(1)}
+            {...toolbarProps.shared}
           />
         </div>
         <Divider dir="row" onMouseDown={onRowMouseDown} />
@@ -729,6 +747,9 @@ function Layout3({ urlParams, layoutId, onLayoutChange }) {
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 2}
+            onPanelActivate={() => toolbarProps.setActivePanel(2)}
+            {...toolbarProps.shared}
           />
         </div>
       </div>
@@ -736,14 +757,12 @@ function Layout3({ urlParams, layoutId, onLayoutChange }) {
   );
 }
 
-// ── 4 Panels: 2×2 grid with col + two row dividers ────────────────────────────
-function Layout4({ urlParams, layoutId, onLayoutChange }) {
+function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   const [colPct, containerRef, onColMouseDown] = useDraggableSplit("col", "split4_col");
   const [rowPctL, leftRef, onRowLMouseDown] = useDraggableSplit("row", "split4_rowL");
   const [rowPctR, rightRef, onRowRMouseDown] = useDraggableSplit("row", "split4_rowR");
   return (
     <div className="layout-4" ref={containerRef}>
-      {/* Left column */}
       <div className="layout-col" style={{ width: `${colPct}%` }} ref={leftRef}>
         <div className="layout-cell" style={{ height: `${rowPctL}%` }}>
           <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={4} showSidebar={false}
@@ -751,6 +770,9 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
             urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
             urlSrLines={urlParams.srLines}
+            isActivePanel={toolbarProps.activePanel === 0}
+            onPanelActivate={() => toolbarProps.setActivePanel(0)}
+            {...toolbarProps.shared}
           />
         </div>
         <Divider dir="row" onMouseDown={onRowLMouseDown} />
@@ -759,17 +781,22 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 2}
+            onPanelActivate={() => toolbarProps.setActivePanel(2)}
+            {...toolbarProps.shared}
           />
         </div>
       </div>
       <Divider dir="col" onMouseDown={onColMouseDown} />
-      {/* Right column */}
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPctR}%` }}>
           <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={4} showSidebar={false}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 1}
+            onPanelActivate={() => toolbarProps.setActivePanel(1)}
+            {...toolbarProps.shared}
           />
         </div>
         <Divider dir="row" onMouseDown={onRowRMouseDown} />
@@ -778,6 +805,9 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 3}
+            onPanelActivate={() => toolbarProps.setActivePanel(3)}
+            {...toolbarProps.shared}
           />
         </div>
       </div>
@@ -786,7 +816,8 @@ function Layout4({ urlParams, layoutId, onLayoutChange }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ChartsPage — top-level: only manages layoutId + URL params
+// ChartsPage — top-level: manages layoutId, URL params, AND global toolbar state.
+// ONE TradingToolbar is rendered here (fixed left) — shared by all panels.
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function ChartsPage() {
   const location = useLocation();
@@ -796,9 +827,48 @@ export default function ChartsPage() {
   const handleLayoutChange = useCallback((id) => {
     setLayoutId(id);
     savePref("layoutId", id);
+    // Reset active panel to 0 when layout changes
+    setActivePanel(0);
     setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
     setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
+  }, []); // eslint-disable-line
+
+  // ── Global toolbar state (ONE toolbar for all panels) ─────────────────────
+  const [selectedTool, setSelectedTool] = useState("cursor");
+  const [drawColor, setDrawColor] = useState("white");
+  // activePanel: index of the panel that last received a mousedown
+  // Defaults to 0 (panel 0 is always active at start)
+  const [activePanel, setActivePanel] = useState(0);
+
+  // panelActionsRef: active panel registers its hide/trash callbacks here
+  // so the global toolbar can act on the currently active panel
+  const panelActionsRef = useRef({ toggleHide: null, trashAll: null, drawingsHidden: false });
+  const [activePanelHidden, setActivePanelHidden] = useState(false);
+
+  // linked state for the global toolbar — tracks active panel's linked state
+  // panelLinkRef holds the active panel's setLinked + current linked value
+  const panelLinkRef = useRef({ linked: false, setLinked: null });
+  const [toolbarLinked, setToolbarLinked] = useState(false);
+
+  // Esc key globally → cursor
+  useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") setSelectedTool("cursor"); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // When layout changes to single panel, reset activePanel to 0
+  const panelCount = LAYOUTS.find((l) => l.id === layoutId)?.panels ?? 1;
+  useEffect(() => {
+    setActivePanel((p) => (p >= panelCount ? 0 : p));
+  }, [panelCount]);
+
+  // ── Toolbar props bundle passed to every layout ────────────────────────────
+  const toolbarProps = useMemo(() => ({
+    activePanel,
+    setActivePanel,
+    shared: { selectedTool, setSelectedTool, drawColor, panelActionsRef, setActivePanelHidden, panelLinkRef, setToolbarLinked },
+  }), [activePanel, selectedTool, drawColor]); // eslint-disable-line
 
   // ── URL params — panel 0 only ──────────────────────────────────────────────
   const urlParams = useMemo(() => {
@@ -825,7 +895,7 @@ export default function ChartsPage() {
 
   // ── Render the right layout ────────────────────────────────────────────────
   function renderLayout() {
-    const props = { urlParams, layoutId, onLayoutChange: handleLayoutChange };
+    const props = { urlParams, layoutId, onLayoutChange: handleLayoutChange, toolbarProps };
     switch (layoutId) {
       case "2h": return <Layout2H {...props} />;
       case "2v": return <Layout2V {...props} />;
@@ -838,6 +908,21 @@ export default function ChartsPage() {
   return (
     <DrawingProvider>
       <div className="charts-page app-layout">
+        {/* ONE global TradingToolbar — fixed on left, shared across all panels */}
+        <TradingToolbar
+          selectedTool={selectedTool}
+          setSelectedTool={setSelectedTool}
+          drawColor={drawColor}
+          setDrawColor={setDrawColor}
+          panelCount={panelCount}
+          drawingsHidden={activePanelHidden}
+          onToggleHide={() => panelActionsRef.current.toggleHide?.()}
+          onTrashAll={() => panelActionsRef.current.trashAll?.()}
+          linked={toolbarLinked}
+          onLinkToggle={(val) => {
+            panelLinkRef.current.setLinked?.(val);
+          }}
+        />
         {renderLayout()}
       </div>
     </DrawingProvider>

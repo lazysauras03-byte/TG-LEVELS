@@ -1,8 +1,9 @@
 /* ─── Toolbar Container ───────────────────────────────────────────────────── */
 .tv-toolbar {
-  position: absolute;
+  position: fixed;
   left: 4px;
-  top: 50px;
+  top: 50%;
+  transform: translateY(-50%);
 
   width: 44px;
   /* narrow icon-only width */
@@ -85,21 +86,24 @@
 /* Link button — teal accent when linked */
 .tv-link-btn.active {
   color: #26a69a !important;
-  background: rgba(38, 166, 154, 0.15) !important;
+  background: rgba(38, 166, 154, 0.18) !important;
+  border-left: 2px solid #26a69a !important;
 }
 
 .tv-link-btn.active:hover {
-  background: rgba(38, 166, 154, 0.25) !important;
+  background: rgba(38, 166, 154, 0.30) !important;
 }
 
 .tv-link-btn:not(.active) {
   color: var(--text3);
-  opacity: 0.7;
+  opacity: 0.65;
+  border-left: 2px solid transparent;
 }
 
 .tv-link-btn:not(.active):hover {
   color: var(--text2);
   opacity: 1;
+  background: rgba(255, 255, 255, 0.07) !important;
 }
 
 .tv-tool-btn.danger {

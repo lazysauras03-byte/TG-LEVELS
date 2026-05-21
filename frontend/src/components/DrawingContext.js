@@ -41,10 +41,14 @@ export function useDrawingContext() {
 // symbol   : current symbol this panel is showing
 // Returns  : { linked, setLinked, sharedDrawings, publishDrawings }
 export function usePanelLink(panelId, symbol) {
-  const [linked, setLinkedState] = useState(false);
+  // Persist linked state per panel across reloads
+  const storageKey = "tgg_linked_" + panelId;
+  const [linked, setLinkedState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(storageKey)) === true; } catch { return false; }
+  });
   // sharedDrawings — last set received from another panel; stable array (never null)
   const [sharedDrawings, setSharedDrawings] = useState([]);
-  const linkedRef = useRef(false);
+  const linkedRef = useRef(linked);
   const symbolRef = useRef(symbol);
 
   // Keep refs in sync
@@ -70,10 +74,12 @@ export function usePanelLink(panelId, symbol) {
   const setLinked = useCallback((val) => {
     setLinkedState(val);
     linkedRef.current = val;
+    // Persist across reloads
+    try { localStorage.setItem(storageKey, JSON.stringify(val)); } catch { }
     // Update registry immediately so next broadcast sees the new value
     const existing = _panels.get(panelId);
     if (existing) _panels.set(panelId, { ...existing, linked: val });
-  }, [panelId]);
+  }, [panelId, storageKey]);
 
   // Call when local drawings change — broadcasts to matching symbol panels
   const publishDrawings = useCallback((drawings) => {

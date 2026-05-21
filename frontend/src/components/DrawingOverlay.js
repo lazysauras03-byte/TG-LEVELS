@@ -106,6 +106,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     linkColor = null,
     sharedDrawings = [],
     onPublishDrawings = null,
+    // Panel activation — only active panel accepts new drawing input
+    isActivePanel = true,
   },
   ref
 ) {
@@ -381,7 +383,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     const next = [...localDrawingsRef.current, newDrawing];
     commitLocalDrawings(next);
     publishLinked(next);
-  }, [commitLocalDrawings, publishLinked]);
+    // Auto-return to cursor after placing text
+    if (setSelectedTool) setSelectedTool("cursor");
+  }, [commitLocalDrawings, publishLinked, setSelectedTool]);
 
   useEffect(() => {
     if (pendingText && textInputRef.current) setTimeout(() => textInputRef.current?.focus(), 30);
@@ -410,6 +414,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     function onWindowMouseDown(e) {
       if (e.button !== 0) return;
       if (hidden) return;
+      if (!isActivePanel) return; // non-active panel: no drawing interaction
       const selectedToolVal = selectedToolRef.current;
       if (selectedToolVal !== "cursor") return;
 
@@ -574,7 +579,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       window.removeEventListener("mousemove", onWindowMouseMove);
       window.removeEventListener("mouseup", onWindowMouseUp);
     };
-  }, [hidden, svgRelCoord, getAllDrawingsForHit, publishLinked]); // eslint-disable-line
+  }, [hidden, isActivePanel, svgRelCoord, getAllDrawingsForHit, publishLinked]); // eslint-disable-line
 
   const selectedToolRef = useRef(selectedTool);
   useEffect(() => { selectedToolRef.current = selectedTool; }, [selectedTool]);
@@ -619,6 +624,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   // ── SVG pointer handlers ─────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
+    if (!isActivePanel) return; // non-active panel: no drawing input
     if (selectedToolRef.current === "cursor") return;
     if (!DRAWING_TOOLS.includes(selectedToolRef.current)) return;
 
@@ -673,6 +679,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         commitLocalDrawings(next);
         publishLinked(next);
       }
+      // Auto-return to cursor after freehand draw
+      if (setSelectedTool) setSelectedTool("cursor");
       return;
     }
 
@@ -688,6 +696,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       publishLinked(next);
     }
     dragRef.current = { active: false, tool: null, start: null, current: null };
+    // Auto-return to cursor after completing a drawing (TradingView-style)
+    if (setSelectedTool) setSelectedTool("cursor");
   }, [relCoord, commitLocalDrawings, publishLinked]);
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -698,7 +708,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const isEditDragging = editDragRef.current.active;
 
   const needsPointerEvents =
-    !hidden && (isDrawing || hoveredId != null || isEditDragging);
+    !hidden && (isActivePanel && isDrawing || hoveredId != null || isEditDragging);
 
   // Combined drawings to render: local unlinked + shared + local linked
   const drawingsToRender = [

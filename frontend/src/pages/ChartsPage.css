@@ -100,30 +100,28 @@
   /* Width follows the panel width naturally */
 }
 
-/* Panel body: toolbar (absolute) + chart + sidebar */
+/* Panel body: chart + sidebar (toolbar is now global, not inside cp-body) */
 .cp-body {
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  position: relative;
 }
 
-/* ─── Chart area — shifted right to clear the toolbar ─────────── */
+/* ─── Chart area — no left padding (toolbar is now global fixed, not per-panel) */
 .chart-area {
   position: relative;
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  padding-left: 52px;
-  /* 44px toolbar + 8px gap */
+  /* No padding-left: the global toolbar is position:fixed and overlays the viewport */
 }
 
 /* ─── Floating Indicator Panel ──────────────────────────────────── */
 .chart-indicator-float {
   position: absolute;
   top: 10px;
-  left: 62px;
+  left: 10px;
   z-index: 50;
 }
 

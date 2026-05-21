@@ -376,6 +376,9 @@ export default function CandleChart({
   linkColor = null,
   sharedDrawings = [],
   onPublishDrawings = null,
+  // ── Panel activation (toolbar is shared; only active panel accepts drawing input) ──
+  isActivePanel = true,
+  onPanelActivate = null,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -474,19 +477,15 @@ export default function CandleChart({
 
     try {
       chart.priceScale('right').applyOptions({ autoScale: false });
+      // setVisibleLogicalRange already positions latest candle with right-side space
+      // (toLogical = lastIdx + rightBars). Do NOT call scrollToRealTime() after this
+      // because it would override and push the latest candle to the very right edge.
       ts.setVisibleLogicalRange({ from: fromIdx, to: toLogical });
-      // Always scroll to the latest candle — guarantees today's data is visible
-      // regardless of how many historical candles were loaded.
-      try { ts.scrollToRealTime(); } catch { }
       setTimeout(() => {
         try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch { }
       }, 80);
     } catch {
-      try {
-        ts.scrollToRealTime();
-      } catch {
-        try { ts.fitContent(); } catch { }
-      }
+      try { ts.fitContent(); } catch { }
     }
   }, []);
 
@@ -869,6 +868,7 @@ export default function CandleChart({
   // ── Cursor/Tool mode: toggle chart pan vs drawing mode ───────────────────
   // When selectedTool is "cursor" → normal pan/scroll (handleScroll: true)
   // When any drawing tool is active → disable scroll so clicks don't pan
+  // Only applies to the active panel; inactive panels always stay in pan mode.
   useEffect(() => {
     if (!chartRef.current) return;
 
@@ -879,7 +879,7 @@ export default function CandleChart({
       return;
     }
 
-    const isPanMode = selectedTool === "cursor";
+    const isPanMode = selectedTool === "cursor" || !isActivePanel;
     chartRef.current.applyOptions({
       handleScroll: isPanMode,
       handleScale: isPanMode,
@@ -888,7 +888,7 @@ export default function CandleChart({
     if (containerRef.current) {
       containerRef.current.style.cursor = isPanMode ? "" : "crosshair";
     }
-  }, [selectedTool, setSelectedTool]);
+  }, [selectedTool, setSelectedTool, isActivePanel]);
 
   // ── SR Price Lines — draw horizontal S&R levels on chart ─────────────────
   // Draws each srLines entry as a createPriceLine on the candle series.
@@ -1027,8 +1027,26 @@ export default function CandleChart({
     };
   }, [candles, activeResolution]); // eslint-disable-line
 
+  // Keep isActivePanel in a ref so the mousedown handler never triggers re-renders
+  // when the panel is already active (avoids choppy chart during panning)
+  const isActivePanelRef = useRef(isActivePanel);
+  useEffect(() => { isActivePanelRef.current = isActivePanel; }, [isActivePanel]);
+  const onPanelActivateRef = useRef(onPanelActivate);
+  useEffect(() => { onPanelActivateRef.current = onPanelActivate; }, [onPanelActivate]);
+
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div
+      style={{ position: "relative", width: "100%", height: "100%" }}
+      onMouseDown={() => {
+        // Only call onPanelActivate when this panel is NOT yet active.
+        // Checking the ref (not state) avoids triggering a parent re-render
+        // on every click/drag inside an already-active panel, which was
+        // causing choppy chart panning when indicators were enabled.
+        if (!isActivePanelRef.current && onPanelActivateRef.current) {
+          onPanelActivateRef.current();
+        }
+      }}
+    >
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
       {/* ── Drawing overlay — SVG on top of chart canvas ── */}
@@ -1036,7 +1054,7 @@ export default function CandleChart({
         ref={drawingOverlayRef}
         chartRef={chartRef}
         candleSeriesRef={candleRef}
-        selectedTool={selectedTool}
+        selectedTool={isActivePanel ? selectedTool : "cursor"}
         setSelectedTool={setSelectedTool}
         containerRef={containerRef}
         hidden={drawingsHidden}
@@ -1046,6 +1064,7 @@ export default function CandleChart({
         sharedDrawings={sharedDrawings || []}
         onPublishDrawings={onPublishDrawings}
         onContextMenu={resetView}
+        isActivePanel={isActivePanel}
       />
 
       {/* Hint labels */}

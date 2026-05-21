@@ -144,7 +144,7 @@ const TOOL_GROUPS = [
   },
   { id: "divider1", divider: true },
   { id: "hide", icon: icons.eye, label: "Hide / Show All Drawings", toggle: true, subtools: [] },
-  // "link" is injected here (below eye, above trash) only when panelCount > 1
+  // "link" is always injected here (below eye, above trash) for multi-panel sync
   { id: "divider2", divider: true },
   { id: "trash", icon: icons.trash, label: "Remove All Drawings", action: true, danger: true, subtools: [] },
 ];
@@ -227,7 +227,7 @@ export default function TradingToolbar({
   srLinesDrawn = false,
   drawColor,
   setDrawColor,
-  // Link sync props — only used when panelCount > 1
+  // Link sync props — link button always visible; panelCount kept for back-compat
   panelCount = 1,
   linked = false,
   onLinkToggle,
@@ -246,10 +246,8 @@ export default function TradingToolbar({
   const btnRefs = useRef({});
   const toolbarRef = useRef(null);
 
-  // Build final tool list — inject link tool when multi-panel
+  // Build final tool list — always inject link tool (after "hide", before divider2)
   const toolList = React.useMemo(() => {
-    if (panelCount <= 1) return TOOL_GROUPS;
-    // Inject after "hide" (before divider2)
     const result = [];
     for (const g of TOOL_GROUPS) {
       result.push(g);
@@ -258,7 +256,7 @@ export default function TradingToolbar({
       }
     }
     return result;
-  }, [panelCount]);
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
