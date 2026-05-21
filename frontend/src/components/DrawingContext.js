@@ -3,12 +3,18 @@
 // Each panel can toggle "linked" ON/OFF.
 // When ON, any drawing added/changed is mirrored to ALL other panels
 // that share the same symbol AND also have linking ON.
-// No more color groups — just a simple boolean link per panel.
+//
+// CHANGES:
+// 1. setAllLinked(val) — links/unlinks ALL registered panels at once (one-click link)
+// 2. When a panel unlinks, its sharedDrawings are "absorbed" into local storage
+//    so drawn lines stay visible and are not removed.
+// 3. Unlink is fully synchronous — absorb + registry + localStorage all happen
+//    before any React state update, so there's no render cascade lag.
 
 import { createContext, useContext, useCallback, useRef, useState, useEffect } from "react";
 
 // ─── Module-level registry (survives re-renders) ──────────────────────────────
-// _panels: Map<panelId, { symbol: string, linked: boolean, notify: fn }>
+// _panels: Map<panelId, { symbol, linked, notify, absorbShared, setLinkedState, storageKey }>
 const _panels = new Map();
 
 // Broadcast drawings to all panels sharing the same symbol (except the sender)
@@ -18,6 +24,22 @@ function broadcastDrawings(senderId, symbol, drawings) {
     if (!entry.linked) return;
     if (entry.symbol !== symbol) return;
     entry.notify([...drawings]);
+  });
+}
+
+// Link or unlink ALL panels at once — synchronous, no cascade
+export function setAllLinked(val) {
+  _panels.forEach((entry) => {
+    // 1. Absorb shared drawings into local before clearing (only on unlink)
+    if (!val && entry.absorbShared) {
+      entry.absorbShared();
+    }
+    // 2. Update registry immediately (sync) so no stale linked state
+    entry.linked = val;
+    // 3. Persist to localStorage (sync)
+    try { localStorage.setItem(entry.storageKey, JSON.stringify(val)); } catch { }
+    // 4. Trigger React state update (one per panel, batched by React 18)
+    if (entry.setLinkedState) entry.setLinkedState(val);
   });
 }
 
@@ -37,21 +59,16 @@ export function useDrawingContext() {
 }
 
 // ─── Hook for a panel to participate in symbol-based link sync ────────────────
-// panelId  : unique string e.g. "panel_0"
-// symbol   : current symbol this panel is showing
-// Returns  : { linked, setLinked, sharedDrawings, publishDrawings }
 export function usePanelLink(panelId, symbol) {
-  // Persist linked state per panel across reloads
   const storageKey = "tgg_linked_" + panelId;
   const [linked, setLinkedState] = useState(() => {
     try { return JSON.parse(localStorage.getItem(storageKey)) === true; } catch { return false; }
   });
-  // sharedDrawings — last set received from another panel; stable array (never null)
   const [sharedDrawings, setSharedDrawings] = useState([]);
   const linkedRef = useRef(linked);
   const symbolRef = useRef(symbol);
+  const absorbSharedRef = useRef(null);
 
-  // Keep refs in sync
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
   useEffect(() => { linkedRef.current = linked; }, [linked]);
 
@@ -60,32 +77,35 @@ export function usePanelLink(panelId, symbol) {
     _panels.set(panelId, {
       symbol,
       linked,
+      storageKey,
       notify: (drawings) => setSharedDrawings(drawings),
+      absorbShared: () => { if (absorbSharedRef.current) absorbSharedRef.current(); },
+      setLinkedState,
     });
     return () => { _panels.delete(panelId); };
-  }, [panelId, symbol, linked]);
+  }, [panelId, symbol, linked, storageKey]);
 
-  // When we unlink, clear shared drawings so they don't linger on screen
-  useEffect(() => {
-    if (!linked) setSharedDrawings([]);
-  }, [linked]);
-
-  // Toggle linked state
+  // Per-panel setLinked — also synchronous
   const setLinked = useCallback((val) => {
-    setLinkedState(val);
+    if (!val && absorbSharedRef.current) {
+      absorbSharedRef.current();
+    }
     linkedRef.current = val;
-    // Persist across reloads
     try { localStorage.setItem(storageKey, JSON.stringify(val)); } catch { }
-    // Update registry immediately so next broadcast sees the new value
+    // Update registry immediately
     const existing = _panels.get(panelId);
-    if (existing) _panels.set(panelId, { ...existing, linked: val });
+    if (existing) existing.linked = val;
+    setLinkedState(val);
   }, [panelId, storageKey]);
 
-  // Call when local drawings change — broadcasts to matching symbol panels
   const publishDrawings = useCallback((drawings) => {
     if (!linkedRef.current) return;
     broadcastDrawings(panelId, symbolRef.current, drawings);
   }, [panelId]);
 
-  return { linked, setLinked, sharedDrawings, publishDrawings };
+  const setAbsorbShared = useCallback((fn) => {
+    absorbSharedRef.current = fn;
+  }, []);
+
+  return { linked, setLinked, sharedDrawings, setSharedDrawings, publishDrawings, setAbsorbShared };
 }

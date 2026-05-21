@@ -376,6 +376,8 @@ export default function CandleChart({
   linkColor = null,
   sharedDrawings = [],
   onPublishDrawings = null,
+  setAbsorbShared = null,
+  onClearSharedDrawings = null,
   // ── Panel activation (toolbar is shared; only active panel accepts drawing input) ──
   isActivePanel = true,
   onPanelActivate = null,
@@ -1065,6 +1067,8 @@ export default function CandleChart({
         linkColor={linkColor}
         sharedDrawings={sharedDrawings || []}
         onPublishDrawings={onPublishDrawings}
+        setAbsorbShared={setAbsorbShared}
+        onClearSharedDrawings={onClearSharedDrawings}
         onContextMenu={resetView}
         isActivePanel={isActivePanel}
         onPanelActivate={onPanelActivate}

@@ -24,7 +24,7 @@ import WaveStatsPanel from "../components/WaveStatsPanel";
 import IndicatorPanel from "../components/IndicatorPanel";
 import EmaFloatPanel from "../components/EmaFloatPanel";
 import TradingToolbar from "../components/TradingToolbar";
-import { DrawingProvider, usePanelLink } from "../components/DrawingContext";
+import { DrawingProvider, usePanelLink, setAllLinked } from "../components/DrawingContext";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import "./ChartsPage.css";
@@ -258,7 +258,7 @@ const ChartPanel = memo(function ChartPanel({
   );
 
   // ── Drawing link — symbol-based sync, only active when panelCount > 1 ────
-  const { linked, setLinked, sharedDrawings, publishDrawings } = usePanelLink(
+  const { linked, setLinked, sharedDrawings, setSharedDrawings, publishDrawings, setAbsorbShared } = usePanelLink(
     `panel_${panelIdx ?? 0}`,
     symbol
   );
@@ -511,6 +511,8 @@ const ChartPanel = memo(function ChartPanel({
               linkColor={linked ? "linked" : null}
               sharedDrawings={sharedDrawings}
               onPublishDrawings={publishDrawings}
+              setAbsorbShared={setAbsorbShared}
+              onClearSharedDrawings={() => setSharedDrawings([])}
               isActivePanel={isActivePanel}
               onPanelActivate={onPanelActivate}
             />
@@ -921,7 +923,8 @@ export default function ChartsPage() {
           onTrashAll={() => panelActionsRef.current.trashAll?.()}
           linked={toolbarLinked}
           onLinkToggle={(val) => {
-            panelLinkRef.current.setLinked?.(val);
+            // Link/unlink ALL panels at once — one click links everything
+            setAllLinked(val);
           }}
         />
         {renderLayout()}

@@ -111,6 +111,10 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     linkColor = null,
     sharedDrawings = [],
     onPublishDrawings = null,
+    // Called with a fn so DrawingContext can trigger absorb before unlink
+    setAbsorbShared = null,
+    // Clears shared drawings after absorb
+    onClearSharedDrawings = null,
     // Panel activation — only active panel accepts new drawing input
     isActivePanel = true,
     onPanelActivate = null,
@@ -169,6 +173,32 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     const linked = allLocal.filter((d) => d.linked);
     if (onPublishDrawings) onPublishDrawings(linked, false);
   }, [onPublishDrawings]);
+
+  // ── Absorb shared drawings into local storage (called before unlink) ───────
+  // This ensures drawings broadcast from other panels stay visible after unlink.
+  // We convert them to unlinked local drawings so they persist and can be deleted.
+  // Update ref during render (no useEffect delay) so absorb always sees latest shared drawings
+  const sharedDrawingsRef = useRef(sharedDrawings);
+  sharedDrawingsRef.current = sharedDrawings;
+
+  useEffect(() => {
+    if (!setAbsorbShared) return;
+    setAbsorbShared(() => {
+      const shared = sharedDrawingsRef.current;
+      if (!shared || shared.length === 0) return;
+      // Merge shared drawings into local, converting them to unlinked local drawings
+      const existingIds = new Set(localDrawingsRef.current.map((d) => d.id));
+      const toAbsorb = shared
+        .filter((d) => !existingIds.has(d.id))
+        .map((d) => ({ ...d, linked: false }));
+      if (toAbsorb.length === 0) return;
+      const merged = [...localDrawingsRef.current, ...toAbsorb];
+      commitLocalDrawings(merged);
+      // Clear shared drawings from context
+      if (onClearSharedDrawings) onClearSharedDrawings();
+    });
+  }, [setAbsorbShared, commitLocalDrawings, onClearSharedDrawings]);
+
 
   // ── New-drawing drag ────────────────────────────────────────────────────────
   const dragRef = useRef({ active: false, tool: null, start: null, current: null });
@@ -379,9 +409,14 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   }, [commitLocalDrawings, publishLinked]);
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
+  const isActivePanelRef = useRef(isActivePanel);
+  useEffect(() => { isActivePanelRef.current = isActivePanel; }, [isActivePanel]);
+
   useEffect(() => {
     function onKeyDown(e) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      // Only handle keyboard events for the active panel
+      if (!isActivePanelRef.current) return;
 
       if (e.key === "Escape") {
         if (selectedHLineIdRef.current != null) {
@@ -430,7 +465,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [commitLocalDrawings, deleteDrawing, publishLinked]);
+  }, [commitLocalDrawings, deleteDrawing, publishLinked, isActivePanel]);
 
   // ── Text commit ───────────────────────────────────────────────────────────
   const commitTextInput = useCallback((value) => {
