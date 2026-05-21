@@ -379,6 +379,7 @@ export default function CandleChart({
   // ── Panel activation (toolbar is shared; only active panel accepts drawing input) ──
   isActivePanel = true,
   onPanelActivate = null,
+  panelKey = "",
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -879,7 +880,7 @@ export default function CandleChart({
       return;
     }
 
-    const isPanMode = selectedTool === "cursor" || !isActivePanel;
+    const isPanMode = selectedTool === "cursor";
     chartRef.current.applyOptions({
       handleScroll: isPanMode,
       handleScale: isPanMode,
@@ -1054,7 +1055,7 @@ export default function CandleChart({
         ref={drawingOverlayRef}
         chartRef={chartRef}
         candleSeriesRef={candleRef}
-        selectedTool={isActivePanel ? selectedTool : "cursor"}
+        selectedTool={selectedTool}
         setSelectedTool={setSelectedTool}
         containerRef={containerRef}
         hidden={drawingsHidden}
@@ -1065,6 +1066,8 @@ export default function CandleChart({
         onPublishDrawings={onPublishDrawings}
         onContextMenu={resetView}
         isActivePanel={isActivePanel}
+        onPanelActivate={onPanelActivate}
+        panelKey={panelKey}
       />
 
       {/* Hint labels */}

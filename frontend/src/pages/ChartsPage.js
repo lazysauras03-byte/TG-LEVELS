@@ -500,6 +500,7 @@ const ChartPanel = memo(function ChartPanel({
               activeResolution={chartDataResolution}
               symbol={symbol}
               waveTarget={urlWaveTarget}
+              panelKey={pfx || "p1"}
               selectedTool={selectedTool}
               setSelectedTool={setSelectedTool}
               drawingsHidden={drawingsHidden}

@@ -26,7 +26,7 @@ const HOVER_COLOR = "#5b8fff";
 const FIB_COLOR = "#f0c040";
 const HANDLE_R = 5;
 const HIT_SLOP = 10;
-const LS_KEY = "tgg_drawings_v2";
+const LS_KEY_BASE = "tgg_drawings_v2";
 
 // Fibonacci levels
 const FIB_LEVELS = [
@@ -57,17 +57,21 @@ const FIB_ZONE_FILLS = [
 ];
 
 // ─── Persistence helpers ──────────────────────────────────────────────────────
-function loadDrawings() {
+function loadDrawings(panelKey) {
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const key = panelKey ? `${LS_KEY_BASE}_${panelKey}` : LS_KEY_BASE;
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch { return []; }
 }
 
-function saveDrawings(drawings) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(drawings)); } catch { }
+function saveDrawings(drawings, panelKey) {
+  try {
+    const key = panelKey ? `${LS_KEY_BASE}_${panelKey}` : LS_KEY_BASE;
+    localStorage.setItem(key, JSON.stringify(drawings));
+  } catch { }
 }
 
 // ─── Geometry ─────────────────────────────────────────────────────────────────
@@ -108,6 +112,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     onPublishDrawings = null,
     // Panel activation — only active panel accepts new drawing input
     isActivePanel = true,
+    onPanelActivate = null,
+    // Per-panel storage key for drawings isolation
+    panelKey = "",
   },
   ref
 ) {
@@ -115,7 +122,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const wrapRef = useRef(null);
 
   // Local (private) drawings — loaded from localStorage
-  const localDrawingsRef = useRef(loadDrawings());
+  const localDrawingsRef = useRef(loadDrawings(panelKey));
   const [localDrawings, setLocalDrawings] = useState(localDrawingsRef.current);
 
   const [pendingText, setPendingText] = useState(null);
@@ -134,6 +141,10 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const linkColorRef = useRef(linkColor);
   useEffect(() => { linkColorRef.current = linkColor; }, [linkColor]);
 
+  // keep a ref to onPanelActivate so event handlers don't go stale
+  const onPanelActivateRef = useRef(onPanelActivate);
+  useEffect(() => { onPanelActivateRef.current = onPanelActivate; }, [onPanelActivate]);
+
   // ── All drawings = local (unlinked) + shared (linked, from context) ────────
   // Local drawings that are NOT linked to any group
   // + sharedDrawings from the link group
@@ -148,9 +159,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   // commitLocalDrawings — saves and re-renders local drawings
   const commitLocalDrawings = useCallback((next) => {
     localDrawingsRef.current = next;
-    saveDrawings(next);
+    saveDrawings(next, panelKey);
     setLocalDrawings([...next]);
-  }, []);
+  }, [panelKey]);
 
   // publishLinked — after adding a linked drawing, broadcast to group
   const publishLinked = useCallback((allLocal) => {
@@ -262,9 +273,17 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         return px >= cx - 4 && px <= cx + textW && py >= cy - textH && py <= cy + 4;
       }
       if (drawing.type === "freehand" && drawing.points?.length > 1) {
-        for (let i = 0; i < drawing.points.length - 1; i++) {
-          const p1 = drawing.points[i];
-          const p2 = drawing.points[i + 1];
+        // Reproject time+price to current pixel coords for accurate hit-test
+        const projPts = drawing.points.map((p) => {
+          if (p.time != null && p.price != null) {
+            const c = dtc(p.time, p.price);
+            return { x: c.x ?? p.x, y: c.y ?? p.y };
+          }
+          return { x: p.x, y: p.y };
+        });
+        for (let i = 0; i < projPts.length - 1; i++) {
+          const p1 = projPts[i];
+          const p2 = projPts[i + 1];
           if (distToSegment(px, py, p1.x, p1.y, p2.x, p2.y) < HIT_SLOP) return true;
         }
         return false;
@@ -414,9 +433,10 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     function onWindowMouseDown(e) {
       if (e.button !== 0) return;
       if (hidden) return;
-      if (!isActivePanel) return; // non-active panel: no drawing interaction
       const selectedToolVal = selectedToolRef.current;
       if (selectedToolVal !== "cursor") return;
+      // Don't interfere if a drawing drag is already in progress
+      if (dragRef.current.active || freehandRef.current.active) return;
 
       const { x, y } = svgRelCoord(e);
       const allForHit = getAllDrawingsForHit();
@@ -470,7 +490,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       const y = e.clientY - r.top;
 
       if (freehandRef.current.active) {
-        freehandRef.current.points.push({ x, y });
+        const fpt = coordToDataRef.current?.(x, y) ?? { x, y, time: null, price: null };
+        freehandRef.current.points.push({ x, y, time: fpt.time, price: fpt.price });
         setFreehandPreview([...freehandRef.current.points]);
         return;
       }
@@ -518,7 +539,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       }
 
       if (dragRef.current.active) {
-        dragRef.current.current = coordToDataRef.current?.(x, y);
+        const dpt = coordToDataRef.current?.(x, y);
+        dragRef.current.current = dpt;
         setLocalDrawings((d) => [...d]);
         return;
       }
@@ -564,10 +586,43 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
           active: false, id: null, mode: null,
           startCoord: null, origP1: null, origP2: null, isShared: false,
         };
-        saveDrawings(localDrawingsRef.current);
+        saveDrawings(localDrawingsRef.current, panelKey);
         publishLinked(localDrawingsRef.current);
         setLocalDrawings((d) => [...d]);
         return;
+      }
+
+      // Complete active trendline/horizontal/fib drag on window mouseup
+      // This fires even when mouse is released outside the SVG
+      const drag = dragRef.current;
+      if (drag.active) {
+        const linked = !!linkColorRef.current;
+        const d = buildDrawing(drag, linked);
+        if (d) {
+          const next = [...localDrawingsRef.current, d];
+          commitLocalDrawings(next);
+          publishLinked(next);
+        }
+        dragRef.current = { active: false, tool: null, start: null, current: null };
+        if (setSelectedTool) setSelectedTool("cursor");
+      }
+
+      // Complete freehand on window mouseup (in case pointerup didn't fire)
+      if (freehandRef.current.active) {
+        const pts = freehandRef.current.points;
+        freehandRef.current = { active: false, points: [] };
+        setFreehandPreview(null);
+        if (pts.length > 1) {
+          const colorHex =
+            DRAW_COLORS.find((c) => c.id === drawColorRef.current)?.hex || "#e0e3eb";
+          const linked = !!linkColorRef.current;
+          const next = [...localDrawingsRef.current, {
+            id: uid(), type: "freehand", points: pts, color: colorHex, width: 1.8, linked,
+          }];
+          commitLocalDrawings(next);
+          publishLinked(next);
+        }
+        if (setSelectedTool) setSelectedTool("cursor");
       }
     }
 
@@ -579,7 +634,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       window.removeEventListener("mousemove", onWindowMouseMove);
       window.removeEventListener("mouseup", onWindowMouseUp);
     };
-  }, [hidden, isActivePanel, svgRelCoord, getAllDrawingsForHit, publishLinked]); // eslint-disable-line
+  }, [hidden, svgRelCoord, getAllDrawingsForHit, publishLinked, commitLocalDrawings, setSelectedTool]); // eslint-disable-line
 
   const selectedToolRef = useRef(selectedTool);
   useEffect(() => { selectedToolRef.current = selectedTool; }, [selectedTool]);
@@ -624,9 +679,13 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   // ── SVG pointer handlers ─────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
-    if (!isActivePanel) return; // non-active panel: no drawing input
     if (selectedToolRef.current === "cursor") return;
     if (!DRAWING_TOOLS.includes(selectedToolRef.current)) return;
+
+    // Auto-activate this panel when user draws on it (no "click to activate" step needed)
+    if (!isActivePanel && onPanelActivateRef.current) {
+      onPanelActivateRef.current();
+    }
 
     e.stopPropagation();
     const { x, y } = relCoord(e);
@@ -641,8 +700,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     }
 
     if (selectedToolRef.current === "draw") {
-      freehandRef.current = { active: true, points: [{ x, y }] };
-      setFreehandPreview([{ x, y }]);
+      // Store time+price so freehand sticks to chart on pan/zoom
+      freehandRef.current = { active: true, points: [{ x, y, time: pt.time, price: pt.price }] };
+      setFreehandPreview([{ x, y, time: pt.time, price: pt.price }]);
       try { svgRef.current?.setPointerCapture(e.pointerId); } catch { }
       return;
     }
@@ -656,49 +716,13 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     };
   }, [relCoord, commitTextInput]);
 
-  const onPointerMove = useCallback((e) => {
-    if (dragRef.current.active) {
-      const { x, y } = relCoord(e);
-      dragRef.current.current = coordToDataRef.current?.(x, y);
-      setLocalDrawings((d) => [...d]);
-    }
-  }, [relCoord]);
+  const onPointerMove = useCallback((_e) => {
+    // Trendline/fib drag is now handled by window-level mousemove for smooth tracking
+  }, []);
 
-  const onPointerUp = useCallback((e) => {
-    if (freehandRef.current.active) {
-      const pts = freehandRef.current.points;
-      freehandRef.current = { active: false, points: [] };
-      setFreehandPreview(null);
-      if (pts.length > 1) {
-        const colorHex =
-          DRAW_COLORS.find((c) => c.id === drawColorRef.current)?.hex || "#e0e3eb";
-        const linked = !!linkColorRef.current;
-        const next = [...localDrawingsRef.current, {
-          id: uid(), type: "freehand", points: pts, color: colorHex, width: 1.8, linked,
-        }];
-        commitLocalDrawings(next);
-        publishLinked(next);
-      }
-      // Auto-return to cursor after freehand draw
-      if (setSelectedTool) setSelectedTool("cursor");
-      return;
-    }
-
-    const drag = dragRef.current;
-    if (!drag.active) return;
-    const { x, y } = relCoord(e);
-    drag.current = coordToDataRef.current?.(x, y);
-    const linked = !!linkColorRef.current;
-    const d = buildDrawing(drag, linked);
-    if (d) {
-      const next = [...localDrawingsRef.current, d];
-      commitLocalDrawings(next);
-      publishLinked(next);
-    }
-    dragRef.current = { active: false, tool: null, start: null, current: null };
-    // Auto-return to cursor after completing a drawing (TradingView-style)
-    if (setSelectedTool) setSelectedTool("cursor");
-  }, [relCoord, commitLocalDrawings, publishLinked]);
+  // onPointerUp is now a no-op — all drag completion is handled by window mouseup
+  // (works even when mouse is released outside the SVG element)
+  const onPointerUp = useCallback((_e) => { }, []);
 
   // ── Render ───────────────────────────────────────────────────────────────
   const drag = dragRef.current;
@@ -708,7 +732,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const isEditDragging = editDragRef.current.active;
 
   const needsPointerEvents =
-    !hidden && (isActivePanel && isDrawing || hoveredId != null || isEditDragging);
+    !hidden && (isDrawing || hoveredId != null || isEditDragging);
 
   // Combined drawings to render: local unlinked + shared + local linked
   const drawingsToRender = [
@@ -912,15 +936,28 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
   const color = DRAW_COLOR;
 
   if (tool === "trendline") {
+    // Reproject start and current via time+price if available (survives pan during drag)
+    const x1 = (start.time != null)
+      ? (dataToCoord(start.time, start.price)?.x ?? start.x)
+      : start.x;
+    const y1 = (start.price != null)
+      ? (dataToCoord(start.time, start.price)?.y ?? start.y)
+      : start.y;
+    const x2 = (current.time != null)
+      ? (dataToCoord(current.time, current.price)?.x ?? current.x)
+      : current.x;
+    const y2 = (current.price != null)
+      ? (dataToCoord(current.time, current.price)?.y ?? current.y)
+      : current.y;
     return (
       <g style={{ pointerEvents: "none" }}>
         <line
-          x1={start.x} y1={start.y}
-          x2={current.x} y2={current.y}
+          x1={x1} y1={y1}
+          x2={x2} y2={y2}
           stroke={color} strokeWidth={1.8}
         />
-        <circle cx={start.x} cy={start.y} r={HANDLE_R} fill={color} />
-        <circle cx={current.x} cy={current.y} r={HANDLE_R} fill={color} />
+        <circle cx={x1} cy={y1} r={HANDLE_R} fill={color} />
+        <circle cx={x2} cy={y2} r={HANDLE_R} fill={color} />
       </g>
     );
   }
@@ -1036,7 +1073,15 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
 
   // ── Freehand ────────────────────────────────────────────────────────────
   if (drawing.type === "freehand" && drawing.points?.length > 1) {
-    const pts = drawing.points;
+    // Reproject stored time+price coords to current pixel positions each render
+    // so freehand drawings stick to the chart on pan/zoom like trendlines do
+    const pts = drawing.points.map((p) => {
+      if (p.time != null && p.price != null) {
+        const c = dataToCoord(p.time, p.price);
+        return { x: c.x ?? p.x, y: c.y ?? p.y };
+      }
+      return { x: p.x, y: p.y };
+    });
     const d = "M" + pts.map((p) => `${p.x},${p.y}`).join(" L");
     const strokeColor = hovered ? HOVER_COLOR : (drawing.color || "#e0e3eb");
     const strokeWidth = hovered
