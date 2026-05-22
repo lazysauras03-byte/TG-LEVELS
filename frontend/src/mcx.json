@@ -40,11 +40,6 @@
     "type": "commodity"
   },
   {
-    "symbol": "MCX:NATGASMINI-I",
-    "name": "Natural Gas Mini (MCX)",
-    "type": "commodity"
-  },
-  {
     "symbol": "MCX:COPPER-I",
     "name": "Copper (MCX)",
     "type": "commodity"

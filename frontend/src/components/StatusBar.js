@@ -1,19 +1,10 @@
 // StatusBar.js
-// ─── ORIGINAL logic 100% preserved (symbol search, timeframes, OHLC, market status).
-// ─── DUAL button REMOVED — replaced with LAYOUT picker only.
-// ─── Single render path for ALL modes (no separate dual/single branch).
-// ─────  When panel is narrow, flexWrap kicks in so content wraps to 2nd line.
-// ─────  Layout picker only appears on the primary panel (panelIdx 0).
-// ─────  Link dot (drawing sync) appears on every panel.
-// ─────────────────────────────────────────────────────────────────────────────
-import React, { useState, memo } from "react";
+import React, { memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMarketStatus } from "../hooks/useMarketStatus";
 import { useTheme } from "../App";
 import { LayoutPicker } from "../pages/ChartsPage";
-import SymbolSearch from "./SymbolSearch";
-
-// ── Symbols loader lives in SymbolSearch.js (shared module cache) ─────────
+import IndicatorPanel from "./IndicatorPanel";
 
 const numFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 function fmt(n) {
@@ -36,28 +27,30 @@ const TIMEFRAMES = [
 //   connected, loading, chartData                — data state
 //   onRefresh, symbol, resolution                — symbol/res controls
 //   onSymbolChange, onResolutionChange
+//   onOpenSearch                                 — callback to open SymbolSearch (managed by ChartPanel)
 //   todayMode, onTodayToggle                     — today filter
 //   crosshairBar                                 — OHLC display
 //   onSidebarToggle                              — sidebar toggle
 //   tickStreamActive                             — live tick indicator
 //   layoutId, onLayoutChange                     — layout picker (primary panel only)
-//   dualMode, onDualToggle                       — KEPT as dead props so callers
-//                                                   don't need to be updated yet
+//   indicators, onIndicatorChange                — indicator panel
+//   dualMode, onDualToggle                       — KEPT as dead props
 // ─────────────────────────────────────────────────────────────────────────────
 function StatusBar({
   connected, loading, chartData,
   onRefresh, symbol, resolution,
   onSymbolChange, onResolutionChange,
+  onOpenSearch,
   todayMode, onTodayToggle,
   crosshairBar,
   onSidebarToggle,
   tickStreamActive,
-  // dualMode + onDualToggle kept as accepted props but NOT rendered (DUAL removed)
   dualMode,       // eslint-disable-line no-unused-vars
   onDualToggle,   // eslint-disable-line no-unused-vars
-  // Layout picker — only primary panel passes these
   layoutId,
   onLayoutChange,
+  indicators,
+  onIndicatorChange,
 }) {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
@@ -72,23 +65,11 @@ function StatusBar({
   const marketStatus = useMarketStatus();
   const isLive = marketStatus === "live";
 
-  // ── Symbol search modal ─────────────────────────────────────────────────
-  const [searchOpen, setSearchOpen] = useState(false);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SINGLE UNIFIED RENDER — works for any panel width.
-  // Uses flexWrap so when a panel is narrow, content wraps to a 2nd line.
-  // No separate "dualMode" branch — DUAL is gone entirely.
-  // ═══════════════════════════════════════════════════════════════════════════
   return (
     <header style={S.bar}>
 
       {/* Home button */}
-      <button
-        onClick={() => navigate("/")}
-        title="Back to Home"
-        style={S.homeBtn}
-      >
+      <button onClick={() => navigate("/")} title="Back to Home" style={S.homeBtn}>
         <svg viewBox="0 0 20 20" width="13" height="13" fill="currentColor" style={{ display: "block", flexShrink: 0 }}>
           <path d="M10 2L2 8.5V18h6v-5h4v5h6V8.5L10 2z" />
         </svg>
@@ -101,30 +82,22 @@ function StatusBar({
 
       <div style={S.sep} />
 
-      {/* Symbol button — click to open full search modal */}
+      {/* Symbol button — click to open search modal (managed by ChartPanel) */}
       <button
-        onClick={() => setSearchOpen(true)}
-        title="Search symbol (click to open)"
+        onClick={onOpenSearch}
+        title={symbol || "Search symbol"}
         style={S.symbolBtn}
       >
-        <svg width="10" height="10" viewBox="0 0 20 20" fill="none" style={{ flexShrink: 0, opacity: 0.5 }}>
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="none" style={{ flexShrink: 0 }}>
           <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="2" />
           <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
-          {symbol || "Symbol…"}
-        </span>
       </button>
 
-      {/* Search modal — portal-style, full screen overlay */}
-      <SymbolSearch
-        isOpen={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onSelect={(sym) => {
-          onSymbolChange(sym);
-          onRefresh(sym, resolution);
-        }}
-      />
+      {/* Indicators dropdown — right next to symbol button, like LayoutPicker */}
+      {indicators && onIndicatorChange && (
+        <IndicatorPanel indicators={indicators} onChange={onIndicatorChange} />
+      )}
 
       <div style={S.sep} />
 
@@ -178,7 +151,7 @@ function StatusBar({
         </span>
       </div>
 
-      {/* Spacer pushes right actions to the end */}
+      {/* Spacer */}
       <div style={{ flex: 1, minWidth: 6 }} />
 
       {/* Right actions */}
@@ -190,11 +163,7 @@ function StatusBar({
         )}
 
         {/* Theme toggle */}
-        <button
-          onClick={toggleTheme}
-          title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
-          style={S.actionBtn}
-        >
+        <button onClick={toggleTheme} title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"} style={S.actionBtn}>
           {theme === "dark" ? "☀" : "🌙"}
         </button>
 
@@ -203,27 +172,14 @@ function StatusBar({
           onClick={() => onRefresh(symbol, resolution)}
           disabled={loading}
           title="Refresh chart data from server"
-          style={{
-            ...S.refreshBtn,
-            opacity: loading ? 0.5 : 1,
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
+          style={{ ...S.refreshBtn, opacity: loading ? 0.5 : 1, cursor: loading ? "not-allowed" : "pointer" }}
         >
-          <span style={{
-            display: "inline-block",
-            animation: loading ? "spin 0.8s linear infinite" : "none",
-          }}>↻</span>
+          <span style={{ display: "inline-block", animation: loading ? "spin 0.8s linear infinite" : "none" }}>↻</span>
           {" "}REFRESH
         </button>
 
         {/* Sidebar toggle */}
-        <button
-          onClick={onSidebarToggle}
-          style={S.actionBtn}
-          title="Toggle signals / stats panel"
-        >
-          ☰
-        </button>
+        <button onClick={onSidebarToggle} style={S.actionBtn} title="Toggle signals / stats panel">☰</button>
 
       </div>
     </header>
@@ -243,8 +199,6 @@ function Stat({ label, value, color }) {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
-// Single style object that works for any panel width.
-// flexWrap: "wrap" lets content spill to 2nd line when panel is narrow.
 const S = {
   bar: {
     display: "flex",
@@ -292,21 +246,16 @@ const S = {
   symbolBtn: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
+    justifyContent: "center",
     background: "var(--bg3)",
     border: "1px solid var(--border2)",
     borderRadius: 4,
-    color: "var(--text)",
-    fontFamily: "var(--font-mono)",
-    fontSize: 10,
-    fontWeight: 700,
-    padding: "3px 8px",
+    color: "var(--text2)",
+    padding: "4px 7px",
     cursor: "pointer",
-    letterSpacing: "0.04em",
-    flexShrink: 1,
-    minWidth: 80,
-    maxWidth: 220,
-    transition: "border-color 0.15s, background 0.15s",
+    flexShrink: 0,
+    transition: "border-color 0.15s, background 0.15s, color 0.15s",
+    marginRight: 4,
   },
 
   pillGroup: {
@@ -404,5 +353,4 @@ const S = {
     flexShrink: 0,
     transition: "border-color 0.15s, color 0.15s",
   },
-
 };

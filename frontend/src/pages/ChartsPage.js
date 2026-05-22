@@ -16,12 +16,13 @@ import React, {
 } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import StatusBar from "../components/StatusBar";
+import SymbolSearch from "../components/SymbolSearch";
 import CandleChart from "../components/CandleChart";
 import SignalTable from "../components/SignalTable";
 import StatsPanel from "../components/StatsPanel";
 import WaveSignalTable from "../components/WaveSignalTable";
 import WaveStatsPanel from "../components/WaveStatsPanel";
-import IndicatorPanel from "../components/IndicatorPanel";
+import ConsolidationZoneTable from "../components/ConsolidationZoneTable";
 import EmaFloatPanel from "../components/EmaFloatPanel";
 import TradingToolbar from "../components/TradingToolbar";
 import { DrawingProvider, usePanelLink, setAllLinked } from "../components/DrawingContext";
@@ -253,7 +254,7 @@ const ChartPanel = memo(function ChartPanel({
   });
   const [sidebarOpen, setSidebarOpen] = useState(() => loadPref(pfx + "sidebarOpen", true));
   const [activeTabs, setActiveTabs] = useState(() =>
-    loadPref(pfx + "activeTabs", { bubble: "signals", waves: "signals" })
+    loadPref(pfx + "activeTabs", { bubble: "signals", waves: "signals", consolidation: "zones" })
   );
 
   // ── Drawing link — symbol-based sync, only active when panelCount > 1 ────
@@ -315,16 +316,18 @@ const ChartPanel = memo(function ChartPanel({
 
   const bubbleOn = indicators.bubble !== false;
   const wavesOn = !!indicators.waves;
-  const anySidebarIndicator = bubbleOn || wavesOn;
+  const consolidationOn = !!indicators.consolidation;
+  const bubbleGap = typeof indicators.bubbleGap === "number" ? indicators.bubbleGap : 4;
+  const anySidebarIndicator = bubbleOn || wavesOn || consolidationOn;
 
-  const prevAnyRef = useRef(bubbleOn || wavesOn);
+  const prevAnyRef = useRef(bubbleOn || wavesOn || consolidationOn);
   useEffect(() => {
-    const anyNow = bubbleOn || wavesOn;
+    const anyNow = bubbleOn || wavesOn || consolidationOn;
     const anyBefore = prevAnyRef.current;
     if (!anyBefore && anyNow) setSidebarOpen(true);
     if (anyBefore && !anyNow) setSidebarOpen(false);
     prevAnyRef.current = anyNow;
-  }, [bubbleOn, wavesOn]);
+  }, [bubbleOn, wavesOn, consolidationOn]);
 
   // ── Wave data ──────────────────────────────────────────────────────────────
   const [wavePivots, setWavePivots] = useState([]);
@@ -332,6 +335,12 @@ const ChartPanel = memo(function ChartPanel({
   const handleWaveData = useCallback((pivots, segments) => {
     setWavePivots(pivots);
     setWaveSegments(segments);
+  }, []);
+
+  // ── Consolidation zone data ────────────────────────────────────────────────
+  const [consolidationZones, setConsolidationZones] = useState([]);
+  const handleConsolidationData = useCallback((zones) => {
+    setConsolidationZones(zones);
   }, []);
 
   const chartResetRef = useRef(null);
@@ -380,6 +389,9 @@ const ChartPanel = memo(function ChartPanel({
       });
     }, 800);
   }, [candles.length, urlFibDrawing]); // eslint-disable-line
+
+  // ── Symbol search modal — managed here, opened by StatusBar button OR chart overlay ──
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // ── Crosshair ──────────────────────────────────────────────────────────────
   const [crosshairBar, setCrosshairBar] = useState(null);
@@ -435,6 +447,7 @@ const ChartPanel = memo(function ChartPanel({
           resolution={resolution}
           onSymbolChange={handleSymbolChange}
           onResolutionChange={handleResolutionChange}
+          onOpenSearch={() => setSearchOpen(true)}
           todayMode={todayMode}
           onTodayToggle={handleTodayToggle}
           crosshairBar={crosshairBar}
@@ -444,17 +457,41 @@ const ChartPanel = memo(function ChartPanel({
           onDualToggle={undefined}
           layoutId={isPrimary ? layoutId : undefined}
           onLayoutChange={isPrimary ? onLayoutChange : undefined}
+          indicators={indicators}
+          onIndicatorChange={handleIndicatorChange}
         />
       </div>
+
+      {/* SymbolSearch modal — rendered here (not in StatusBar), opened from navbar button OR chart overlay */}
+      <SymbolSearch
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSelect={(sym) => {
+          handleSymbolChange(sym);
+          handleRefresh(sym, resolution);
+        }}
+      />
 
       {/* Body: chart + optional sidebar (NO per-panel toolbar — it's global now) */}
       <div className="cp-body">
         <div className="chart-area">
           {error && <div className="error-bar">⚠ {error}</div>}
 
-          <div className="chart-indicator-float">
-            <IndicatorPanel indicators={indicators} onChange={handleIndicatorChange} />
-          </div>
+          {/* Symbol overlay — TradingView style, top-left of chart. Click opens SymbolSearch */}
+          <button
+            className="chart-symbol-overlay"
+            onClick={() => setSearchOpen(true)}
+            title="Click to change symbol"
+          >
+            <span className="chart-symbol-overlay-ticker">
+              {symbol ? symbol.split(":").pop() : "—"}
+            </span>
+            <span className="chart-symbol-overlay-res">
+              {resolution === 1 ? "1m" : resolution === 3 ? "3m" : resolution === 5 ? "5m" :
+                resolution === 15 ? "15m" : resolution === 60 ? "1h" :
+                  resolution === 1440 ? "1D" : resolution === 10080 ? "1W" : `${resolution}m`}
+            </span>
+          </button>
 
           {candles.length > 0 && (
             <EmaFloatPanel
@@ -493,6 +530,9 @@ const ChartPanel = memo(function ChartPanel({
               showBubble={bubbleOn}
               showWaves={wavesOn}
               onWaveData={handleWaveData}
+              showConsolidation={consolidationOn}
+              bubbleGap={bubbleGap}
+              onConsolidationData={handleConsolidationData}
               onResetViewReady={handleResetViewReady}
               reloadToken={reloadToken}
               onIntentionalReloadAck={handleIntentionalReloadAck}
@@ -554,6 +594,24 @@ const ChartPanel = memo(function ChartPanel({
                       signalLabel: `Pivots (${displayedWavePivots.length})`,
                       signals: <WaveSignalTable wavePivots={wavePivots} todayMode={todayMode} />,
                       stats: <WaveStatsPanel wavePivots={wavePivots} waveSegments={waveSegments} todayMode={todayMode} />,
+                    }}
+                  </SidebarSection>
+                </div>
+              )}
+
+              {consolidationOn && (
+                <div className="sidebar-section-wrap">
+                  <SidebarSection
+                    id="consolidation"
+                    title="Consolidation"
+                    color="#a259ff"
+                    tab={activeTabs.consolidation ?? "zones"}
+                    onTabChange={setTab}
+                  >
+                    {{
+                      signalLabel: `Zones (${consolidationZones.length})`,
+                      signals: <ConsolidationZoneTable zones={consolidationZones} todayMode={todayMode} />,
+                      stats: <ConsolidationZoneTable zones={consolidationZones} todayMode={todayMode} />,
                     }}
                   </SidebarSection>
                 </div>

@@ -11,6 +11,11 @@ import {
   updateWavesIndicator,
   removeWavesIndicator,
 } from "../indicators/WavesIndicator";
+import {
+  createConsolidationIndicator,
+  updateConsolidationIndicator,
+  removeConsolidationIndicator,
+} from "../indicators/ConsolidationIndicator";
 import DrawingOverlay from "./DrawingOverlay";
 import { useTheme } from "../App";
 
@@ -359,6 +364,9 @@ export default function CandleChart({
   showBubble = true,
   showWaves = false,
   onWaveData,
+  showConsolidation = false,
+  bubbleGap = 4,
+  onConsolidationData,
   onResetViewReady,
   reloadToken = 0,
   onIntentionalReloadAck,
@@ -423,6 +431,9 @@ export default function CandleChart({
   const showBubbleRef = useRef(showBubble);
   const showWavesRef = useRef(showWaves);
   const onWaveDataRef = useRef(onWaveData);
+  const showConsolidationRef = useRef(showConsolidation);
+  const bubbleGapRef = useRef(bubbleGap);
+  const onConsolidationDataRef = useRef(onConsolidationData);
   const onIntentionalReloadAckRef = useRef(onIntentionalReloadAck);
   const waveTargetRef = useRef(waveTarget);
   const selectedToolRef = useRef(selectedTool);
@@ -437,6 +448,9 @@ export default function CandleChart({
   showBubbleRef.current = showBubble;
   showWavesRef.current = showWaves;
   onWaveDataRef.current = onWaveData;
+  showConsolidationRef.current = showConsolidation;
+  bubbleGapRef.current = bubbleGap;
+  onConsolidationDataRef.current = onConsolidationData;
   onIntentionalReloadAckRef.current = onIntentionalReloadAck;
   waveTargetRef.current = waveTarget;
   selectedToolRef.current = selectedTool;
@@ -591,6 +605,13 @@ export default function CandleChart({
       candleSeries
     );
 
+    createConsolidationIndicator(
+      chart,
+      containerRef.current,
+      candleSeries,
+      (zones) => { if (onConsolidationDataRef.current) onConsolidationDataRef.current(zones); }
+    );
+
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range) return;
       const total = candlesRef.current?.length ?? 0;
@@ -633,6 +654,7 @@ export default function CandleChart({
       rulerRef.current?.destroy();
       rulerRef.current = null;
       removeWavesIndicator(true, chart);
+      removeConsolidationIndicator(true, chart);
       // Null refs before deferred remove so any queued RAF paint callbacks bail cleanly
       chartRef.current = null;
       candleRef.current = null;
@@ -735,6 +757,7 @@ export default function CandleChart({
           }
 
           if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL, chartRef.current);
+          if (showConsolidationRef.current) updateConsolidationIndicator(candles, emaH, emaL, chartRef.current, bubbleGapRef.current);
 
           prevCountRef.current = candles.length;
           prevLastCandleKeyRef.current = lastKey;
@@ -805,6 +828,9 @@ export default function CandleChart({
 
     if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL, chartRef.current);
     else removeWavesIndicator(false, chartRef.current);
+
+    if (showConsolidationRef.current) updateConsolidationIndicator(candles, emaH, emaL, chartRef.current, bubbleGapRef.current);
+    else removeConsolidationIndicator(false, chartRef.current);
 
     // After setData, markers need a full refresh (series was rebuilt)
     // Reset the key so setMarkersIfChanged always fires after setData
@@ -951,6 +977,17 @@ export default function CandleChart({
     // Waves toggle can shift marker positions — refresh
     refreshMarkers();
   }, [showWaves, refreshMarkers]); // eslint-disable-line
+
+  // ── Consolidation toggle + bubbleGap change ────────────────────────────────
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (showConsolidation) {
+      if (candlesRef.current?.length)
+        updateConsolidationIndicator(candlesRef.current, emaHighsRef.current, emaLowsRef.current, chartRef.current, bubbleGap);
+    } else {
+      removeConsolidationIndicator(false, chartRef.current);
+    }
+  }, [showConsolidation, bubbleGap]); // eslint-disable-line
 
   // ── Candle countdown timer — pixel-tracked to last price ──────────────────
   // timerInfo: { price, secsLeft, isBull, yPx }

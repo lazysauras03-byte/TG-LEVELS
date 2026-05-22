@@ -118,11 +118,44 @@
 }
 
 /* ─── Floating Indicator Panel ──────────────────────────────────── */
-.chart-indicator-float {
+/* ─── Symbol overlay on chart canvas (TradingView style) ─── */
+.chart-symbol-overlay {
   position: absolute;
   top: 10px;
   left: 10px;
   z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  backdrop-filter: blur(4px);
+}
+
+.chart-symbol-overlay:hover {
+  background: rgba(61, 132, 255, 0.15);
+  border-color: rgba(61, 132, 255, 0.4);
+  color: var(--text);
+}
+
+.chart-symbol-overlay-ticker {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.chart-symbol-overlay-res {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text3);
+  letter-spacing: 0.03em;
 }
 
 /* ─── Sidebar sections ──────────────────────────────────────────── */
