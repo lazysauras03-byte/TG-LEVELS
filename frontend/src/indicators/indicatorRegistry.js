@@ -29,6 +29,11 @@ export const INDICATOR_REGISTRY = [
       defaultValue: 4,
     },
   },
+  {
+    id: "srZones",
+    label: "SR Zones",
+    color: "#00c853",
+  },
 ];
 
 export function buildDefaultIndicators() {
@@ -36,6 +41,7 @@ export function buildDefaultIndicators() {
     bubble: true,
     waves: false,
     consolidation: false,
+    srZones: false,
     bubbleGap: 4,    // shared param for consolidation
   };
 }

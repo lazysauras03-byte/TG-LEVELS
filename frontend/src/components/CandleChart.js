@@ -16,6 +16,11 @@ import {
   updateConsolidationIndicator,
   removeConsolidationIndicator,
 } from "../indicators/ConsolidationIndicator";
+import {
+  createSRZonesIndicator,
+  updateSRZonesIndicator,
+  removeSRZonesIndicator,
+} from "../indicators/SRZonesIndicator";
 import DrawingOverlay from "./DrawingOverlay";
 import { useTheme } from "../App";
 
@@ -367,6 +372,9 @@ export default function CandleChart({
   showConsolidation = false,
   bubbleGap = 4,
   onConsolidationData,
+  showSRZones = false,
+  srStrongTouches = 3,
+  srLookbackBars = 300,
   onResetViewReady,
   reloadToken = 0,
   onIntentionalReloadAck,
@@ -434,6 +442,9 @@ export default function CandleChart({
   const showConsolidationRef = useRef(showConsolidation);
   const bubbleGapRef = useRef(bubbleGap);
   const onConsolidationDataRef = useRef(onConsolidationData);
+  const showSRZonesRef = useRef(showSRZones);
+  const srStrongTouchesRef = useRef(srStrongTouches);
+  const srLookbackBarsRef = useRef(srLookbackBars);
   const onIntentionalReloadAckRef = useRef(onIntentionalReloadAck);
   const waveTargetRef = useRef(waveTarget);
   const selectedToolRef = useRef(selectedTool);
@@ -451,6 +462,9 @@ export default function CandleChart({
   showConsolidationRef.current = showConsolidation;
   bubbleGapRef.current = bubbleGap;
   onConsolidationDataRef.current = onConsolidationData;
+  showSRZonesRef.current = showSRZones;
+  srStrongTouchesRef.current = srStrongTouches;
+  srLookbackBarsRef.current = srLookbackBars;
   onIntentionalReloadAckRef.current = onIntentionalReloadAck;
   waveTargetRef.current = waveTarget;
   selectedToolRef.current = selectedTool;
@@ -612,6 +626,12 @@ export default function CandleChart({
       (zones) => { if (onConsolidationDataRef.current) onConsolidationDataRef.current(zones); }
     );
 
+    createSRZonesIndicator(
+      chart,
+      containerRef.current,
+      candleSeries
+    );
+
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range) return;
       const total = candlesRef.current?.length ?? 0;
@@ -655,6 +675,7 @@ export default function CandleChart({
       rulerRef.current = null;
       removeWavesIndicator(true, chart);
       removeConsolidationIndicator(true, chart);
+      removeSRZonesIndicator(true, chart);
       // Null refs before deferred remove so any queued RAF paint callbacks bail cleanly
       chartRef.current = null;
       candleRef.current = null;
@@ -758,6 +779,7 @@ export default function CandleChart({
 
           if (showWavesRef.current) updateWavesIndicator(candles, emaH, emaL, chartRef.current);
           if (showConsolidationRef.current) updateConsolidationIndicator(candles, emaH, emaL, chartRef.current, bubbleGapRef.current);
+          if (showSRZonesRef.current) updateSRZonesIndicator(candles, emaH, emaL, chartRef.current, srStrongTouchesRef.current, srLookbackBarsRef.current);
 
           prevCountRef.current = candles.length;
           prevLastCandleKeyRef.current = lastKey;
@@ -831,6 +853,9 @@ export default function CandleChart({
 
     if (showConsolidationRef.current) updateConsolidationIndicator(candles, emaH, emaL, chartRef.current, bubbleGapRef.current);
     else removeConsolidationIndicator(false, chartRef.current);
+
+    if (showSRZonesRef.current) updateSRZonesIndicator(candles, emaH, emaL, chartRef.current, srStrongTouchesRef.current, srLookbackBarsRef.current);
+    else removeSRZonesIndicator(false, chartRef.current);
 
     // After setData, markers need a full refresh (series was rebuilt)
     // Reset the key so setMarkersIfChanged always fires after setData
@@ -988,6 +1013,20 @@ export default function CandleChart({
       removeConsolidationIndicator(false, chartRef.current);
     }
   }, [showConsolidation, bubbleGap]); // eslint-disable-line
+
+  // ── SR Zones toggle ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (showSRZones) {
+      if (candlesRef.current?.length)
+        updateSRZonesIndicator(
+          candlesRef.current, emaHighsRef.current, emaLowsRef.current,
+          chartRef.current, srStrongTouches, srLookbackBars
+        );
+    } else {
+      removeSRZonesIndicator(false, chartRef.current);
+    }
+  }, [showSRZones, srStrongTouches, srLookbackBars]); // eslint-disable-line
 
   // ── Candle countdown timer — pixel-tracked to last price ──────────────────
   // timerInfo: { price, secsLeft, isBull, yPx }

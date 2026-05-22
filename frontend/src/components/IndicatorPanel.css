@@ -112,12 +112,21 @@
   flex-direction: column;
 }
 
+.ind-row-wrap {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+
+.ind-row-wrap .ind-row {
+  border-bottom: none;
+}
+
 .ind-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 11px 14px;
-  border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background 0.12s;
   gap: 12px;
@@ -213,24 +222,12 @@
   font-family: var(--font-mono);
 }
 
-/* ─── Extra input row (e.g. bubbleGap for Consolidation) ─── */
-.ind-row-wrap {
-  display: flex;
-  flex-direction: column;
-  border-bottom: 1px solid var(--border);
-}
-
-.ind-row-wrap .ind-row {
-  border-bottom: none;
-}
-
-.ind-extra-row {
+/* ─── Inline extra input (e.g. GAP for Consolidation) ── */
+.ind-extra-inline {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 14px 8px 32px;
-  gap: 10px;
-  background: var(--bg3);
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .ind-extra-label {

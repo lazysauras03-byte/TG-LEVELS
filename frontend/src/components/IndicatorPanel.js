@@ -72,6 +72,31 @@ export default function IndicatorPanel({ indicators, onChange }) {
                         <span className="ind-row-label">{ind.label}</span>
                       </span>
                     </span>
+
+                    {/* Inline extra input — shown between label and toggle when enabled */}
+                    {ind.extraInput && enabled && (
+                      <span
+                        className="ind-extra-inline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span className="ind-extra-label">{ind.extraInput.label}</span>
+                        <input
+                          type="number"
+                          className="ind-extra-input"
+                          min={ind.extraInput.min}
+                          max={ind.extraInput.max}
+                          value={indicators[ind.extraInput.key] ?? ind.extraInput.defaultValue}
+                          onChange={(e) => {
+                            const v = Math.max(
+                              ind.extraInput.min,
+                              Math.min(ind.extraInput.max, Number(e.target.value) || ind.extraInput.defaultValue)
+                            );
+                            onChange(ind.extraInput.key, v);
+                          }}
+                        />
+                      </span>
+                    )}
+
                     <span
                       className={`ind-toggle ${enabled ? "ind-toggle--on" : ""}`}
                       role="switch"
@@ -80,30 +105,6 @@ export default function IndicatorPanel({ indicators, onChange }) {
                       <span className="ind-toggle-thumb" />
                     </span>
                   </div>
-
-                  {/* Extra input row — only rendered when indicator is enabled AND has extraInput */}
-                  {ind.extraInput && enabled && (
-                    <div
-                      className="ind-extra-row"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <span className="ind-extra-label">{ind.extraInput.label}</span>
-                      <input
-                        type="number"
-                        className="ind-extra-input"
-                        min={ind.extraInput.min}
-                        max={ind.extraInput.max}
-                        value={indicators[ind.extraInput.key] ?? ind.extraInput.defaultValue}
-                        onChange={(e) => {
-                          const v = Math.max(
-                            ind.extraInput.min,
-                            Math.min(ind.extraInput.max, Number(e.target.value) || ind.extraInput.defaultValue)
-                          );
-                          onChange(ind.extraInput.key, v);
-                        }}
-                      />
-                    </div>
-                  )}
                 </div>
               );
             })}
