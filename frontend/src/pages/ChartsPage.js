@@ -124,7 +124,6 @@ export function LayoutPicker({ currentLayout, onSelect }) {
         }}
       >
         <LayoutIcon icon={current.icon} size={15} />
-        <span>LAYOUT</span>
       </button>
 
       {open && (

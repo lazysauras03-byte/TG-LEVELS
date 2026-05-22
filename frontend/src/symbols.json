@@ -826,5 +826,25 @@
     {
         "name": "NIFTY50-INDEX",
         "symbol": "NSE:NIFTY50-INDEX"
+    },
+    {
+        "name": "CRUDEOIL",
+        "symbol": "MCX:CRUDEOIL26JUNFUT"
+    },
+    {
+        "name": "ALUMINIUM",
+        "symbol": "MCX:ALUMINIUM26MAYFUT"
+    },
+    {
+        "name": "NATGASMINI",
+        "symbol": "MCX:NATGASMINI26MAYFUT"
+    },
+    {
+        "name": "SILVER",
+        "symbol": "MCX:SILVER26JULFUT"
+    },
+    {
+        "name": "GOLD",
+        "symbol": "MCX:GOLD26JUNFUT"
     }
 ]

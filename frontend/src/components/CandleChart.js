@@ -886,6 +886,9 @@ export default function CandleChart({
     chartRef.current.applyOptions({
       handleScroll: isPanMode,
       handleScale: isPanMode,
+      crosshair: {
+        mode: CrosshairMode.Normal,
+      },
     });
     // Update cursor style on the container
     if (containerRef.current) {

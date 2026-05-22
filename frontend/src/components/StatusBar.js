@@ -165,7 +165,6 @@ function StatusBar({
         <svg viewBox="0 0 20 20" width="13" height="13" fill="currentColor" style={{ display: "block", flexShrink: 0 }}>
           <path d="M10 2L2 8.5V18h6v-5h4v5h6V8.5L10 2z" />
         </svg>
-        <span>HOME</span>
       </button>
 
       {/* Logo */}
