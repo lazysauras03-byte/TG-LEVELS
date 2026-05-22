@@ -6,25 +6,14 @@
 // ─────  Layout picker only appears on the primary panel (panelIdx 0).
 // ─────  Link dot (drawing sync) appears on every panel.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useState, useRef, useEffect, memo } from "react";
+import React, { useState, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMarketStatus } from "../hooks/useMarketStatus";
 import { useTheme } from "../App";
-import { BACKEND } from "../config";
 import { LayoutPicker } from "../pages/ChartsPage";
+import SymbolSearch from "./SymbolSearch";
 
-// ── Symbols loader ────────────────────────────────────────────────────────────
-let _symbolsCache = [];
-let _symbolsLoaded = false;
-async function loadSymbols() {
-  if (_symbolsLoaded) return _symbolsCache;
-  try {
-    const r = await fetch(`${BACKEND}/api/symbols`);
-    if (r.ok) { _symbolsCache = await r.json(); }
-  } catch { }
-  _symbolsLoaded = true;
-  return _symbolsCache;
-}
+// ── Symbols loader lives in SymbolSearch.js (shared module cache) ─────────
 
 const numFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 function fmt(n) {
@@ -83,70 +72,8 @@ function StatusBar({
   const marketStatus = useMarketStatus();
   const isLive = marketStatus === "live";
 
-  // ── Symbol search ──────────────────────────────────────────────────────────
-  const [symbols, setSymbols] = useState([]);
-  const [query, setQuery] = useState(symbol);
-  const [suggestions, setSuggestions] = useState([]);
-  const [showDrop, setShowDrop] = useState(false);
-  const inputRef = useRef(null);
-  const dropRef = useRef(null);
-
-  useEffect(() => { loadSymbols().then((list) => setSymbols(list)); }, []);
-  useEffect(() => { setQuery(symbol); }, [symbol]);
-
-  function handleQueryChange(e) {
-    const val = e.target.value;
-    setQuery(val);
-    if (!val.trim()) { setSuggestions([]); setShowDrop(false); return; }
-    const q = val.toLowerCase().trim();
-    const hits = symbols
-      .filter((s) => {
-        const nameLower = s.name.toLowerCase();
-        const colonIdx = s.symbol.indexOf(":");
-        const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
-        const tickerBase = ticker.replace(/-(eq|be|index|etf|pp|sm)$/i, "");
-        return (
-          nameLower.startsWith(q) || nameLower.includes(q) ||
-          ticker.startsWith(q) || tickerBase.startsWith(q) || tickerBase.includes(q)
-        );
-      })
-      .sort((a, b) => {
-        const colonA = a.symbol.indexOf(":");
-        const colonB = b.symbol.indexOf(":");
-        const tA = (colonA >= 0 ? a.symbol.slice(colonA + 1) : a.symbol).toLowerCase().replace(/-(eq|be|index|etf|pp|sm)$/i, "");
-        const tB = (colonB >= 0 ? b.symbol.slice(colonB + 1) : b.symbol).toLowerCase().replace(/-(eq|be|index|etf|pp|sm)$/i, "");
-        const scoreA = tA.startsWith(q) ? 0 : a.name.toLowerCase().startsWith(q) ? 1 : 2;
-        const scoreB = tB.startsWith(q) ? 0 : b.name.toLowerCase().startsWith(q) ? 1 : 2;
-        if (scoreA !== scoreB) return scoreA - scoreB;
-        return a.name.localeCompare(b.name);
-      })
-      .slice(0, 12);
-    setSuggestions(hits);
-    setShowDrop(hits.length > 0);
-  }
-
-  function handleSelect(sym) {
-    setQuery(sym.symbol);
-    setSuggestions([]);
-    setShowDrop(false);
-    onSymbolChange(sym.symbol);
-    onRefresh(sym.symbol, resolution);
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === "Enter") { setShowDrop(false); onSymbolChange(query); onRefresh(query, resolution); }
-    if (e.key === "Escape") setShowDrop(false);
-  }
-
-  useEffect(() => {
-    function handler(e) {
-      if (dropRef.current && !dropRef.current.contains(e.target) &&
-        inputRef.current && !inputRef.current.contains(e.target))
-        setShowDrop(false);
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  // ── Symbol search modal ─────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SINGLE UNIFIED RENDER — works for any panel width.
@@ -174,40 +101,30 @@ function StatusBar({
 
       <div style={S.sep} />
 
-      {/* Symbol search */}
-      <div style={{ position: "relative", flexShrink: 1, minWidth: 0 }}>
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={handleQueryChange}
-          onKeyDown={handleKeyDown}
-          onFocus={() => query && setShowDrop(suggestions.length > 0)}
-          style={S.input}
-          placeholder="Symbol…"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        {showDrop && (
-          <div ref={dropRef} style={S.dropdown}>
-            {suggestions.map((s, i) => (
-              <div
-                key={i}
-                style={S.dropItem}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg2)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                onMouseDown={() => handleSelect(s)}
-              >
-                <span style={{ color: "var(--accent)", fontSize: 10, fontWeight: 700, minWidth: 110, flexShrink: 0 }}>
-                  {s.symbol}
-                </span>
-                <span style={{ color: "var(--text2)", fontSize: 10 }}>
-                  {s.name.length > 28 ? s.name.slice(0, 28) + "…" : s.name}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Symbol button — click to open full search modal */}
+      <button
+        onClick={() => setSearchOpen(true)}
+        title="Search symbol (click to open)"
+        style={S.symbolBtn}
+      >
+        <svg width="10" height="10" viewBox="0 0 20 20" fill="none" style={{ flexShrink: 0, opacity: 0.5 }}>
+          <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="2" />
+          <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
+          {symbol || "Symbol…"}
+        </span>
+      </button>
+
+      {/* Search modal — portal-style, full screen overlay */}
+      <SymbolSearch
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSelect={(sym) => {
+          onSymbolChange(sym);
+          onRefresh(sym, resolution);
+        }}
+      />
 
       <div style={S.sep} />
 
@@ -372,19 +289,24 @@ const S = {
     flexShrink: 0,
   },
 
-  input: {
+  symbolBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
     background: "var(--bg3)",
     border: "1px solid var(--border2)",
     borderRadius: 4,
     color: "var(--text)",
     fontFamily: "var(--font-mono)",
     fontSize: 10,
-    padding: "3px 6px",
-    width: "15ch",
-    minWidth: "7ch",
-    maxWidth: 180,
-    outline: "none",
-    boxSizing: "border-box",
+    fontWeight: 700,
+    padding: "3px 8px",
+    cursor: "pointer",
+    letterSpacing: "0.04em",
+    flexShrink: 1,
+    minWidth: 80,
+    maxWidth: 220,
+    transition: "border-color 0.15s, background 0.15s",
   },
 
   pillGroup: {
@@ -483,15 +405,4 @@ const S = {
     transition: "border-color 0.15s, color 0.15s",
   },
 
-  dropdown: {
-    position: "absolute", top: "calc(100% + 4px)", left: 0,
-    background: "var(--bg3)", border: "1px solid var(--border2)",
-    borderRadius: 6, zIndex: 9999, minWidth: 320, maxHeight: 260,
-    overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
-  },
-
-  dropItem: {
-    padding: "7px 10px", cursor: "pointer", display: "flex", alignItems: "center",
-    gap: 8, borderBottom: "1px solid var(--border)", background: "transparent",
-  },
 };

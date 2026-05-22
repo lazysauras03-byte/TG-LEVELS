@@ -1,17 +1,26 @@
 /**
  * symbolsRouter.js
  * ─────────────────────────────────────────────────────────────────
- * Provides a REST endpoint that merges symbols from:
- *   1. frontend/src/symbols.json  (curated list)
- *   2. frontend/src/stocks.xlsx   (EQ sheet — 203 NSE equities)
- *   3. frontend/src/NIFTY.xlsx    (same format, Nifty-specific list)
+ * Provides REST endpoints that merge symbols from:
+ *   1. frontend/src/symbols.json  — curated indices + NSE equities
+ *   2. frontend/src/stocks.xlsx   — 203 NSE equities (EQ sheet)
+ *   3. frontend/src/NIFTY.xlsx    — Nifty-specific list
+ *   4. frontend/src/mcx.json      — MCX commodity futures (~20)
+ *
+ * Every returned entry includes a `type` field:
+ *   "index" | "equity" | "commodity" | "etf"
  *
  * GET /api/symbols
- *   Returns: [{ symbol: "NSE:NIFTY50-INDEX", name: "NIFTY 50" }, ...]
- *   Deduped by symbol string, sorted alphabetically by name.
- *   Indices (NIFTY50-INDEX, NIFTYBANK-INDEX, SENSEX) appear first.
+ *   ?exchange=NSE|BSE|MCX   (optional filter)
+ *   Returns: [{ symbol, name, type }, ...]
+ *   Indices first, then sorted alphabetically.
+ *   No param → returns everything (backward compatible).
  *
- * The merged list is cached at startup (re-read if file changes).
+ * GET /api/symbols/search?q=GOLD[&exchange=MCX]
+ *   Returns up to 20 filtered results.
+ *
+ * POST /api/symbols/refresh
+ *   Force reload from disk.
  * ─────────────────────────────────────────────────────────────────
  */
 
@@ -23,9 +32,9 @@ const fs = require("fs");
 
 const router = express.Router();
 
-// Paths relative to backend/src/
 const FRONTEND_SRC = path.resolve(__dirname, "../../frontend/src");
 const SYMBOLS_JSON = path.join(FRONTEND_SRC, "symbols.json");
+const MCX_JSON = path.join(FRONTEND_SRC, "mcx.json");
 const STOCKS_XLSX = path.join(FRONTEND_SRC, "stocks.xlsx");
 const NIFTY_XLSX = path.join(FRONTEND_SRC, "NIFTY.xlsx");
 
@@ -33,10 +42,19 @@ let _cachedSymbols = null;
 let _cacheTime = 0;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+// ── Type inference ──────────────────────────────────────────────────────────
+function inferType(sym, existingType) {
+  if (existingType) return existingType;
+  const s = sym.toUpperCase();
+  if (s.startsWith("MCX:")) return "commodity";
+  if (s.includes("INDEX") || s.includes("SENSEX")) return "index";
+  if (s.endsWith("-ETF") || s.endsWith("-EF")) return "etf";
+  return "equity";
+}
+
+// ── Loaders ─────────────────────────────────────────────────────────────────
 function loadExcel(filePath) {
   try {
-    // Dynamic require so the rest of the server doesn't hard-depend on xlsx
-    // if it isn't installed. Gracefully return [] if unavailable.
     const XLSX = require("xlsx");
     const wb = XLSX.readFile(filePath);
     const ws = wb.Sheets[wb.SheetNames[0]];
@@ -46,6 +64,7 @@ function loadExcel(filePath) {
       .map((r) => ({
         symbol: String(r.symbol).trim(),
         name: String(r.Name).trim(),
+        type: inferType(String(r.symbol).trim(), null),
       }));
   } catch (err) {
     console.warn(`[Symbols] Could not read ${path.basename(filePath)}: ${err.message}`);
@@ -55,41 +74,44 @@ function loadExcel(filePath) {
 
 function loadJson(filePath) {
   try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    const arr = JSON.parse(raw);
+    const arr = JSON.parse(fs.readFileSync(filePath, "utf8"));
     return arr
       .filter((s) => s.symbol && s.name)
-      .map((s) => ({ symbol: String(s.symbol).trim(), name: String(s.name).trim() }));
+      .map((s) => ({
+        symbol: String(s.symbol).trim(),
+        name: String(s.name).trim(),
+        type: inferType(String(s.symbol).trim(), s.type || null),
+      }));
   } catch (err) {
-    console.warn(`[Symbols] Could not read symbols.json: ${err.message}`);
+    console.warn(`[Symbols] Could not read ${path.basename(filePath)}: ${err.message}`);
     return [];
   }
 }
 
+// ── Build merged list ────────────────────────────────────────────────────────
 function buildSymbolList() {
   const seen = new Map(); // symbol → entry
 
-  const jsonSymbols = loadJson(SYMBOLS_JSON);
-  const stocksSymbols = loadExcel(STOCKS_XLSX);
-  const niftySymbols = loadExcel(NIFTY_XLSX);
+  const sources = [
+    ...loadJson(SYMBOLS_JSON),
+    ...loadJson(MCX_JSON),
+    ...loadExcel(STOCKS_XLSX),
+    ...loadExcel(NIFTY_XLSX),
+  ];
 
-  // Merge — json takes priority for naming, then excel sheets
-  for (const s of [...jsonSymbols, ...stocksSymbols, ...niftySymbols]) {
-    if (!seen.has(s.symbol)) {
-      seen.set(s.symbol, s);
-    }
+  for (const s of sources) {
+    if (!seen.has(s.symbol)) seen.set(s.symbol, s);
   }
 
   const all = Array.from(seen.values());
 
-  // Indices first, then sorted alphabetically
-  const isIndex = (sym) =>
-    sym.symbol.includes("INDEX") || sym.symbol.includes("SENSEX");
+  // Indices first, then alphabetically by name
+  const indices = all.filter(s => s.type === "index")
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const rest = all.filter(s => s.type !== "index")
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  const indices = all.filter(isIndex).sort((a, b) => a.name.localeCompare(b.name));
-  const equities = all.filter((s) => !isIndex(s)).sort((a, b) => a.name.localeCompare(b.name));
-
-  return [...indices, ...equities];
+  return [...indices, ...rest];
 }
 
 function getSymbols(forceRefresh = false) {
@@ -103,29 +125,39 @@ function getSymbols(forceRefresh = false) {
   return _cachedSymbols;
 }
 
-// ── Routes ───────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function exchangeOf(sym) {
+  const idx = sym.symbol.indexOf(":");
+  return idx >= 0 ? sym.symbol.slice(0, idx).toUpperCase() : "NSE";
+}
 
-/** GET /api/symbols — full list */
+// ── Routes ───────────────────────────────────────────────────────────────────
+
+/** GET /api/symbols[?exchange=NSE|MCX|BSE] */
 router.get("/", (req, res) => {
   try {
-    const symbols = getSymbols();
+    let symbols = getSymbols();
+    const exch = (req.query.exchange || "").toUpperCase();
+    if (exch) symbols = symbols.filter(s => exchangeOf(s) === exch);
     res.json(symbols);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/** GET /api/symbols/search?q=NIFTY — filtered search */
+/** GET /api/symbols/search?q=GOLD[&exchange=MCX] */
 router.get("/search", (req, res) => {
   const q = (req.query.q || "").toLowerCase().trim();
+  const exch = (req.query.exchange || "").toUpperCase();
   if (!q) return res.json([]);
   try {
-    const symbols = getSymbols();
+    let symbols = getSymbols();
+    if (exch) symbols = symbols.filter(s => exchangeOf(s) === exch);
     const results = symbols
       .filter((s) => {
         const colonIdx = s.symbol.indexOf(":");
         const ticker = (colonIdx >= 0 ? s.symbol.slice(colonIdx + 1) : s.symbol).toLowerCase();
-        return s.name.toLowerCase().startsWith(q) || ticker.startsWith(q);
+        return s.name.toLowerCase().startsWith(q) || ticker.startsWith(q) || ticker.includes(q);
       })
       .slice(0, 20);
     res.json(results);
@@ -134,7 +166,7 @@ router.get("/search", (req, res) => {
   }
 });
 
-/** POST /api/symbols/refresh — force reload from disk */
+/** POST /api/symbols/refresh */
 router.post("/refresh", (req, res) => {
   try {
     const symbols = getSymbols(true);

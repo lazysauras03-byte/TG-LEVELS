@@ -1,0 +1,331 @@
+/* ── SymbolSearch.css ─────────────────────────────────────────────────────── */
+
+/* Overlay */
+.ss-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 68px;
+  animation: ssOverlayIn 0.14s ease;
+}
+
+@keyframes ssOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Modal container */
+.ss-modal {
+  width: 560px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 110px);
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.04),
+    0 8px 32px rgba(0,0,0,0.5),
+    0 32px 80px rgba(0,0,0,0.6);
+  animation: ssModalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes ssModalIn {
+  from { opacity: 0; transform: translateY(-14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.ss-header {
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+
+.ss-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px 12px;
+}
+
+.ss-search-icon {
+  color: var(--text3);
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.ss-search-row:focus-within .ss-search-icon {
+  color: var(--accent);
+}
+
+.ss-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  caret-color: var(--accent);
+  min-width: 0;
+}
+
+.ss-input::placeholder {
+  color: var(--text3);
+  font-weight: 400;
+}
+
+/* Icon buttons (clear / close) */
+.ss-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.12s, background 0.12s;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.ss-icon-btn:hover {
+  color: var(--text);
+  background: var(--bg3);
+}
+
+.ss-close-btn {
+  border-left: 1px solid var(--border);
+  margin-left: 2px;
+  padding: 4px 8px;
+  border-radius: 0;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+.ss-tabs {
+  display: flex;
+  padding: 0 10px;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ss-tabs::-webkit-scrollbar { display: none; }
+
+.ss-tab {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+  margin-bottom: -1px; /* overlap border */
+}
+
+.ss-tab:hover {
+  color: var(--text2);
+}
+
+.ss-tab-active {
+  color: var(--text) !important;
+  border-bottom-color: var(--accent) !important;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+.ss-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 0 8px;
+}
+
+.ss-body::-webkit-scrollbar       { width: 4px; }
+.ss-body::-webkit-scrollbar-track { background: transparent; }
+.ss-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* Section group */
+.ss-section { }
+
+.ss-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px 5px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ── Symbol row ──────────────────────────────────────────────────────────── */
+.ss-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background 0.08s;
+  user-select: none;
+}
+
+.ss-row:hover,
+.ss-row-active {
+  background: var(--bg3);
+}
+
+/* Exchange dot avatar */
+.ss-exch-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+/* Row body */
+.ss-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ss-row-name {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-row-sub {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  color: var(--text3);
+  font-size: 10px;
+}
+
+.ss-exchange {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.ss-sep2 {
+  margin: 0 5px;
+  opacity: 0.4;
+}
+
+.ss-ticker {
+  color: var(--text2);
+  font-size: 10px;
+}
+
+/* Badge */
+.ss-row-badge {
+  flex-shrink: 0;
+}
+
+.ss-badge {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ── Empty / hint states ─────────────────────────────────────────────────── */
+.ss-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 44px 20px 36px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.ss-empty-glyph {
+  font-size: 30px;
+  opacity: 0.25;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.ss-empty-msg {
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ss-empty-msg strong {
+  color: var(--text);
+}
+
+.ss-empty-sub {
+  font-size: 10px;
+  opacity: 0.55;
+}
+
+/* ── Footer kbd hints ────────────────────────────────────────────────────── */
+.ss-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 16px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.ss-kbd {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text2);
+  margin-right: 4px;
+  letter-spacing: 0;
+}
