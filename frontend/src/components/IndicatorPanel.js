@@ -109,10 +109,6 @@ export default function IndicatorPanel({ indicators, onChange }) {
               );
             })}
           </div>
-
-          <div className="ind-dropdown-footer">
-            Right-click on chart to reset view
-          </div>
         </div>
       )}
     </div>

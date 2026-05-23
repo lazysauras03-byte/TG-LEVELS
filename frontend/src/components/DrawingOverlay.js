@@ -19,6 +19,7 @@ import React, {
   useCallback,
 } from "react";
 import { DRAW_COLORS } from "./TradingToolbar";
+import { getTimeframeColor } from "../utils/timeframeColors";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DRAW_COLOR = "#2962ff";
@@ -727,16 +728,19 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       if (onPublishDrawings) onPublishDrawings([], false);
     },
     getDrawings() { return localDrawingsRef.current; },
-    addFibDrawing({ p1Price, p1Time = null, p2Price, p2Time = null }) {
+    addFibDrawing({ p1Price, p1Time = null, p2Price, p2Time = null, resolution = null }) {
       if (p1Price == null || p2Price == null) return;
       // p1 = wave tip (ratio 0), p2 = wave origin (ratio 1) — as sent by FibDashboard
       // Bull: p1=High(0=top), p2=Low(1=bottom)   Bear: p1=Low(0=bottom), p2=High(1=top)
       const linked = !!linkColorRef.current;
+      // Derive timeframe color — null means "use per-level colors" (manual fib draw)
+      const tfColor = resolution != null ? getTimeframeColor(resolution, null) : null;
       const next = [...localDrawingsRef.current, {
         id: uid(), type: "fibRetracement",
         p1: { price: p1Price, time: p1Time },
         p2: { price: p2Price, time: p2Time },
         linked,
+        tfColor,   // stored on the drawing; null = per-level colors
       }];
       commitLocalDrawings(next);
       publishLinked(next);
@@ -1071,24 +1075,6 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
         </defs>
 
         <g clipPath={`url(#${previewClipId})`}>
-          {FIB_ZONE_FILLS.map((zone) => {
-            const prA = tipPrice + priceRange * zone.from;
-            const prB = tipPrice + priceRange * zone.to;
-            const cA = dataToCoord(null, prA);
-            const cB = dataToCoord(null, prB);
-            if (cA.y == null || cB.y == null) return null;
-            const zy = Math.min(cA.y, cB.y);
-            const zh = Math.abs(cB.y - cA.y);
-            return (
-              <rect
-                key={`z${zone.from}`}
-                x={boxX1} y={zy}
-                width={boxX2 - boxX1} height={Math.max(zh, 1)}
-                fill={zone.color} opacity={zone.opacity}
-              />
-            );
-          })}
-
           {FIB_LEVELS.map((lvl) => {
             const price = tipPrice + priceRange * lvl.ratio;
             const coord = dataToCoord(null, price);
@@ -1115,11 +1101,11 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
           return (
             <text
               key={`lbl-${lvl.ratio}`}
-              x={boxX2 - LABEL_PAD} y={coord.y - 3}
+              x={boxX1 + LABEL_PAD} y={coord.y - 3}
               fill={lvl.color} fontSize={9}
               fontFamily="'JetBrains Mono', monospace"
               fontWeight={isEdge ? 700 : 600}
-              textAnchor="end"
+              textAnchor="start"
             >
               {lvl.label} ({numFmt.format(price)})
             </text>
@@ -1324,7 +1310,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     const rectBot = topY != null && botY != null ? Math.max(topY, botY) : svgH;
 
     const LABEL_PAD = 6;
-    const labelX = boxX2 - LABEL_PAD;
+    const labelX = boxX1 + LABEL_PAD;
 
     return (
       <g style={{ pointerEvents: "none" }}>
@@ -1335,26 +1321,15 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
         </defs>
 
         <g clipPath={`url(#${clipId})`}>
-          {FIB_ZONE_FILLS.map((zone) => {
-            const y1 = priceToY(zone.from);
-            const y2 = priceToY(zone.to);
-            if (y1 == null || y2 == null) return null;
-            const zy = Math.min(y1, y2), zh = Math.abs(y2 - y1);
-            return (
-              <rect
-                key={`zone-${zone.from}`}
-                x={boxX1} y={zy}
-                width={boxX2 - boxX1} height={Math.max(zh, 1)}
-                fill={zone.color}
-                opacity={hovered ? zone.opacity * 1.6 : zone.opacity}
-                style={{ pointerEvents: "none" }}
-              />
-            );
-          })}
-
           {levelLines.map(({ ratio, label, color: lvlColor, dash, width, price, y }) => {
             const isEdge = ratio === 0 || ratio === 1;
-            const lineColor = hovered ? HOVER_COLOR : lvlColor;
+            // If this fib was drawn from FibDashboard with a known timeframe,
+            // use that TF color for ALL level lines so fibs from different
+            // timeframes are instantly distinguishable.
+            // Manual fibs (tfColor = null) keep their original per-level colors.
+            const lineColor = hovered
+              ? HOVER_COLOR
+              : (drawing.tfColor ?? lvlColor);
             return (
               <g key={ratio}>
                 <line
@@ -1378,7 +1353,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
         {levelLines.map(({ ratio, label, color: lvlColor, price, y }) => {
           const isEdge = ratio === 0 || ratio === 1;
           const labelText = `${label} (${numFmt.format(price)})`;
-          const lineColor = hovered ? HOVER_COLOR : lvlColor;
+          const lineColor = hovered ? HOVER_COLOR : (drawing.tfColor ?? lvlColor);
           if (y == null) return null;
           return (
             <text
@@ -1387,7 +1362,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
               fill={lineColor} fontSize={9.5}
               fontFamily="'JetBrains Mono', monospace"
               fontWeight={isEdge ? 700 : 600}
-              textAnchor="end"
+              textAnchor="start"
               style={{ pointerEvents: "none", clipPath: `url(#${clipId})` }}
             >
               {labelText}
