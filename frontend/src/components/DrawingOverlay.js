@@ -392,8 +392,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     if (!dtc) return null;
     const c1 = dtc(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
     const c2 = dtc(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
-    const ax1 = c1.x ?? drawing.p1.px ?? null;
-    const ax2 = c2.x ?? drawing.p2.px ?? null;
+    const ax1 = c1.x ?? null;
+    const ax2 = c2.x ?? null;
     if (ax1 != null && Math.hypot(px - ax1, py - (c1.y ?? 0)) < 12) return "p1";
     if (ax2 != null && Math.hypot(px - ax2, py - (c2.y ?? 0)) < 12) return "p2";
     if (ax1 == null || ax2 == null) return null;
@@ -1298,12 +1298,48 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     const c1 = dataToCoord(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
     const c2 = dataToCoord(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
 
-    const ax1 = c1.x ?? drawing.p1.px ?? null;
-    const ax2 = c2.x ?? drawing.p2.px ?? null;
-    const hasAnchors = ax1 != null && ax2 != null;
-
+    // Compute anchor x — stable on every pan/zoom/timeframe change.
+    // For time-anchored points: timeToCoordinate is correct when on-screen.
+    // When off-screen (returns null), clamp to chart edge based on whether the
+    // anchor time is left of view (→ x=0) or right of view (→ x=maxX).
+    // For future-space points (time==null, barOffset set): dataToCoord already
+    // computes the correct x via barOffset math each frame — use that directly.
+    // Never use stale .px values.
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
+
+    const resolveAnchorX = (coord, pt) => {
+      // On-screen point resolved by dataToCoord — use directly (covers barOffset future points too)
+      if (coord.x != null) return coord.x;
+      // No time stored — barOffset point where dataToCoord failed (lastBarTime unavailable)
+      if (pt.time == null) return null;
+      // time-anchored point where timeToCoordinate returned null.
+      // This happens when the stored bar-time (from one TF) doesn't align with
+      // the current TF's bars. Interpolate x using the known time↔pixel mapping
+      // of lastBarTime (always available and always has a valid x).
+      try {
+        const ts = chartRef.current?.timeScale();
+        if (!ts || lastBarTime == null) return null;
+        const lastBarX = ts.timeToCoordinate(lastBarTime);
+        if (lastBarX == null) return null;
+        const pxPerBar = getPxPerBar();
+        if (pxPerBar == null || pxPerBar <= 0) return null;
+        // secondLastBarTime gives us a second anchor: secondLastBarX = lastBarX - pxPerBar
+        // Use that to interpolate: x = lastBarX + (pt.time - lastBarTime) / barDuration * pxPerBar
+        const barDuration = lastBarTime - secondLastBarTime;
+        if (!barDuration || barDuration <= 0) return null;
+        const barsFromLast = (pt.time - lastBarTime) / barDuration;
+        const x = lastBarX + barsFromLast * pxPerBar;
+        // Clamp to chart area
+        if (x < 0) return 0;
+        if (x > maxX) return maxX;
+        return Math.round(x);
+      } catch { return null; }
+    };
+
+    const ax1 = resolveAnchorX(c1, drawing.p1);
+    const ax2 = resolveAnchorX(c2, drawing.p2);
+    const hasAnchors = ax1 != null && ax2 != null;
 
     const rawX1 = hasAnchors ? Math.min(ax1, ax2) : 0;
     const rawX2 = hasAnchors ? Math.max(ax1, ax2) : maxX;
@@ -1352,9 +1388,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
             // use that TF color for ALL level lines so fibs from different
             // timeframes are instantly distinguishable.
             // Manual fibs (tfColor = null) keep their original per-level colors.
-            const lineColor = hovered
-              ? HOVER_COLOR
-              : (drawing.tfColor ?? lvlColor);
+            const lineColor = drawing.tfColor ?? lvlColor;
             return (
               <g key={ratio}>
                 <line
@@ -1378,7 +1412,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
         {levelLines.map(({ ratio, label, color: lvlColor, price, y }) => {
           const isEdge = ratio === 0 || ratio === 1;
           const labelText = `${label} (${numFmt.format(price)})`;
-          const lineColor = hovered ? HOVER_COLOR : (drawing.tfColor ?? lvlColor);
+          const lineColor = drawing.tfColor ?? lvlColor;
           if (y == null) return null;
           return (
             <text
