@@ -317,6 +317,7 @@ const ChartPanel = memo(function ChartPanel({
   const bubbleOn = indicators.bubble !== false;
   const wavesOn = !!indicators.waves;
   const consolidationOn = !!indicators.consolidation;
+  const srZonesOn = !!indicators.srZones;
   const bubbleGap = typeof indicators.bubbleGap === "number" ? indicators.bubbleGap : 4;
   const anySidebarIndicator = bubbleOn || wavesOn || consolidationOn;
 
@@ -534,6 +535,7 @@ const ChartPanel = memo(function ChartPanel({
               showConsolidation={consolidationOn}
               bubbleGap={bubbleGap}
               onConsolidationData={handleConsolidationData}
+              showSRZones={srZonesOn}
               onResetViewReady={handleResetViewReady}
               reloadToken={reloadToken}
               onIntentionalReloadAck={handleIntentionalReloadAck}

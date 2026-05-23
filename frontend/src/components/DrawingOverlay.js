@@ -119,6 +119,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     onPanelActivate = null,
     // Per-panel storage key for drawings isolation
     panelKey = "",
+    // Current chart resolution (minutes) — used to colour manual fib with the TF colour
+    resolution = null,
   },
   ref
 ) {
@@ -140,6 +142,10 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   // keep a ref so event handlers always see the latest color
   const drawColorRef = useRef(drawColor);
   useEffect(() => { drawColorRef.current = drawColor; }, [drawColor]);
+
+  // keep a ref so the window-level mouseup always sees the current resolution
+  const resolutionRef = useRef(resolution);
+  useEffect(() => { resolutionRef.current = resolution; }, [resolution]);
 
   // keep a ref to linkColor
   const linkColorRef = useRef(linkColor);
@@ -297,6 +303,19 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     };
   }, [chartRef]);
 
+  // Repaint when the panel container is resized (panel divider drag, window resize,
+  // layout change) — without this, drawings stay at stale pixel coordinates while
+  // the SVG stretches to fill the new size, making fibs appear shifted/wrong.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setLocalDrawings((d) => [...d]);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [containerRef]);
+
   // ── Hit test (works on both local and shared drawings) ───────────────────
   const hitTest = useCallback((drawing, px, py) => {
     const dtc = dataToCoordRef.current;
@@ -319,8 +338,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         return Math.abs(py - c.y) < HIT_SLOP;
       }
       if (drawing.type === "fibRetracement") {
-        const c1 = dtc(drawing.p1.time, drawing.p1.price);
-        const c2 = dtc(drawing.p2.time, drawing.p2.price);
+        const c1 = dtc(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
+        const c2 = dtc(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
         const ax1 = c1.x ?? drawing.p1.px ?? null;
         const ax2 = c2.x ?? drawing.p2.px ?? null;
         if (ax1 == null || ax2 == null) return false;
@@ -371,8 +390,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     if (drawing.type !== "fibRetracement") return null;
     const dtc = dataToCoordRef.current;
     if (!dtc) return null;
-    const c1 = dtc(drawing.p1.time, drawing.p1.price);
-    const c2 = dtc(drawing.p2.time, drawing.p2.price);
+    const c1 = dtc(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
+    const c2 = dtc(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
     const ax1 = c1.x ?? drawing.p1.px ?? null;
     const ax2 = c2.x ?? drawing.p2.px ?? null;
     if (ax1 != null && Math.hypot(px - ax1, py - (c1.y ?? 0)) < 12) return "p1";
@@ -602,9 +621,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
             px: ed.origP2.px != null ? ed.origP2.px + dPx : null,
           };
         } else if (ed.mode === "p1") {
-          newP1 = { price: cur.price, time: cur.time, px: x };
+          newP1 = { price: cur.price, time: cur.time, px: x, barOffset: cur.barOffset ?? null };
         } else if (ed.mode === "p2") {
-          newP2 = { price: cur.price, time: cur.time, px: x };
+          newP2 = { price: cur.price, time: cur.time, px: x, barOffset: cur.barOffset ?? null };
         }
 
         const updated = [...localDrawingsRef.current];
@@ -673,7 +692,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       const drag = dragRef.current;
       if (drag.active) {
         const linked = !!linkColorRef.current;
-        const d = buildDrawing(drag, linked);
+        const d = buildDrawing(drag, linked, resolutionRef.current);
         if (d) {
           const next = [...localDrawingsRef.current, d];
           commitLocalDrawings(next);
@@ -890,6 +909,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
             svgW={svgW}
             svgH={svgH}
             dataToCoord={dataToCoord}
+            tfColor={resolution != null ? getTimeframeColor(resolution, null) : null}
           />
         )}
 
@@ -960,7 +980,7 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
 export default DrawingOverlay;
 
 // ─── Build drawing from drag ──────────────────────────────────────────────────
-function buildDrawing({ tool, start, current }, linked = false) {
+function buildDrawing({ tool, start, current }, linked = false, resolution = null) {
   if (!start || !current) return null;
   if (tool === "trendline") {
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
@@ -982,10 +1002,13 @@ function buildDrawing({ tool, start, current }, linked = false) {
     // Bull drag bottom→top: p1=High(0=top), p2=Low(1=bottom)  → trap zone near 0 = top ✓
     // Bear drag top→bottom: p1=Low(0=bottom), p2=High(1=top)  → trap zone near 0 = bottom ✓
     // Exactly matches FibDashboard: p1=toPrice(tip), p2=fromPrice(origin)
+    // Use the current chart TF colour so manual fibs match FibDashboard fibs.
+    const tfColor = resolution != null ? getTimeframeColor(resolution, null) : null;
     return {
       id: uid(), type: "fibRetracement", linked,
-      p1: { price: current.price, time: current.time, px: current.x },
-      p2: { price: start.price, time: start.time, px: start.x },
+      p1: { price: current.price, time: current.time, px: current.x, barOffset: current.barOffset ?? null },
+      p2: { price: start.price, time: start.time, px: start.x, barOffset: start.barOffset ?? null },
+      tfColor,
     };
   }
   return null;
@@ -1010,7 +1033,7 @@ function FreehandPreview({ points, color, width }) {
 }
 
 // ─── Live preview while dragging (trendline / fib) ───────────────────────────
-function LivePreview({ drag, svgW, svgH, dataToCoord }) {
+function LivePreview({ drag, svgW, svgH, dataToCoord, tfColor = null }) {
   const { tool, start, current } = drag;
   const color = DRAW_COLOR;
 
@@ -1080,11 +1103,12 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
             const coord = dataToCoord(null, price);
             if (coord.y == null) return null;
             const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
+            const lineColor = tfColor ?? lvl.color;
             return (
               <line
                 key={lvl.ratio}
                 x1={boxX1} y1={coord.y} x2={boxX2} y2={coord.y}
-                stroke={lvl.color}
+                stroke={lineColor}
                 strokeWidth={isEdge ? 1.8 : lvl.width}
                 strokeDasharray={isEdge ? "0" : lvl.dash}
                 opacity={0.85}
@@ -1098,11 +1122,12 @@ function LivePreview({ drag, svgW, svgH, dataToCoord }) {
           const coord = dataToCoord(null, price);
           if (coord.y == null) return null;
           const isEdge = lvl.ratio === 0 || lvl.ratio === 1;
+          const lineColor = tfColor ?? lvl.color;
           return (
             <text
               key={`lbl-${lvl.ratio}`}
               x={boxX1 + LABEL_PAD} y={coord.y - 3}
-              fill={lvl.color} fontSize={9}
+              fill={lineColor} fontSize={11}
               fontFamily="'JetBrains Mono', monospace"
               fontWeight={isEdge ? 700 : 600}
               textAnchor="start"
@@ -1270,8 +1295,8 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
 
   // ── Fibonacci Retracement — time+price anchored ─────────────────────────
   if (drawing.type === "fibRetracement") {
-    const c1 = dataToCoord(drawing.p1.time, drawing.p1.price);
-    const c2 = dataToCoord(drawing.p2.time, drawing.p2.price);
+    const c1 = dataToCoord(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
+    const c2 = dataToCoord(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
 
     const ax1 = c1.x ?? drawing.p1.px ?? null;
     const ax2 = c2.x ?? drawing.p2.px ?? null;
@@ -1359,7 +1384,7 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
             <text
               key={`lbl-${ratio}`}
               x={labelX} y={y - 3}
-              fill={lineColor} fontSize={9.5}
+              fill={lineColor} fontSize={11}
               fontFamily="'JetBrains Mono', monospace"
               fontWeight={isEdge ? 700 : 600}
               textAnchor="start"

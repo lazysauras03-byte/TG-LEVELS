@@ -1152,6 +1152,7 @@ export default function CandleChart({
         isActivePanel={isActivePanel}
         onPanelActivate={onPanelActivate}
         panelKey={panelKey}
+        resolution={activeResolution}
       />
 
       {/* Hint labels */}
