@@ -325,10 +325,8 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         const c1 = dtc(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
         const c2 = dtc(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
         if (c1.y == null || c2.y == null) return false;
-        const isFuture1 = drawing.p1.time == null && drawing.p1.barOffset != null;
-        const isFuture2 = drawing.p2.time == null && drawing.p2.barOffset != null;
-        const x1 = c1.x ?? (isFuture1 ? 9999 : null);
-        const x2 = c2.x ?? (isFuture2 ? 9999 : null);
+        const x1 = c1.x ?? drawing.p1.px ?? null;
+        const x2 = c2.x ?? drawing.p2.px ?? null;
         if (x1 == null || x2 == null) return false;
         return distToSegment(px, py, x1, c1.y, x2, c2.y) < HIT_SLOP;
       }
@@ -342,9 +340,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
         const c2 = dtc(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
         const ax1 = c1.x ?? drawing.p1.px ?? null;
         const ax2 = c2.x ?? drawing.p2.px ?? null;
-        if (ax1 == null || ax2 == null) return false;
-        const bx1 = Math.min(ax1, ax2);
-        const bx2 = Math.max(ax1, ax2);
+        if (ax1 == null && ax2 == null) return false;
+        const bx1 = Math.min(ax1 ?? 0, ax2 ?? 0);
+        const bx2 = Math.max(ax1 ?? 0, ax2 ?? 0);
         if (px < bx1 || px > bx2) return false;
         const priceRange = drawing.p2.price - drawing.p1.price;
         for (const lvl of FIB_LEVELS) {
@@ -392,13 +390,13 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     if (!dtc) return null;
     const c1 = dtc(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
     const c2 = dtc(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
-    const ax1 = c1.x ?? null;
-    const ax2 = c2.x ?? null;
+    const ax1 = c1.x ?? drawing.p1.px ?? null;
+    const ax2 = c2.x ?? drawing.p2.px ?? null;
     if (ax1 != null && Math.hypot(px - ax1, py - (c1.y ?? 0)) < 12) return "p1";
     if (ax2 != null && Math.hypot(px - ax2, py - (c2.y ?? 0)) < 12) return "p2";
-    if (ax1 == null || ax2 == null) return null;
-    const bx1 = Math.min(ax1, ax2);
-    const bx2 = Math.max(ax1, ax2);
+    if (ax1 == null && ax2 == null) return null;
+    const bx1 = Math.min(ax1 ?? 0, ax2 ?? 0);
+    const bx2 = Math.max(ax1 ?? 0, ax2 ?? 0);
     if (px < bx1 || px > bx2) return null;
     const priceRange = drawing.p2.price - drawing.p1.price;
     for (const lvl of FIB_LEVELS) {
@@ -986,8 +984,8 @@ function buildDrawing({ tool, start, current }, linked = false, resolution = nul
     if (Math.hypot(current.x - start.x, current.y - start.y) < 4) return null;
     return {
       id: uid(), type: "trendline", linked,
-      p1: { price: start.price, time: start.time, barOffset: start.barOffset ?? null },
-      p2: { price: current.price, time: current.time, barOffset: current.barOffset ?? null },
+      p1: { price: start.price, time: start.time, px: start.x, barOffset: start.barOffset ?? null },
+      p2: { price: current.price, time: current.time, px: current.x, barOffset: current.barOffset ?? null },
     };
   }
   if (tool === "horizontal") {
@@ -1081,7 +1079,7 @@ function LivePreview({ drag, svgW, svgH, dataToCoord, tfColor = null }) {
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
     const rawX1 = Math.min(start.x, current.x);
-    const rawX2 = Math.max(start.x, current.x);
+    const rawX2 = maxX; // extend preview to right edge while dragging
     const boxX1 = Math.max(rawX1, 0);
     const boxX2 = Math.min(rawX2, maxX);
     if (boxX2 <= boxX1) return null;
@@ -1198,22 +1196,15 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     const c1 = dataToCoord(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
     const c2 = dataToCoord(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
 
-    // For future-space endpoints (barOffset set, time null), clamp x to right wall
-    // exactly like fib clamps its boxX2 — stable on any pan/zoom
-    const isFuture1 = drawing.p1.time == null && drawing.p1.barOffset != null;
-    const isFuture2 = drawing.p2.time == null && drawing.p2.barOffset != null;
-
-    const rawX1 = c1.x ?? (isFuture1 ? maxX : null);
-    const rawX2 = c2.x ?? (isFuture2 ? maxX : null);
-
-    if (rawX1 == null || rawX2 == null) return null;
-    if (c1.y == null || c2.y == null) return null;
-
-    // Clamp future endpoints to the chart's drawable area
-    const x1 = isFuture1 ? Math.min(rawX1, maxX) : rawX1;
+    // Use stored .px as fallback when timeToCoordinate returns null
+    // (point drawn past last candle — same approach as fib)
+    const x1 = c1.x ?? drawing.p1.px ?? null;
+    const x2 = c2.x ?? drawing.p2.px ?? null;
     const y1 = c1.y;
-    const x2 = isFuture2 ? Math.min(rawX2, maxX) : rawX2;
     const y2 = c2.y;
+
+    if (x1 == null || x2 == null) return null;
+    if (y1 == null || y2 == null) return null;
     return (
       <g style={{ pointerEvents: pe }}>
         <line
@@ -1298,47 +1289,13 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
     const c1 = dataToCoord(drawing.p1.time, drawing.p1.price, drawing.p1.barOffset ?? null);
     const c2 = dataToCoord(drawing.p2.time, drawing.p2.price, drawing.p2.barOffset ?? null);
 
-    // Compute anchor x — stable on every pan/zoom/timeframe change.
-    // For time-anchored points: timeToCoordinate is correct when on-screen.
-    // When off-screen (returns null), clamp to chart edge based on whether the
-    // anchor time is left of view (→ x=0) or right of view (→ x=maxX).
-    // For future-space points (time==null, barOffset set): dataToCoord already
-    // computes the correct x via barOffset math each frame — use that directly.
-    // Never use stale .px values.
+    // Use stored .px as fallback when timeToCoordinate returns null
+    // (point drawn past last candle, or TF mismatch — .px is the correct pixel saved at draw-time)
     const PRICE_SCALE_W = 70;
     const maxX = svgW - PRICE_SCALE_W;
 
-    const resolveAnchorX = (coord, pt) => {
-      // On-screen point resolved by dataToCoord — use directly (covers barOffset future points too)
-      if (coord.x != null) return coord.x;
-      // No time stored — barOffset point where dataToCoord failed (lastBarTime unavailable)
-      if (pt.time == null) return null;
-      // time-anchored point where timeToCoordinate returned null.
-      // This happens when the stored bar-time (from one TF) doesn't align with
-      // the current TF's bars. Interpolate x using the known time↔pixel mapping
-      // of lastBarTime (always available and always has a valid x).
-      try {
-        const ts = chartRef.current?.timeScale();
-        if (!ts || lastBarTime == null) return null;
-        const lastBarX = ts.timeToCoordinate(lastBarTime);
-        if (lastBarX == null) return null;
-        const pxPerBar = getPxPerBar();
-        if (pxPerBar == null || pxPerBar <= 0) return null;
-        // secondLastBarTime gives us a second anchor: secondLastBarX = lastBarX - pxPerBar
-        // Use that to interpolate: x = lastBarX + (pt.time - lastBarTime) / barDuration * pxPerBar
-        const barDuration = lastBarTime - secondLastBarTime;
-        if (!barDuration || barDuration <= 0) return null;
-        const barsFromLast = (pt.time - lastBarTime) / barDuration;
-        const x = lastBarX + barsFromLast * pxPerBar;
-        // Clamp to chart area
-        if (x < 0) return 0;
-        if (x > maxX) return maxX;
-        return Math.round(x);
-      } catch { return null; }
-    };
-
-    const ax1 = resolveAnchorX(c1, drawing.p1);
-    const ax2 = resolveAnchorX(c2, drawing.p2);
+    const ax1 = c1.x ?? drawing.p1.px ?? null;
+    const ax2 = c2.x ?? drawing.p2.px ?? null;
     const hasAnchors = ax1 != null && ax2 != null;
 
     const rawX1 = hasAnchors ? Math.min(ax1, ax2) : 0;
@@ -1382,6 +1339,22 @@ function DrawingShape({ drawing, dataToCoord, svgW, svgH, hovered, selected, int
         </defs>
 
         <g clipPath={`url(#${clipId})`}>
+          {/* Trap zone fill: -0.236 → +0.236 only */}
+          {(() => {
+            const yA = priceToY(-0.236);
+            const yB = priceToY(0.236);
+            if (yA == null || yB == null) return null;
+            const zy = Math.min(yA, yB);
+            const zh = Math.abs(yB - yA);
+            return (
+              <rect
+                x={boxX1} y={zy}
+                width={boxX2 - boxX1} height={Math.max(zh, 1)}
+                fill="#ff9800" opacity={0.18}
+                style={{ pointerEvents: "none" }}
+              />
+            );
+          })()}
           {levelLines.map(({ ratio, label, color: lvlColor, dash, width, price, y }) => {
             const isEdge = ratio === 0 || ratio === 1;
             // If this fib was drawn from FibDashboard with a known timeframe,
