@@ -9,7 +9,7 @@ const rateLimit = require("express-rate-limit");
 const { runSignalEngine } = require("./signalEngine");
 const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = require("./fyers");
 const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
-const { TickStream, isMarketOpen, isLiveMarket, isTradingDay } = require("./tickStream");
+const { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, isTradingDay } = require("./tickStream");
 const symbolsRouter = require("./symbolsRouter");
 
 const app = express();
@@ -85,6 +85,7 @@ const candleBuilders = new Map();
 function getOrCreateBuilder(symbol) {
   if (!candleBuilders.has(symbol)) {
     const builder = new CandleBuilder({
+      symbol,
       onTick: (formingCandles) => { emitCandleUpdate(symbol, formingCandles); },
       onFinalize: (finalizedCandle, formingCandles) => {
         console.log(`[Builder:${symbol}] Candle finalized @ ${new Date(finalizedCandle.time).toISOString()} close=${finalizedCandle.close}`);
@@ -204,10 +205,11 @@ function getActiveTickSymbols() {
  *   - restart tickStream.start() with the full list if not yet running.
  */
 async function updateTickSubscription() {
-  if (!isTradingDay() || !isLiveMarket()) return;
+  if (!isTradingDay()) return;
   const valid = await validateToken().catch(() => false);
   if (!valid) return;
   const symbols = getActiveTickSymbols();
+  if (!isAnyMarketLive(symbols)) return;
   if (tickStream.isConnected()) {
     tickStream.setSymbols(symbols);
     console.log(`[TickStream] Subscription updated → [${symbols.join(", ")}]`);
@@ -223,11 +225,12 @@ async function updateTickSubscription() {
  */
 async function maybeStartTickStream() {
   if (!isTradingDay()) { console.log("[TickStream] Weekend — tick stream not needed."); return; }
-  if (!isLiveMarket()) { console.log("[TickStream] Outside 09:15–15:30 IST — tick stream not needed."); return; }
-  if (tickStream.isConnected()) { tickStream.setSymbols(getActiveTickSymbols()); return; }
+  const symbols = getActiveTickSymbols();
+  if (!isAnyMarketLive(symbols)) { console.log("[TickStream] No active market right now — tick stream not needed."); return; }
+  if (tickStream.isConnected()) { tickStream.setSymbols(symbols); return; }
   const valid = await validateToken().catch(() => false);
   if (!valid) { console.log("[TickStream] Not authenticated — skipping tick stream."); return; }
-  tickStream.start(getActiveTickSymbols());
+  tickStream.start(symbols);
 }
 
 // ─── Payload builder ──────────────────────────────────────────────────────────
@@ -398,7 +401,7 @@ app.use("/api/symbols", symbolsRouter);
 // ─── Tick Watchdog ────────────────────────────────────────────────────────────
 function startTickWatchdog() {
   setInterval(() => {
-    if (!isTradingDay() || !isLiveMarket() || !tickStream.isConnected()) return;
+    if (!isTradingDay() || !isAnyMarketLive(getActiveTickSymbols()) || !tickStream.isConnected()) return;
     const now = Date.now();
     if (lastConnectAt > 0 && now - lastConnectAt < WATCHDOG_GRACE_MS) return;
     if (lastTickAt === 0) return;
@@ -418,7 +421,7 @@ function startTickWatchdog() {
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   autoRefreshTimer = setInterval(async () => {
-    if (!isTradingDay() || !isLiveMarket() || tickStream.isConnected()) return;
+    if (!isTradingDay() || !isAnyMarketLive(getActiveTickSymbols()) || tickStream.isConnected()) return;
     const valid = await validateToken();
     if (!valid) return;
 
@@ -479,7 +482,7 @@ io.on("connection", (socket) => {
   if (initialCache.result && initialCache.candles.length > 0) {
     socket.emit("chart_update", buildPayload(initialCache.candles, initialCache.result, SYMBOL, currentResolution, true));
   }
-  socket.emit("market_status", { tickStreamActive: tickStream.isConnected(), liveMarket: isLiveMarket(), tradingDay: isTradingDay() });
+  socket.emit("market_status", { tickStreamActive: tickStream.isConnected(), liveMarket: isAnyMarketLive(getActiveTickSymbols()), tradingDay: isTradingDay() });
 
   // TICK-STREAM + DUAL-PANEL FIX:
   // Track each socket's active symbol. On change, call updateTickSubscription()
@@ -491,7 +494,7 @@ io.on("connection", (socket) => {
     currentSymbol = sym;
     socketSymbols.set(socket.id, sym);
     console.log(`[WS] ${socket.id} → symbol=${sym}`);
-    if (isLiveMarket() && sym !== prev) {
+    if (isLiveMarket(sym) && sym !== prev) {
       updateTickSubscription().catch(console.error);
     }
   });
@@ -523,7 +526,7 @@ io.on("connection", (socket) => {
     socketSymbols.delete(socket.id);
     console.log(`[WS] Client disconnected: ${socket.id}`);
     // Possibly trim unused symbols from tick subscription
-    if (isLiveMarket()) updateTickSubscription().catch(console.error);
+    if (isAnyMarketLive(getActiveTickSymbols())) updateTickSubscription().catch(console.error);
   });
 });
 

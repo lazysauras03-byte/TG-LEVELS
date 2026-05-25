@@ -25,9 +25,16 @@ const EventEmitter = require("events");
 const { fyersDataSocket } = require("fyers-api-v3");
 const { loadToken } = require("./fyers");
 
-// Market hours IST (9:15 – 15:30)
-const MARKET_OPEN_MIN = 9 * 60 + 15;   // 555
-const MARKET_CLOSE_MIN = 15 * 60 + 30;  // 930
+// Market hours IST
+const MARKET_OPEN_MIN = 9 * 60 + 15;   // 555  — NSE/BSE open
+const MARKET_CLOSE_MIN = 15 * 60 + 30;  // 930  — NSE/BSE close
+const MCX_CLOSE_MIN = 23 * 60 + 30;  // 1410 — MCX/commodity close
+
+/** Returns true if the symbol belongs to MCX (commodity exchange). */
+function isMCXSymbol(symbol) {
+  if (!symbol) return false;
+  return String(symbol).toUpperCase().startsWith("MCX:");
+}
 
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT = 10;
@@ -48,13 +55,25 @@ function nowIST() {
 }
 
 /**
- * isLiveMarket — Mon–Fri AND within 09:15–15:30 IST.
- * This is the ONLY condition under which the tick stream should run.
+ * isLiveMarket — Mon–Fri AND within market hours IST.
+ *   • NSE/BSE symbols  : 09:15 – 15:30
+ *   • MCX symbols      : 09:00 – 23:30
+ * Pass `symbol` to get the correct hours for that exchange.
  */
-function isLiveMarket() {
+function isLiveMarket(symbol) {
   const { mins, dow } = nowIST();
   if (dow === 0 || dow === 6) return false;    // weekend
-  return mins >= MARKET_OPEN_MIN && mins < MARKET_CLOSE_MIN;
+  const closeMin = isMCXSymbol(symbol) ? MCX_CLOSE_MIN : MARKET_CLOSE_MIN;
+  return mins >= MARKET_OPEN_MIN && mins < closeMin;
+}
+
+/**
+ * isAnyMarketLive — true if ANY watched market is currently live.
+ * Used to decide whether the tick stream should stay running.
+ */
+function isAnyMarketLive(symbols) {
+  if (!symbols || symbols.length === 0) return isLiveMarket();
+  return symbols.some((s) => isLiveMarket(s));
 }
 
 /**
@@ -210,7 +229,7 @@ class TickStream extends EventEmitter {
 
         // Warn on tick gaps during live hours
         const now = Date.now();
-        if (this._lastTickTime && isLiveMarket()) {
+        if (this._lastTickTime && isLiveMarket(symbol)) {
           const gapMs = now - this._lastTickTime;
           if (gapMs > 5000) {
             console.warn(`[TickStream] Tick gap: ${(gapMs / 1000).toFixed(1)}s for ${symbol}`);
@@ -266,4 +285,4 @@ class TickStream extends EventEmitter {
   }
 }
 
-module.exports = { TickStream, isMarketOpen, isLiveMarket, isTradingDay };
+module.exports = { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, isTradingDay };

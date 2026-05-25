@@ -62,7 +62,7 @@ function StatusBar({
       ? { open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close }
       : null;
 
-  const marketStatus = useMarketStatus();
+  const marketStatus = useMarketStatus(symbol);  // symbol-aware: MCX stays live until 23:30
   const isLive = marketStatus === "live";
 
   return (
@@ -147,7 +147,7 @@ function StatusBar({
           color: !connected ? "var(--red)" : isLive ? "var(--green)" : "var(--red)",
           fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
         }}>
-          {!connected ? "OFFLINE" : isLive ? "Market Live" : "Market Closed"}
+          {!connected ? "OFFLINE" : isLive ? "Market Open" : "Market Closed"}
         </span>
       </div>
 

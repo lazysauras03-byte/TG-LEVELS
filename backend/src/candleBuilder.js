@@ -37,6 +37,16 @@ const MARKET_OPEN_MIN = 15;
 const MARKET_CLOSE_HOUR = 15;
 const MARKET_CLOSE_MIN = 30;
 
+// MCX (commodity) opens at 09:00 IST, not 09:15
+const MCX_OPEN_HOUR = 9;
+const MCX_OPEN_MIN = 0;
+
+/** Returns true if the symbol is an MCX commodity. */
+function isMCXSymbol(symbol) {
+  if (!symbol) return false;
+  return String(symbol).toUpperCase().startsWith("MCX:");
+}
+
 // Resolution → number of 1m candles per bar
 const TF_MINUTES = {
   1: 1,
@@ -92,9 +102,10 @@ class CandleBuilder {
    * @param {Function} opts.onFinalize - called when a 1m candle closes with
    *                                     (finalizedCandle, formingCandles)
    */
-  constructor({ onTick, onFinalize } = {}) {
+  constructor({ onTick, onFinalize, symbol } = {}) {
     this.onTick = onTick || (() => { });
     this.onFinalize = onFinalize || (() => { });
+    this._symbol = symbol || null;
 
     // Completed 1m candle history (oldest first)
     this._oneMinHistory = [];
@@ -146,8 +157,11 @@ class CandleBuilder {
     const price = tick.ltp;
     if (!price || price <= 0) return;
 
-    // Fyers WS timestamps are Unix seconds; convert to ms
-    const tsMs = (tick.timestamp || Math.floor(Date.now() / 1000)) * 1000;
+    // Use server wall clock (Date.now()) for minute-boundary detection.
+    // Fyers LiteMode tt (exchange timestamp) can lag by up to ~1s at minute
+    // boundaries — using tt would cause the new candle to open late, making
+    // the new candle's open = a later tick price instead of the first tick.
+    const tsMs = Date.now();
     const minute = floorToMinute(tsMs);
 
     if (!this._forming1m) {
@@ -382,8 +396,10 @@ class CandleBuilder {
     const d = new Date(istMs);
     const minutesSinceMidnight = d.getUTCHours() * 60 + d.getUTCMinutes();
 
-    // Minutes since market open (09:15)
-    const marketOpenMins = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MIN;
+    // Use 09:00 anchor for MCX symbols, 09:15 for everything else
+    const openHour = isMCXSymbol(this._symbol) ? MCX_OPEN_HOUR : MARKET_OPEN_HOUR;
+    const openMin = isMCXSymbol(this._symbol) ? MCX_OPEN_MIN : MARKET_OPEN_MIN;
+    const marketOpenMins = openHour * 60 + openMin;
     const minutesSinceOpen = minutesSinceMidnight - marketOpenMins;
 
     // Which window index are we in?

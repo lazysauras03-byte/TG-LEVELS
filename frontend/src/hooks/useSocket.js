@@ -20,7 +20,11 @@ const BACKEND =
   `${window.location.protocol}//${window.location.hostname}:9004`;
 
 // ── IST live-market check (frontend guard for REST poll fallback only) ─────────
-function isLiveMarketFrontend() {
+function isMCXSymbol(symbol) {
+  return symbol && String(symbol).toUpperCase().startsWith("MCX:");
+}
+
+function isLiveMarketFrontend(symbol) {
   const now = new Date();
   const istOffset = 5 * 60 + 30;
   const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
@@ -28,7 +32,8 @@ function isLiveMarketFrontend() {
   const istDate = new Date(now.getTime() + istOffset * 60000);
   const dow = istDate.getUTCDay();
   if (dow === 0 || dow === 6) return false;
-  return istMin >= (9 * 60 + 15) && istMin < (15 * 60 + 30);
+  const closeMin = isMCXSymbol(symbol) ? (23 * 60 + 30) : (15 * 60 + 30);
+  return istMin >= (9 * 60 + 15) && istMin < closeMin;
 }
 
 function sleep(ms) {
@@ -104,7 +109,7 @@ export function useSocket() {
   function startPollFallback() {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     pollTimerRef.current = setInterval(async () => {
-      if (!isLiveMarketFrontend()) return;
+      if (!isLiveMarketFrontend(activeSymbolRef.current)) return;
       const res = activeResolutionRef.current;
       const sym = activeSymbolRef.current;
       if (!res || !sym) return;
