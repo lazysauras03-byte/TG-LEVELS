@@ -10,6 +10,8 @@
 // ─────  activePanel tracks which panel was last clicked/interacted with.
 // ─────  Only the active panel accepts new drawing input.
 // ─────  When link is ON, drawing broadcasts to all panels with same symbol.
+// ─── Synced crosshair: when mouse moves on any panel, all panels with the
+// ─────  SAME SYMBOL show the crosshair price as a dashed horizontal line.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {
   useState, useCallback, useEffect, useRef, useMemo, memo,
@@ -208,16 +210,6 @@ const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onT
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ChartPanel — one fully independent chart panel (TradingView style).
-//   pfx            : localStorage namespace "" | "p2_" | "p3_" | "p4_"
-//   showSidebar    : whether to render signals/stats sidebar
-//   panelIdx       : 0-based index; panel 0 gets Layout picker in its navbar
-//   onLayoutChange : called when Layout picker changes layout (panel 0 only)
-//   layoutId       : current layout (panel 0 only, for picker display)
-//   urlSymbol/etc  : URL params (panel 0 only)
-//   --- Global toolbar props (lifted to ChartsPage) ---
-//   selectedTool / setSelectedTool / drawColor / drawingsHiddenGlobal
-//   isActivePanel / onPanelActivate
-//   linked / setLinked
 // ═══════════════════════════════════════════════════════════════════════════════
 const ChartPanel = memo(function ChartPanel({
   pfx,
@@ -241,6 +233,11 @@ const ChartPanel = memo(function ChartPanel({
   setActivePanelHidden,
   panelLinkRef,
   setToolbarLinked,
+  // ── Synced crosshair ──────────────────────────────────────────────────────
+  // price+symbol broadcast by whichever panel the mouse is on
+  syncedCrosshairPrice,   // number | null
+  syncedCrosshairSymbol,  // string | null  — symbol that produced the price
+  onSyncCrosshair,        // (price: number|null, symbol: string) => void
 }) {
   // ── EACH PANEL has its own socket/data — fully independent ─────────────────
   const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
@@ -392,12 +389,22 @@ const ChartPanel = memo(function ChartPanel({
     }, 800);
   }, [candles.length, urlFibDrawing]); // eslint-disable-line
 
-  // ── Symbol search modal — managed here, opened by StatusBar button OR chart overlay ──
+  // ── Symbol search modal ────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
 
   // ── Crosshair ──────────────────────────────────────────────────────────────
   const [crosshairBar, setCrosshairBar] = useState(null);
   const handleCrosshairMove = useCallback((bar) => setCrosshairBar(bar), []);
+
+  // ── Synced crosshair: this panel shows synced line only if same symbol ─────
+  // Only pass the synced price down if the broadcasting panel has the same symbol.
+  const matchesSyncedSymbol = syncedCrosshairSymbol === symbol;
+  const thisPanelSyncedPrice = matchesSyncedSymbol ? syncedCrosshairPrice : null;
+
+  // onSyncCrosshair wrapper: include this panel's symbol so ChartsPage can filter
+  const handleSyncCrosshair = useCallback((price) => {
+    if (onSyncCrosshair) onSyncCrosshair(price, symbol);
+  }, [onSyncCrosshair, symbol]);
 
   // ── Derived chart data ─────────────────────────────────────────────────────
   const emaHighs = chartData?.emaHighs || [];
@@ -464,7 +471,7 @@ const ChartPanel = memo(function ChartPanel({
         />
       </div>
 
-      {/* SymbolSearch modal — rendered here (not in StatusBar), opened from navbar button OR chart overlay */}
+      {/* SymbolSearch modal */}
       <SymbolSearch
         isOpen={searchOpen}
         onClose={() => setSearchOpen(false)}
@@ -474,12 +481,12 @@ const ChartPanel = memo(function ChartPanel({
         }}
       />
 
-      {/* Body: chart + optional sidebar (NO per-panel toolbar — it's global now) */}
+      {/* Body: chart + optional sidebar */}
       <div className="cp-body">
         <div className="chart-area">
           {error && <div className="error-bar">⚠ {error}</div>}
 
-          {/* Symbol overlay — TradingView style, top-left of chart. Click opens SymbolSearch */}
+          {/* Symbol overlay */}
           <button
             className="chart-symbol-overlay"
             onClick={() => setSearchOpen(true)}
@@ -557,11 +564,13 @@ const ChartPanel = memo(function ChartPanel({
               onClearSharedDrawings={() => setSharedDrawings([])}
               isActivePanel={isActivePanel}
               onPanelActivate={onPanelActivate}
+              syncedCrosshairPrice={thisPanelSyncedPrice}
+              onSyncCrosshair={handleSyncCrosshair}
             />
           )}
         </div>
 
-        {/* Sidebar — only where showSidebar=true */}
+        {/* Sidebar */}
         {showSidebar && anySidebarIndicator && (
           <div className={`sidebar ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
             <div className="sidebar-sections">
@@ -630,9 +639,6 @@ const ChartPanel = memo(function ChartPanel({
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // useDraggableSplit — draggable divider returning [pct, ref, onMouseDown]
-//   dir: "col" (left/right) or "row" (top/bottom)
-//   storageKey: localStorage key
-//   min/max: clamp range (default 15–85)
 // ═══════════════════════════════════════════════════════════════════════════════
 function useDraggableSplit(dir, storageKey, min = 15, max = 85) {
   const [pct, setPct] = useState(() => loadPref(storageKey, 50));
@@ -696,7 +702,7 @@ function Divider({ dir, onMouseDown }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Layout renderers — each receives global toolbar props and passes them through.
+// Layout renderers
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
@@ -880,7 +886,6 @@ function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ChartsPage — top-level: manages layoutId, URL params, AND global toolbar state.
-// ONE TradingToolbar is rendered here (fixed left) — shared by all panels.
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function ChartsPage() {
   const location = useLocation();
@@ -890,28 +895,33 @@ export default function ChartsPage() {
   const handleLayoutChange = useCallback((id) => {
     setLayoutId(id);
     savePref("layoutId", id);
-    // Reset active panel to 0 when layout changes
     setActivePanel(0);
     setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
     setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
   }, []); // eslint-disable-line
 
-  // ── Global toolbar state (ONE toolbar for all panels) ─────────────────────
+  // ── Global toolbar state ───────────────────────────────────────────────────
   const [selectedTool, setSelectedTool] = useState("cursor");
   const [drawColor, setDrawColor] = useState("white");
-  // activePanel: index of the panel that last received a mousedown
-  // Defaults to 0 (panel 0 is always active at start)
   const [activePanel, setActivePanel] = useState(0);
 
-  // panelActionsRef: active panel registers its hide/trash callbacks here
-  // so the global toolbar can act on the currently active panel
   const panelActionsRef = useRef({ toggleHide: null, trashAll: null, drawingsHidden: false });
   const [activePanelHidden, setActivePanelHidden] = useState(false);
 
-  // linked state for the global toolbar — tracks active panel's linked state
-  // panelLinkRef holds the active panel's setLinked + current linked value
   const panelLinkRef = useRef({ linked: false, setLinked: null });
   const [toolbarLinked, setToolbarLinked] = useState(false);
+
+  // ── Synced crosshair state — shared across all panels ─────────────────────
+  // syncedCrosshairPrice: the price under the cursor on whichever panel is active
+  // syncedCrosshairSymbol: the symbol of the panel broadcasting the price
+  // Only panels with the SAME symbol will render the synced horizontal line.
+  const [syncedCrosshairPrice, setSyncedCrosshairPrice] = useState(null);
+  const [syncedCrosshairSymbol, setSyncedCrosshairSymbol] = useState(null);
+
+  const handleSyncCrosshair = useCallback((price, symbol) => {
+    setSyncedCrosshairPrice(price);
+    setSyncedCrosshairSymbol(price != null ? symbol : null);
+  }, []);
 
   // Esc key globally → cursor
   useEffect(() => {
@@ -920,18 +930,24 @@ export default function ChartsPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // When layout changes to single panel, reset activePanel to 0
   const panelCount = LAYOUTS.find((l) => l.id === layoutId)?.panels ?? 1;
   useEffect(() => {
     setActivePanel((p) => (p >= panelCount ? 0 : p));
   }, [panelCount]);
 
-  // ── Toolbar props bundle passed to every layout ────────────────────────────
+  // ── Toolbar props bundle — syncedCrosshair props included in shared ────────
   const toolbarProps = useMemo(() => ({
     activePanel,
     setActivePanel,
-    shared: { selectedTool, setSelectedTool, drawColor, panelActionsRef, setActivePanelHidden, panelLinkRef, setToolbarLinked },
-  }), [activePanel, selectedTool, drawColor]); // eslint-disable-line
+    shared: {
+      selectedTool, setSelectedTool, drawColor,
+      panelActionsRef, setActivePanelHidden,
+      panelLinkRef, setToolbarLinked,
+      syncedCrosshairPrice,
+      syncedCrosshairSymbol,
+      onSyncCrosshair: handleSyncCrosshair,
+    },
+  }), [activePanel, selectedTool, drawColor, syncedCrosshairPrice, syncedCrosshairSymbol, handleSyncCrosshair]); // eslint-disable-line
 
   // ── URL params — panel 0 only ──────────────────────────────────────────────
   const urlParams = useMemo(() => {
@@ -983,7 +999,6 @@ export default function ChartsPage() {
           onTrashAll={() => panelActionsRef.current.trashAll?.()}
           linked={toolbarLinked}
           onLinkToggle={(val) => {
-            // Link/unlink ALL panels at once — one click links everything
             setAllLinked(val);
           }}
         />

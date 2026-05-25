@@ -398,6 +398,9 @@ export default function CandleChart({
   isActivePanel = true,
   onPanelActivate = null,
   panelKey = "",
+  // ── Synced crosshair across panels ──────────────────────────────────────
+  syncedCrosshairPrice = null,
+  onSyncCrosshair = null,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -1153,6 +1156,8 @@ export default function CandleChart({
         onPanelActivate={onPanelActivate}
         panelKey={panelKey}
         resolution={activeResolution}
+        syncedCrosshairPrice={syncedCrosshairPrice}
+        onSyncCrosshair={onSyncCrosshair}
       />
 
       {/* Hint labels */}

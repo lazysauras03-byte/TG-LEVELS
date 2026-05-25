@@ -121,6 +121,9 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
     panelKey = "",
     // Current chart resolution (minutes) — used to colour manual fib with the TF colour
     resolution = null,
+    // ── Synced crosshair across panels ──────────────────────────────────────
+    syncedCrosshairPrice = null,
+    onSyncCrosshair = null,
   },
   ref
 ) {
@@ -215,6 +218,11 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const hoveredIdRef = useRef(null);
 
   const [selectedHLineId, setSelectedHLineId] = useState(null);
+
+  // ── Crosshair overlay when a drawing tool is active ───────────────────────
+  const [crosshairPos, setCrosshairPos] = useState(null); // { x, y, price }
+  const onSyncCrosshairRef = useRef(onSyncCrosshair);
+  useEffect(() => { onSyncCrosshairRef.current = onSyncCrosshair; }, [onSyncCrosshair]);
   const selectedHLineIdRef = useRef(null);
   const setSelectedHL = (id) => {
     selectedHLineIdRef.current = id;
@@ -582,6 +590,30 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
       const x = e.clientX - r.left;
       const y = e.clientY - r.top;
 
+      // ── Crosshair + sync price ────────────────────────────────────────────
+      // Only the ACTIVE panel broadcasts — prevents other panels from overwriting
+      // with null when the mouse is outside their bounds.
+      {
+        const inside =
+          e.clientX >= r.left && e.clientX <= r.right &&
+          e.clientY >= r.top && e.clientY <= r.bottom;
+        if (isActivePanelRef.current) {
+          if (inside) {
+            const pt = coordToDataRef.current?.(x, y);
+            const price = pt?.price ?? null;
+            // Update local crosshair for active drawing tool on THIS panel
+            if (selectedToolRef.current !== "cursor") {
+              setCrosshairPos({ x, y, price });
+            }
+            // Broadcast price to all other panels (for synced horizontal)
+            if (onSyncCrosshairRef.current) onSyncCrosshairRef.current(price);
+          } else {
+            if (selectedToolRef.current !== "cursor") setCrosshairPos(null);
+            if (onSyncCrosshairRef.current) onSyncCrosshairRef.current(null);
+          }
+        }
+      }
+
       if (freehandRef.current.active) {
         const fpt = coordToDataRef.current?.(x, y) ?? { x, y, time: null, price: null };
         freehandRef.current.points.push({ x, y, time: fpt.time, price: fpt.price });
@@ -730,7 +762,13 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   }, [hidden, svgRelCoord, getAllDrawingsForHit, publishLinked, commitLocalDrawings, setSelectedTool]); // eslint-disable-line
 
   const selectedToolRef = useRef(selectedTool);
-  useEffect(() => { selectedToolRef.current = selectedTool; }, [selectedTool]);
+  useEffect(() => {
+    selectedToolRef.current = selectedTool;
+    if (selectedTool === "cursor") {
+      setCrosshairPos(null);
+      if (onSyncCrosshairRef.current) onSyncCrosshairRef.current(null);
+    }
+  }, [selectedTool]);
 
   // ── Imperative API ───────────────────────────────────────────────────────
   useImperativeHandle(ref, () => ({
@@ -827,6 +865,12 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
   const isDrawing = DRAWING_TOOLS.includes(selectedTool);
   const isEditDragging = editDragRef.current.active;
 
+  // Compute Y pixel for the synced crosshair price (from another panel)
+  let syncedY = null;
+  if (syncedCrosshairPrice != null && candleSeriesRef.current) {
+    try { syncedY = candleSeriesRef.current.priceToCoordinate(syncedCrosshairPrice); } catch (_) { }
+  }
+
   const needsPointerEvents =
     !hidden && (isDrawing || hoveredId != null || isEditDragging);
 
@@ -921,7 +965,51 @@ const DrawingOverlay = forwardRef(function DrawingOverlay(
             width={1.8}
           />
         )}
+        {/* ── Full crosshair when a drawing tool is active on THIS panel ── */}
+        {crosshairPos && selectedTool !== "cursor" && (
+          <g style={{ pointerEvents: "none" }}>
+            <line x1={0} y1={crosshairPos.y} x2={svgW} y2={crosshairPos.y}
+              stroke="#3d84ff" strokeWidth={1} strokeDasharray="4 3" opacity={0.9} />
+            <line x1={crosshairPos.x} y1={0} x2={crosshairPos.x} y2={svgH}
+              stroke="#3d84ff" strokeWidth={1} strokeDasharray="4 3" opacity={0.9} />
+          </g>
+        )}
+
+        {/* ── Synced horizontal line from another panel (same symbol = same price) ── */}
+        {syncedY != null && !crosshairPos && (
+          <line x1={0} y1={syncedY} x2={svgW} y2={syncedY}
+            stroke="#3d84ff" strokeWidth={1} strokeDasharray="4 3" opacity={0.9}
+            style={{ pointerEvents: "none" }} />
+        )}
       </svg>
+
+      {/* ── Price label on right axis for THIS panel's active crosshair ── */}
+      {crosshairPos && crosshairPos.price != null && selectedTool !== "cursor" && (
+        <div style={{
+          position: "absolute", right: 0, top: crosshairPos.y,
+          transform: "translateY(-50%)",
+          background: "#3d84ff", color: "#ffffff",
+          fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+          padding: "2px 6px", borderRadius: "2px 0 0 2px",
+          pointerEvents: "none", whiteSpace: "nowrap", zIndex: 30, lineHeight: "18px",
+        }}>
+          {crosshairPos.price.toFixed(2)}
+        </div>
+      )}
+
+      {/* ── Price label on right axis for SYNCED crosshair from another panel ── */}
+      {syncedY != null && syncedCrosshairPrice != null && !crosshairPos && (
+        <div style={{
+          position: "absolute", right: 0, top: syncedY,
+          transform: "translateY(-50%)",
+          background: "#3d84ff", color: "#ffffff",
+          fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+          padding: "2px 6px", borderRadius: "2px 0 0 2px",
+          pointerEvents: "none", whiteSpace: "nowrap", zIndex: 30, lineHeight: "18px",
+        }}>
+          {syncedCrosshairPrice.toFixed(2)}
+        </div>
+      )}
 
       {/* Inline text input — theme-aware colors */}
       {pendingText && !hidden && (
