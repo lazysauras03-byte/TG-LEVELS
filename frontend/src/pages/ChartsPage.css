@@ -127,20 +127,19 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(0, 0, 0, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg3);
+  border: 1px solid var(--border2);
   border-radius: 5px;
   padding: 4px 10px;
   cursor: pointer;
-  color: var(--text2);
+  color: var(--text);
   font-family: var(--font-mono);
   transition: background 0.15s, border-color 0.15s, color 0.15s;
-  backdrop-filter: blur(4px);
 }
 
 .chart-symbol-overlay:hover {
-  background: rgba(61, 132, 255, 0.15);
-  border-color: rgba(61, 132, 255, 0.4);
+  background: var(--blue-dim);
+  border-color: var(--blue);
   color: var(--text);
 }
 
@@ -153,8 +152,8 @@
 
 .chart-symbol-overlay-res {
   font-size: 10px;
-  font-weight: 600;
-  color: var(--text3);
+  font-weight: 700;
+  color: var(--text2);
   letter-spacing: 0.03em;
 }
 

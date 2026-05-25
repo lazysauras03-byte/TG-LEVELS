@@ -128,10 +128,10 @@ function StatusBar({
       {displayBar && (
         <div style={S.ohlcGroup}>
           <Stat label="O" value={fmt(displayBar.open)} color="var(--text)" />
-          <Stat label="H" value={fmt(displayBar.high)} color="var(--green)" />
-          <Stat label="L" value={fmt(displayBar.low)} color="var(--red)" />
+          <Stat label="H" value={fmt(displayBar.high)} color="var(--text)" />
+          <Stat label="L" value={fmt(displayBar.low)} color="var(--text)" />
           <Stat label="C" value={fmt(displayBar.close)}
-            color={displayBar.close >= displayBar.open ? "var(--green)" : "var(--red)"} />
+            color="var(--text)" />
         </div>
       )}
 
@@ -141,13 +141,13 @@ function StatusBar({
       <div style={S.statusGroup}>
         <div style={{
           ...S.dot,
-          background: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)",
+          background: !connected ? "var(--red)" : isLive ? "var(--green)" : "var(--red)",
         }} />
         <span style={{
-          color: connected ? (isLive ? "var(--green)" : "var(--red)") : "var(--red)",
+          color: !connected ? "var(--red)" : isLive ? "var(--green)" : "var(--red)",
           fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
         }}>
-          {connected ? (isLive ? "Market Live" : "Market Closed") : "OFFLINE"}
+          {!connected ? "OFFLINE" : isLive ? "Market Live" : "Market Closed"}
         </span>
       </div>
 
@@ -192,7 +192,7 @@ export default memo(StatusBar);
 function Stat({ label, value, color }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-      <span style={{ color: "var(--text3)", fontSize: 10, fontWeight: 600 }}>{label}</span>
+      <span style={{ color: "var(--text2)", fontSize: 10, fontWeight: 700 }}>{label}</span>
       <span style={{ color, fontVariantNumeric: "tabular-nums", fontWeight: 600, fontSize: 11 }}>{value}</span>
     </div>
   );
