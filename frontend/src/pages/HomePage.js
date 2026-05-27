@@ -50,6 +50,21 @@ const NAV_ITEMS = [
     tagColor: "yellow",
     stats: ["Signal accuracy", "Drawdown stats"],
   },
+  {
+    id: "scanner",
+    path: "/scanner",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <circle cx="11" cy="11" r="8" />
+        <path d="m21 21-4.35-4.35" />
+        <path d="M11 8v6M8 11h6" />
+      </svg>
+    ),
+    label: "Scanner",
+    description: "Scan 350 symbols for Motherwave · TrapZone · S1/S2/S3 pattern",
+    tagColor: "purple",
+    stats: ["Motherwave detection", "TrapZone 0.236", "S1/S2/S3 entry"],
+  },
 ];
 
 export default function HomePage() {

@@ -11,6 +11,8 @@ const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = re
 const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
 const { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, isTradingDay } = require("./tickStream");
 const symbolsRouter = require("./symbolsRouter");
+const scannerRouter = require("./scannerRouter");
+const { scanner } = require("./scannerRunner");
 
 const app = express();
 const server = http.createServer(app);
@@ -397,6 +399,7 @@ app.get("/api/signals", async (req, res) => {
 });
 
 app.use("/api/symbols", symbolsRouter);
+app.use("/api/scanner", scannerRouter);
 
 // ─── Tick Watchdog ────────────────────────────────────────────────────────────
 function startTickWatchdog() {
@@ -545,10 +548,68 @@ server.listen(PORT, async () => {
   console.log(`   Health  : http://localhost:${PORT}/health`);
   console.log(`   Chart   : http://localhost:${PORT}/api/chart`);
   console.log(`   Auth    : http://localhost:${PORT}/api/auth/status`);
-  console.log(`   Symbols : http://localhost:${PORT}/api/symbols\n`);
+  console.log(`   Symbols : http://localhost:${PORT}/api/symbols`);
+  console.log(`   Scanner : http://localhost:${PORT}/api/scanner/signals\n`);
   startAutoRefresh();
   startTickWatchdog();
   await initialRestFetch();
+
+  // ─── Scanner ────────────────────────────────────────────────────────────────
+  // Load ALL symbols from the symbol router's merged list and start periodic scan.
+  // This runs on its own timer and NEVER touches WebSocket or chart state.
+  setImmediate(() => {
+    try {
+      const { buildSymbolList } = require("./symbolsRouter");
+      // symbolsRouter doesn't export buildSymbolList — use the REST endpoint data
+      // instead we just defer and call the internal getSymbols via dynamic require
+    } catch { }
+
+    // Load symbols from all sources the same way symbolsRouter does
+    const path = require("path");
+    const fs = require("fs");
+    const FRONTEND_SRC = path.resolve(__dirname, "../../frontend/src");
+
+    function loadScanSymbols() {
+      const symbols = new Set();
+
+      // symbols.json
+      try {
+        const arr = JSON.parse(fs.readFileSync(path.join(FRONTEND_SRC, "symbols.json"), "utf8"));
+        arr.forEach((s) => s.symbol && symbols.add(s.symbol.trim()));
+      } catch { }
+
+      // mcx.json
+      try {
+        const arr = JSON.parse(fs.readFileSync(path.join(FRONTEND_SRC, "mcx.json"), "utf8"));
+        arr.forEach((s) => s.symbol && symbols.add(s.symbol.trim()));
+      } catch { }
+
+      // stocks.xlsx and NIFTY.xlsx via xlsx
+      for (const xlFile of ["stocks.xlsx", "NIFTY.xlsx"]) {
+        try {
+          const XLSX = require("xlsx");
+          const wb = XLSX.readFile(path.join(FRONTEND_SRC, xlFile));
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          XLSX.utils.sheet_to_json(ws).forEach((r) => r.symbol && symbols.add(String(r.symbol).trim()));
+        } catch { }
+      }
+
+      return [...symbols];
+    }
+
+    const allSymbols = loadScanSymbols();
+    console.log(`[Scanner] Loaded ${allSymbols.length} symbols for scanning`);
+    scanner.setSymbols(allSymbols);
+
+    // Forward scanner events to all connected clients via Socket.IO
+    scanner.on("scan_start", (data) => io.emit("scanner_start", data));
+    scanner.on("scan_progress", (data) => io.emit("scanner_progress", data));
+    scanner.on("scan_complete", (data) => io.emit("scanner_complete", data));
+    scanner.on("signal_found", (data) => io.emit("scanner_signal", data));
+    scanner.on("signal_partial", (data) => io.emit("scanner_partial", data));
+
+    scanner.start();
+  });
   if (isLiveMarket()) { console.log("[INIT] Market is live — starting tick stream for real-time candles."); await maybeStartTickStream(); }
   else if (isTradingDay()) { console.log("[INIT] Weekday outside market hours — REST data ready. Tick stream inactive."); }
   else { console.log("[INIT] Weekend/holiday — REST data loaded from last session. No tick stream."); }
