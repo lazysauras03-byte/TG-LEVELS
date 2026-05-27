@@ -114,6 +114,14 @@ export default function ScannerPage() {
     finally { setLoading(false); }
   }
 
+  async function handleStop() {
+    try {
+      await fetch(`${BACKEND}/api/scanner/stop`, { method: "POST" });
+      setProgress(null);
+      fetchStatus();
+    } catch { }
+  }
+
   // ── Filter ────────────────────────────────────────────────────────────────
   const filtered = results.filter((r) => {
     if (search && !r.symbol.toLowerCase().includes(search.toLowerCase())) return false;
@@ -151,6 +159,11 @@ export default function ScannerPage() {
             ? `Scanning… ${progress?.done || 0} / ${progress?.total || status?.symbolCount || "?"}`
             : `${status?.symbolCount || 0} symbols · ${strategies.length} strategies`}
         </div>
+        {isRunning && (
+          <button className="scanner-stop-btn" onClick={handleStop}>
+            ⏹ Stop
+          </button>
+        )}
         <button
           className="scanner-trigger-btn"
           onClick={handleTrigger}
@@ -241,9 +254,9 @@ export default function ScannerPage() {
             <div className="scanner-summary-card-value accent">{status?.resolution || "—"}m</div>
           </div>
           <div className="scanner-summary-card">
-            <div className="scanner-summary-card-label">Auto Scan</div>
+            <div className="scanner-summary-card-label">Last Duration</div>
             <div className="scanner-summary-card-value" style={{ fontSize: 14 }}>
-              {status?.intervalMs ? `${Math.round(status.intervalMs / 60000)}min` : "—"}
+              {status?.lastScanDurationMs ? `${(status.lastScanDurationMs / 1000).toFixed(0)}s` : "—"}
             </div>
           </div>
         </div>

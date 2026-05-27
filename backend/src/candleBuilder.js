@@ -160,6 +160,24 @@ class CandleBuilder {
 
     // Fyers WS timestamps are Unix seconds; convert to ms
     const tickTsMs = (tick.timestamp || Math.floor(Date.now() / 1000)) * 1000;
+
+    // ── Market-close guard ────────────────────────────────────────
+    // Drop any tick whose exchange timestamp falls outside trading hours.
+    // NSE/BSE: 09:15–15:30 IST  |  MCX: 09:00–23:30 IST
+    // This prevents straggler ticks after market close from creating
+    // phantom candles (e.g. a 15:31 candle on NIFTY after close).
+    {
+      const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+      const istMs = tickTsMs + IST_OFFSET_MS;
+      const d = new Date(istMs);
+      const dow = d.getUTCDay(); // 0=Sun, 6=Sat
+      const istMin = d.getUTCHours() * 60 + d.getUTCMinutes();
+      const isMCX = isMCXSymbol(this._symbol);
+      const openMin = isMCX ? (9 * 60 + 0) : (9 * 60 + 15);
+      const closeMin = isMCX ? (23 * 60 + 30) : (15 * 60 + 30);
+      if (dow === 0 || dow === 6 || istMin < openMin || istMin >= closeMin) return;
+    }
+    // ─────────────────────────────────────────────────────────────
     const wallMs = Date.now();
 
     // At minute boundaries, Fyers LiteMode tt can lag up to ~2s behind the

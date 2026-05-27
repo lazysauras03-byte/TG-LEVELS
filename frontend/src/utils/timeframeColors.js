@@ -1,12 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-//  timeframeColors.js
-//  Single source of truth for timeframe → color mapping.
-//  Used by: DrawingOverlay, FibDashboardPage, ChartsPage, any future component.
-//
-//  Keys are the numeric "resolution" values already used throughout the project
-//  (minutes as integers, matching the existing tfOptions / activeTF / resolution
-//  state values in FibDashboardPage.js and ChartsPage.js).
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** @type {Record<number, string>} resolution (minutes) → hex color */
 export const TIMEFRAME_COLORS = {

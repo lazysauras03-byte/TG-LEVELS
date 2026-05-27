@@ -11,6 +11,7 @@
  * GET  /api/scanner/results/:strategyId        — all results for one strategy (paginated)
  * GET  /api/scanner/result/:strategyId/:symbol — single symbol result
  * POST /api/scanner/trigger                    — run scan now
+ * POST /api/scanner/stop                       — abort running scan
  * GET  /api/scanner/symbols                    — current symbol list
  * POST /api/scanner/symbols                    — replace symbol list
  * ─────────────────────────────────────────────────────────────────
@@ -94,6 +95,12 @@ router.post("/trigger", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/scanner/stop
+router.post("/stop", (req, res) => {
+  scanner.stop();
+  res.json({ status: "stop_requested", running: scanner.getStatus().running });
 });
 
 // GET /api/scanner/symbols

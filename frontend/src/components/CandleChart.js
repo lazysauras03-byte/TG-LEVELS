@@ -412,6 +412,10 @@ export default function CandleChart({
   const rulerRef = useRef(null);
   const drawingOverlayRef = useRef(null);
   const srPriceLinesRef = useRef([]);  // active SR price line handles
+  // Always-current ref so the stale useEffect([],...) closure never calls
+  // the wrong symbol's refresh when the user alt+right-clicks after switching symbols.
+  const silentRefreshRef = useRef(onSilentRefresh);
+  useEffect(() => { silentRefreshRef.current = onSilentRefresh; }, [onSilentRefresh]);
 
   // Forward overlay ref to parent so it can call clearAll
   useEffect(() => {
@@ -658,7 +662,7 @@ export default function CandleChart({
       if (e.ctrlKey) return;
       resetView();
       // Alt+right-click → also silently fetch fresh data without resetting view
-      if (e.altKey && onSilentRefresh) onSilentRefresh();
+      if (e.altKey && silentRefreshRef.current) silentRefreshRef.current();
     };
     el.addEventListener("contextmenu", onContextMenu);
 

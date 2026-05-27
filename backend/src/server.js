@@ -608,7 +608,7 @@ server.listen(PORT, async () => {
     scanner.on("signal_found", (data) => io.emit("scanner_signal", data));
     scanner.on("signal_partial", (data) => io.emit("scanner_partial", data));
 
-    scanner.start();
+    // No auto-start — scan is triggered manually from the UI or POST /api/scanner/trigger
   });
   if (isLiveMarket()) { console.log("[INIT] Market is live — starting tick stream for real-time candles."); await maybeStartTickStream(); }
   else if (isTradingDay()) { console.log("[INIT] Weekday outside market hours — REST data ready. Tick stream inactive."); }
