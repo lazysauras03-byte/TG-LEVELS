@@ -83,14 +83,15 @@ function istDateKey(tsMs) {
  * Used to decide whether the last higher-TF bar group is "still forming" (live)
  * or "already completed" (closed/after-hours/weekend).
  */
-function isMarketLiveNow() {
+function isMarketLiveNow(symbol) {
   const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
   const istMs = Date.now() + IST_OFFSET_MS;
   const d = new Date(istMs);
   const dow = d.getUTCDay(); // 0=Sun, 6=Sat
   if (dow === 0 || dow === 6) return false;
   const istMin = d.getUTCHours() * 60 + d.getUTCMinutes();
-  return istMin >= (9 * 60 + 15) && istMin < (15 * 60 + 30);
+  const closeMin = isMCXSymbol(symbol) ? (23 * 60 + 30) : (15 * 60 + 30);
+  return istMin >= (9 * 60 + 15) && istMin < closeMin;
 }
 
 // ── CandleBuilder class ──────────────────────────────────────────
@@ -157,25 +158,60 @@ class CandleBuilder {
     const price = tick.ltp;
     if (!price || price <= 0) return;
 
-    // Use server wall clock (Date.now()) for minute-boundary detection.
-    // Fyers LiteMode tt (exchange timestamp) can lag by up to ~1s at minute
-    // boundaries — using tt would cause the new candle to open late, making
-    // the new candle's open = a later tick price instead of the first tick.
-    const tsMs = Date.now();
-    const minute = floorToMinute(tsMs);
+    // Fyers WS timestamps are Unix seconds; convert to ms
+    const tickTsMs = (tick.timestamp || Math.floor(Date.now() / 1000)) * 1000;
+    const wallMs = Date.now();
+
+    // At minute boundaries, Fyers LiteMode tt can lag up to ~2s behind the
+    // server wall clock. If the exchange timestamp is in the previous minute
+    // but the wall clock is already 2s+ into the next minute, trust the wall
+    // clock — this fixes wrong candle opens without creating phantom candles.
+    // Outside of that 2s grace window we always use the exchange timestamp so
+    // candles are anchored to the actual traded time, not server jitter.
+    const tickMinute = floorToMinute(tickTsMs);
+    const wallMinute = floorToMinute(wallMs);
+    const lagMs = wallMs - tickTsMs;
+    const minute = (wallMinute > tickMinute && lagMs <= 2000) ? wallMinute : tickMinute;
 
     if (!this._forming1m) {
       // Very first tick
       this._forming1m = this._newCandle(minute, price);
     } else if (minute > this._forming1m.time) {
-      // Minute rolled over → finalize current candle
-      const closed = { ...this._forming1m };
+      // Minute(s) rolled over → finalize current candle
+      const prevCandle = this._oneMinHistory.length > 0
+        ? this._oneMinHistory[this._oneMinHistory.length - 1]
+        : null;
+      const closed = this._validateCandle({ ...this._forming1m }, prevCandle);
       this._oneMinHistory.push(closed);
 
+      // Fill any gap minutes where no ticks arrived.
+      // Each gap candle is a doji at the previous close (open=high=low=close=prev close).
+      const ONE_MIN_MS = 60 * 1000;
+      let gapMinute = this._forming1m.time + ONE_MIN_MS;
+      while (gapMinute < minute) {
+        const prevClose = this._oneMinHistory[this._oneMinHistory.length - 1].close;
+        const gapCandle = {
+          time: gapMinute,
+          open: prevClose,
+          high: prevClose,
+          low: prevClose,
+          close: prevClose,
+          volume: 0,
+        };
+        this._oneMinHistory.push(gapCandle);
+        gapMinute += ONE_MIN_MS;
+      }
+
       // Emit finalized candle + new forming state
-      this._forming1m = this._newCandle(minute, price);
+      // Anchor the new candle's open to the last closed candle's close
+      const lastClosed = this._oneMinHistory[this._oneMinHistory.length - 1];
+      this._forming1m = this._newCandle(minute, lastClosed ? lastClosed.close : price);
       const forming = this._buildFormingAll();
       this.onFinalize(closed, forming);
+    } else if (minute < this._forming1m.time) {
+      // Stale/late tick from a already-closed minute — drop it silently.
+      // This prevents late-arriving ticks from spiking the current candle.
+      return;
     } else {
       // Same minute — update forming candle
       if (price > this._forming1m.high) this._forming1m.high = price;
@@ -211,6 +247,31 @@ class CandleBuilder {
   }
 
   // ── Private helpers ───────────────────────────────────────────
+
+  /**
+   * Validate and repair OHLC values on a finalized 1m candle.
+   * Rules:
+   *   1. high = max(open, high, low, close)
+   *   2. low  = min(open, high, low, close)
+   *   3. open must be > 0; if not, fall back to close
+   *   4. If a previous candle exists, open must equal prev close
+   *      (ensures no gap between candles on liquid instruments)
+   */
+  _validateCandle(candle, prevCandle) {
+    // Fix open if zero/invalid
+    if (!candle.open || candle.open <= 0) candle.open = candle.close;
+
+    // Anchor open to previous close if available (no-gap rule)
+    if (prevCandle && prevCandle.close > 0) {
+      candle.open = prevCandle.close;
+    }
+
+    // Recalculate high/low to be consistent with open+close
+    candle.high = Math.max(candle.open, candle.high, candle.low, candle.close);
+    candle.low = Math.min(candle.open, candle.high, candle.low, candle.close);
+
+    return candle;
+  }
 
   _newCandle(timeMs, price) {
     return {
@@ -304,7 +365,7 @@ class CandleBuilder {
     // When the market is live the last group is still forming — skip it
     // (the forming bar is returned separately by _buildFormingBar).
     // When the market is closed every group is complete — include the last one too.
-    if (group.length > 0 && !isMarketLiveNow()) {
+    if (group.length > 0 && !isMarketLiveNow(this._symbol)) {
       bars.push(this._aggregateCandles(group, groupStart));
     }
     return bars;

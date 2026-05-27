@@ -401,6 +401,7 @@ export default function CandleChart({
   // ── Synced crosshair across panels ──────────────────────────────────────
   syncedCrosshairPrice = null,
   onSyncCrosshair = null,
+  onSilentRefresh = null,
 }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -656,6 +657,8 @@ export default function CandleChart({
       e.preventDefault();
       if (e.ctrlKey) return;
       resetView();
+      // Alt+right-click → also silently fetch fresh data without resetting view
+      if (e.altKey && onSilentRefresh) onSilentRefresh();
     };
     el.addEventListener("contextmenu", onContextMenu);
 

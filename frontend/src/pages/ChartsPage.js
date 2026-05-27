@@ -566,6 +566,7 @@ const ChartPanel = memo(function ChartPanel({
               onPanelActivate={onPanelActivate}
               syncedCrosshairPrice={thisPanelSyncedPrice}
               onSyncCrosshair={handleSyncCrosshair}
+              onSilentRefresh={() => refresh(symbol, resolution)}
             />
           )}
         </div>
