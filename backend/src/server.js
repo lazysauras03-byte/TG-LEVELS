@@ -67,6 +67,15 @@ const socketResolutions = new Map(); // socket.id → resolution
 const socketSymbols = new Map();     // socket.id → symbol (dual-panel per-socket filtering)
 let lastTickAt = 0;
 let lastConnectAt = 0;
+const lastTickBySymbol = new Map(); // symbol → Date.now() of last tick received
+
+// ── ticksFlowing: true if any subscribed symbol got a tick in last 90s ────────
+const TICK_FLOWING_WINDOW_MS = 90_000;
+function ticksFlowing() {
+  const syms = getActiveTickSymbols();
+  const cutoff = Date.now() - TICK_FLOWING_WINDOW_MS;
+  return syms.some((s) => (lastTickBySymbol.get(s) || 0) > cutoff);
+}
 
 // ─── Cache helpers ────────────────────────────────────────────────────────────
 function cacheKey(symbol, resolution) { return `${symbol}:${resolution}`; }
@@ -180,9 +189,18 @@ function emitFinalCandle(symbol, finalizedCandle) {
 // ─── Tick Stream ──────────────────────────────────────────────────────────────
 const tickStream = new TickStream();
 
-tickStream.on("tick", (tick) => { lastTickAt = Date.now(); getOrCreateBuilder(tick.symbol).processTick(tick); });
-tickStream.on("connected", () => { console.log("[TickStream] Fyers WebSocket connected ✓"); lastTickAt = 0; lastConnectAt = Date.now(); io.emit("market_status", { tickStreamActive: true }); });
-tickStream.on("disconnected", () => { console.log("[TickStream] Fyers WebSocket disconnected"); io.emit("market_status", { tickStreamActive: false }); });
+tickStream.on("tick", (tick) => {
+  const now = Date.now();
+  const wasFlowing = ticksFlowing();
+  lastTickAt = now;
+  lastTickBySymbol.set(tick.symbol, now);
+  getOrCreateBuilder(tick.symbol).processTick(tick);
+  // If ticks just started flowing (e.g. after a gap/holiday silence),
+  // immediately tell all clients — don't wait for the 30s broadcast.
+  if (!wasFlowing) io.emit("market_status", { ticksFlowing: true });
+});
+tickStream.on("connected", () => { console.log("[TickStream] Fyers WebSocket connected ✓"); lastTickAt = 0; lastConnectAt = Date.now(); io.emit("market_status", { tickStreamActive: true, ticksFlowing: false }); });
+tickStream.on("disconnected", () => { console.log("[TickStream] Fyers WebSocket disconnected"); io.emit("market_status", { tickStreamActive: false, ticksFlowing: false }); });
 tickStream.on("error", (err) => { console.error("[TickStream] Error:", err?.message || err); });
 
 /**
@@ -418,6 +436,12 @@ function startTickWatchdog() {
     }
   }, TICK_WATCHDOG_MS);
   console.log(`[Watchdog] Started (timeout: ${TICK_WATCHDOG_MS / 1000}s, grace: ${WATCHDOG_GRACE_MS / 1000}s)`);
+
+  // Broadcast ticksFlowing every 30s so all clients stay in sync.
+  // Uses the same market_status event already handled by the frontend.
+  setInterval(() => {
+    io.emit("market_status", { ticksFlowing: ticksFlowing() });
+  }, 30_000);
 }
 
 // ─── Auto-refresh fallback ────────────────────────────────────────────────────
@@ -485,7 +509,7 @@ io.on("connection", (socket) => {
   if (initialCache.result && initialCache.candles.length > 0) {
     socket.emit("chart_update", buildPayload(initialCache.candles, initialCache.result, SYMBOL, currentResolution, true));
   }
-  socket.emit("market_status", { tickStreamActive: tickStream.isConnected(), liveMarket: isAnyMarketLive(getActiveTickSymbols()), tradingDay: isTradingDay() });
+  socket.emit("market_status", { tickStreamActive: tickStream.isConnected(), liveMarket: isAnyMarketLive(getActiveTickSymbols()), tradingDay: isTradingDay(), ticksFlowing: ticksFlowing() });
 
   // TICK-STREAM + DUAL-PANEL FIX:
   // Track each socket's active symbol. On change, call updateTickSubscription()

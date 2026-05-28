@@ -240,7 +240,7 @@ const ChartPanel = memo(function ChartPanel({
   onSyncCrosshair,        // (price: number|null, symbol: string) => void
 }) {
   // ── EACH PANEL has its own socket/data — fully independent ─────────────────
-  const { chartData, connected, loading, error, refresh, tickStreamActive } = useSocket();
+  const { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing } = useSocket();
 
   // ── Symbol / resolution / mode — all namespaced by pfx ────────────────────
   const [symbol, setSymbol] = useState(() => urlSymbol || loadPref(pfx + "symbol", "NSE:NIFTY50-INDEX"));
@@ -462,6 +462,7 @@ const ChartPanel = memo(function ChartPanel({
           crosshairBar={crosshairBar}
           onSidebarToggle={handleSidebarToggle}
           tickStreamActive={tickStreamActive}
+          ticksFlowing={ticksFlowing}
           dualMode={false}
           onDualToggle={undefined}
           layoutId={isPrimary ? layoutId : undefined}

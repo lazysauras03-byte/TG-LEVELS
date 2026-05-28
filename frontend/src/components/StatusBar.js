@@ -1,7 +1,6 @@
 // StatusBar.js
 import React, { memo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMarketStatus } from "../hooks/useMarketStatus";
 import { useTheme } from "../App";
 import { LayoutPicker } from "../pages/ChartsPage";
 import IndicatorPanel from "./IndicatorPanel";
@@ -45,6 +44,7 @@ function StatusBar({
   crosshairBar,
   onSidebarToggle,
   tickStreamActive,
+  ticksFlowing,
   dualMode,       // eslint-disable-line no-unused-vars
   onDualToggle,   // eslint-disable-line no-unused-vars
   layoutId,
@@ -62,8 +62,11 @@ function StatusBar({
       ? { open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close }
       : null;
 
-  const marketStatus = useMarketStatus(symbol);  // symbol-aware: MCX stays live until 23:30
-  const isLive = marketStatus === "live";
+  // Pure tick truth — no clock, no fallback.
+  // ticksFlowing=null (not yet known) → show nothing yet
+  // ticksFlowing=true  → Market Open
+  // ticksFlowing=false → Market Closed
+  const isLive = !!ticksFlowing;
 
   return (
     <header style={S.bar}>

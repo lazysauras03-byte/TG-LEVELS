@@ -46,6 +46,7 @@ export function useSocket() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [tickStreamActive, setTickStreamActive] = useState(false);
+  const [ticksFlowing, setTicksFlowing] = useState(null); // null = not yet known, true/false = server confirmed
 
   const socketRef = useRef(null);
   const activeResolutionRef = useRef(null);
@@ -228,6 +229,7 @@ export function useSocket() {
 
     socket.on("market_status", (d) => {
       if (d?.tickStreamActive != null) setTickStreamActive(!!d.tickStreamActive);
+      if (d?.ticksFlowing != null) setTicksFlowing(!!d.ticksFlowing);
     });
 
     socket.on("error", (e) => {
@@ -305,5 +307,5 @@ export function useSocket() {
     }
   }, []); // eslint-disable-line
 
-  return { chartData, connected, loading, error, refresh, tickStreamActive };
+  return { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing };
 }
