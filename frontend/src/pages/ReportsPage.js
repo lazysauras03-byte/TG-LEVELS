@@ -67,6 +67,126 @@ function buildTableRows(segments) {
   });
 }
 
+// ── Mother Wave Detection ──────────────────────────────────────────────────────
+//
+// Algorithm:
+//   1. Sort all waves by delta DESC to find the largest candidate.
+//   2. Start with the wave that has the highest absolute delta — that's the first
+//      Mother Wave candidate.
+//   3. Compute the Fibonacci -0.168 invalidation level for that wave:
+//        • Bullish wave  (toSide=high):  inv = toPrice + 0.168 × (toPrice - fromPrice)
+//          → invalidated if any SUBSEQUENT wave's toPrice (high end) > inv
+//        • Bearish wave  (toSide=low):   inv = toPrice - 0.168 × (fromPrice - toPrice)
+//          → invalidated if any SUBSEQUENT wave's toPrice (low end)  < inv
+//   4. Walk chronologically through waves that come AFTER the candidate.
+//      If any of those waves crosses the -0.168 level:
+//        • Discard current candidate.
+//        • From the waves AFTER the current candidate's end-time, pick the
+//          new largest-delta wave as the new candidate.
+//        • Repeat the fib check on the new candidate.
+//   5. The final un-invalidated candidate is the Mother Wave.
+//      Return it along with its fib levels for display.
+//
+function detectMotherWave(waves) {
+  if (!waves || waves.length === 0) return null;
+
+  // Work on a chronologically sorted copy (by start time ascending)
+  const byTime = [...waves].sort((a, b) => a.col1Time - b.col1Time);
+
+  // Helper: compute -0.168 invalidation price for a candidate wave row
+  function fibInvalidation(w) {
+    const span = Math.abs(w.col2Price - w.col1Price);
+    if (w.dir === "bull") {
+      // Bullish: extends above the high → inv is above col2Price
+      return w.col2Price + 0.168 * span;
+    } else {
+      // Bearish: extends below the low → inv is below col2Price
+      return w.col2Price - 0.168 * span;
+    }
+  }
+
+  // Helper: check if a wave crosses the invalidation level of the candidate
+  function isInvalidated(candidate, inv, wave) {
+    // Only waves that started AFTER the candidate ended are checked
+    if (wave.col1Time <= candidate.col2Time) return false;
+    if (candidate.dir === "bull") {
+      // Invalidated if any subsequent wave's toPrice (high side) crosses above inv
+      return wave.col2Price > inv;
+    } else {
+      // Invalidated if any subsequent wave's toPrice (low side) drops below inv
+      return wave.col2Price < inv;
+    }
+  }
+
+  // Helper: pick the largest-delta wave from a subset
+  function largestInSubset(subset) {
+    if (!subset.length) return null;
+    return subset.reduce((best, w) => (w.delta > best.delta ? w : best), subset[0]);
+  }
+
+  // Start: candidate = largest delta overall
+  let candidate = largestInSubset(byTime);
+  const MAX_ITER = 20; // safety guard against infinite loops
+
+  for (let iter = 0; iter < MAX_ITER; iter++) {
+    if (!candidate) break;
+
+    const inv = fibInvalidation(candidate);
+
+    // Find waves strictly after this candidate's end time
+    const afterCandidate = byTime.filter((w) => w.col1Time > candidate.col2Time);
+
+    // Check if any of those waves invalidates the candidate's fib
+    const invalidatingWave = afterCandidate.find((w) => isInvalidated(candidate, inv, w));
+
+    if (!invalidatingWave) {
+      // No invalidation → this is the final Mother Wave
+      break;
+    }
+
+    // Invalidated: pick next candidate from waves that start AFTER the
+    // invalidating wave's start time (not the old candidate's end)
+    const pool = byTime.filter((w) => w.col1Time > candidate.col2Time);
+    const next = largestInSubset(pool);
+
+    if (!next || next.waveNum === candidate.waveNum) break; // can't progress
+
+    candidate = next;
+  }
+
+  if (!candidate) return null;
+
+  // Build full fib level set for display
+  const span = Math.abs(candidate.col2Price - candidate.col1Price);
+  const isBull = candidate.dir === "bull";
+  const origin = candidate.col1Price;
+  const end = candidate.col2Price;
+
+  const fibLevels = isBull
+    ? {
+      "1.0": end,
+      "0.786": end - 0.214 * span,
+      "0.618": end - 0.382 * span,
+      "0.5": end - 0.5 * span,
+      "0.382": end - 0.618 * span,
+      "0.236": end - 0.764 * span,
+      "0.0": origin,
+      "-0.168": end + 0.168 * span,
+    }
+    : {
+      "1.0": end,
+      "0.786": end + 0.214 * span,
+      "0.618": end + 0.382 * span,
+      "0.5": end + 0.5 * span,
+      "0.382": end + 0.618 * span,
+      "0.236": end + 0.764 * span,
+      "0.0": origin,
+      "-0.168": end - 0.168 * span,
+    };
+
+  return { wave: candidate, fibLevels, invalidation: fibLevels["-0.168"] };
+}
+
 // ── Symbol search ─────────────────────────────────────────────────────────────
 function SymbolSearch({ symbol, onSelect }) {
   const [query, setQuery] = useState(symbol);
@@ -143,6 +263,130 @@ function SymbolSearch({ symbol, onSelect }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Mother Wave Card ──────────────────────────────────────────────────────────
+function MotherWaveSection({ motherWave, onWaveClick }) {
+  if (!motherWave) return null;
+
+  const { wave, fibLevels, invalidation } = motherWave;
+  const isBull = wave.dir === "bull";
+
+  const fibOrder = isBull
+    ? ["-0.168", "1.0", "0.786", "0.618", "0.5", "0.382", "0.236", "0.0"]
+    : ["-0.168", "1.0", "0.786", "0.618", "0.5", "0.382", "0.236", "0.0"];
+
+  return (
+    <div className="mw-section">
+      <div className="mw-header-row">
+        <span className="mw-title">Mother Wave</span>
+        <span className="mw-subtitle">
+          Dominant wave driving current structure · Fib invalidation at{" "}
+          <span className={`mw-inv-price ${isBull ? "cr-bull" : "cr-bear"}`}>
+            {fmt(invalidation)}
+          </span>{" "}
+          (−0.168)
+        </span>
+      </div>
+
+      {/* Mother wave table — same columns as main table */}
+      <div className="mw-table-wrap">
+        <table className="cr-table mw-table">
+          <thead>
+            <tr>
+              <th className="cr-th-wave">Wave</th>
+              <th className="cr-th-wave cr-th-label">Wave</th>
+              <th className="cr-th-dir">Direction</th>
+              <th className="cr-th">Time / Price</th>
+              <th className="cr-th">Time / Price</th>
+              <th className="cr-th">Wave Δ (abs)</th>
+              <th className="cr-th">Strength Bar</th>
+              <th className="cr-th">Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              className="cr-row cr-row-clickable mw-row-highlight"
+              onClick={() => onWaveClick(wave)}
+              title="Click to open this wave on the chart"
+            >
+              <td><span className="cr-w-num">{wave.waveNum}</span></td>
+              <td><span className="cr-w-label cr-w-label-standalone">{wave.label}</span></td>
+              <td>
+                {isBull
+                  ? <span className="cr-badge cr-badge-bull">▲ Bullish</span>
+                  : <span className="cr-badge cr-badge-bear">▼ Bearish</span>}
+              </td>
+              <td>
+                <span className="cr-time">{toISTStr(wave.col1Time)}</span>
+                <span className="cr-price">{fmt(wave.col1Price)}</span>
+              </td>
+              <td>
+                <span className="cr-time">{toISTStr(wave.col2Time)}</span>
+                <span className="cr-price">{fmt(wave.col2Price)}</span>
+              </td>
+              <td>
+                <span className={`cr-delta ${isBull ? "cr-bull" : "cr-bear"}`}>
+                  {isBull ? "+" : "−"}{wave.delta.toFixed(2)}
+                </span>
+              </td>
+              <td>
+                <div className="cr-bar-wrap">
+                  <div className="cr-bar-bg">
+                    <div
+                      className="cr-bar-fill"
+                      style={{ width: "100%", background: isBull ? "#639922" : "#E24B4A" }}
+                    />
+                  </div>
+                  <span className="cr-bar-pct">100%</span>
+                </div>
+              </td>
+              <td><SizeBadge delta={wave.delta} /></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Fibonacci levels */}
+      <div className="mw-fib-wrap">
+        <div className="mw-fib-title">Fibonacci Retracement Levels</div>
+        <div className="mw-fib-grid">
+          {fibOrder.map((level) => {
+            const price = fibLevels[level];
+            const isInvalidationLevel = level === "-0.168";
+            const isOrigin = level === "0.0";
+            const isEnd = level === "1.0";
+            return (
+              <div
+                key={level}
+                className={`mw-fib-row ${isInvalidationLevel ? "mw-fib-inv" : ""} ${isOrigin || isEnd ? "mw-fib-anchor" : ""}`}
+              >
+                <span className="mw-fib-level">{level}</span>
+                <div className="mw-fib-bar-track">
+                  <div
+                    className="mw-fib-bar-fill"
+                    style={{
+                      width: isInvalidationLevel ? "100%" : `${Math.max(8, parseFloat(level) * 100)}%`,
+                      opacity: isInvalidationLevel ? 0.5 : 0.8,
+                      background: isInvalidationLevel
+                        ? (isBull ? "#3d84ff" : "#3d84ff")
+                        : isBull ? "#639922" : "#E24B4A",
+                    }}
+                  />
+                </div>
+                <span className={`mw-fib-price ${isInvalidationLevel ? "mw-fib-inv-price" : ""}`}>
+                  {fmt(price)}
+                </span>
+                {isInvalidationLevel && (
+                  <span className="mw-fib-tag">Invalidation</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -250,6 +494,9 @@ export default function ReportsPage() {
     const dates = [...new Set(rows.map((w) => w.date))].sort().reverse();
     return { allWaves: rows, allDates: dates };
   }, [candles, emaHighs, emaLows]);
+
+  // ── Mother Wave computation ─────────────────────────────────────────────────
+  const motherWave = useMemo(() => detectMotherWave(allWaves), [allWaves]);
 
   // ── Filter + sort ───────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -417,6 +664,9 @@ export default function ReportsPage() {
               </div>
             </div>
 
+            {/* ── Mother Wave Section ─────────────────────────────────────── */}
+            <MotherWaveSection motherWave={motherWave} onWaveClick={handleWaveClick} />
+
             {/* Filter controls */}
             <div className="cr-controls">
               <div className="cr-select-wrap">
@@ -513,6 +763,7 @@ export default function ReportsPage() {
                       if (showDateSep) lastDate = w.date;
                       const barW = Math.max(4, Math.round((w.delta / maxDelta) * 100));
                       const isBull = w.dir === "bull";
+                      const isMotherWave = motherWave && w.waveNum === motherWave.wave.waveNum;
 
                       return (
                         <React.Fragment key={w.id}>
@@ -522,11 +773,14 @@ export default function ReportsPage() {
                             </tr>
                           )}
                           <tr
-                            className="cr-row cr-row-clickable"
+                            className={`cr-row cr-row-clickable${isMotherWave ? " cr-row-mother" : ""}`}
                             onClick={() => handleWaveClick(w)}
-                            title="Click to open this wave on the chart"
+                            title={isMotherWave ? "Mother Wave — click to open on chart" : "Click to open this wave on the chart"}
                           >
-                            <td><span className="cr-w-num">{w.waveNum}</span></td>
+                            <td>
+                              <span className="cr-w-num">{w.waveNum}</span>
+                              {isMotherWave && <span className="cr-mother-tag">M</span>}
+                            </td>
                             <td><span className="cr-w-label cr-w-label-standalone">{w.label}</span></td>
                             <td>
                               {isBull
