@@ -7,8 +7,8 @@
  *   _results = Map<strategyId, Map<symbol, ScanResult>>
  *
  * Manual-only scan control:
- *   scanner.triggerNow()  — run one scan immediately
- *   scanner.stop()        — abort any running scan / cancel scheduled one
+ *   scanner.triggerNow(resolution?)  — run one scan immediately
+ *   scanner.stop()                   — abort any running scan
  *   No auto-start. No periodic timer. You control when it runs.
  *
  * Symbol filtering:
@@ -26,17 +26,13 @@ const strategies = require("./strategies/strategyRegistry");
 // ─── Config ───────────────────────────────────────────────────────────────────
 const CONCURRENCY = parseInt(process.env.SCANNER_CONCURRENCY || "3");
 const BATCH_DELAY_MS = parseInt(process.env.SCANNER_BATCH_DELAY_MS || "1000");
-const SCANNER_RESOLUTION = parseInt(process.env.SCANNER_RESOLUTION || "15");
+const DEFAULT_RESOLUTION = parseInt(process.env.SCANNER_RESOLUTION || "15");
 const RETRY_LIMIT = 5;
 
 // ─── Symbol filter ────────────────────────────────────────────────────────────
-// MCX continuous contracts like MCX:CRUDEOIL-I, MCX:SILVER-I etc. are not
-// supported by Fyers for intraday history. Drop them silently at load time
-// so they never waste API calls or log errors during scans.
 function isValidScanSymbol(symbol) {
   if (!symbol) return false;
   const s = String(symbol).trim().toUpperCase();
-  // Drop MCX continuous-contract symbols: anything ending in -I or like GOLDPETAL-I
   if (s.startsWith("MCX:") && /-I$/.test(s.split(":")[1] || "")) return false;
   return true;
 }
@@ -45,9 +41,8 @@ function isValidScanSymbol(symbol) {
 class ScannerRunner extends EventEmitter {
   constructor() {
     super();
-    // Map<strategyId, Map<symbol, ScanResult>>
     this._results = new Map();
-    this._errors = new Map();   // symbol → { count, lastError }
+    this._errors = new Map();
     this._retryQueue = [];
     this._running = false;
     this._aborted = false;
@@ -56,6 +51,7 @@ class ScannerRunner extends EventEmitter {
     this._lastScanAt = null;
     this._lastScanDurationMs = null;
     this._progress = { total: 0, done: 0, found: 0 };
+    this._resolution = DEFAULT_RESOLUTION;
 
     for (const s of strategies) {
       this._results.set(s.id, new Map());
@@ -76,11 +72,12 @@ class ScannerRunner extends EventEmitter {
   getSymbols() { return [...this._symbolList]; }
 
   // ── Manual trigger ───────────────────────────────────────────────────────────
-  async triggerNow() {
+  async triggerNow(resolution) {
     if (this._running) return { status: "already_running", progress: this._progress };
+    if (resolution != null) this._resolution = parseInt(resolution) || DEFAULT_RESOLUTION;
     this._aborted = false;
     await this._runScan();
-    return { status: "triggered", symbols: this._symbolList.length };
+    return { status: "triggered", symbols: this._symbolList.length, resolution: this._resolution };
   }
 
   // ── Stop ─────────────────────────────────────────────────────────────────────
@@ -103,16 +100,17 @@ class ScannerRunner extends EventEmitter {
     this._scanCount++;
     const scanId = this._scanCount;
     const startMs = Date.now();
+    const resolution = this._resolution;
 
     const toScan = [...new Set([...this._retryQueue, ...this._symbolList])];
     this._retryQueue = [];
     this._progress = { total: toScan.length, done: 0, found: 0 };
 
-    console.log(`[Scanner #${scanId}] ${toScan.length} symbols × ${strategies.length} strategies @ res=${SCANNER_RESOLUTION}m`);
+    console.log(`[Scanner #${scanId}] ${toScan.length} symbols × ${strategies.length} strategies @ res=${resolution}m`);
     this.emit("scan_start", {
       scanId,
       total: toScan.length,
-      resolution: SCANNER_RESOLUTION,
+      resolution,
       strategies: strategies.map(s => ({ id: s.id, name: s.name })),
     });
 
@@ -122,7 +120,7 @@ class ScannerRunner extends EventEmitter {
         break;
       }
       const batch = toScan.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(batch.map((sym) => this._processSymbol(sym)));
+      await Promise.allSettled(batch.map((sym) => this._processSymbol(sym, false, resolution)));
       this._progress.done = Math.min(i + CONCURRENCY, toScan.length);
       this.emit("scan_progress", { ...this._progress, scanId });
       if (i + CONCURRENCY < toScan.length) await delay(BATCH_DELAY_MS);
@@ -135,7 +133,7 @@ class ScannerRunner extends EventEmitter {
       console.log(`[Scanner #${scanId}] Retrying ${retries.length} symbols...`);
       for (const sym of retries) {
         if (this._aborted) break;
-        await this._processSymbol(sym, true);
+        await this._processSymbol(sym, true, resolution);
         await delay(600);
       }
     }
@@ -155,14 +153,15 @@ class ScannerRunner extends EventEmitter {
       total: toScan.length,
       durationMs,
       scannedAt: this._lastScanAt,
+      resolution,
       summary,
     });
   }
 
   // ── Process one symbol — fetch candles ONCE, run all strategies ───────────────
-  async _processSymbol(symbol, isRetry = false) {
+  async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION) {
     try {
-      const candles = await fetchCandles(symbol, SCANNER_RESOLUTION, 5000);
+      const candles = await fetchCandles(symbol, resolution, 5000);
       this._errors.delete(symbol);
 
       for (const strategy of strategies) {
@@ -240,7 +239,7 @@ class ScannerRunner extends EventEmitter {
     return {
       running: this._running,
       symbolCount: this._symbolList.length,
-      resolution: SCANNER_RESOLUTION,
+      resolution: this._resolution,
       lastScanAt: this._lastScanAt,
       lastScanDurationMs: this._lastScanDurationMs,
       progress: this._progress,
