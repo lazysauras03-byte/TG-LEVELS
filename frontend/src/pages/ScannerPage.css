@@ -138,9 +138,20 @@
   border: none;
   border-radius: 4px;
   color: var(--text2);
-  padding: 3px 8px;
+  padding: 4px 7px;
   font-size: 14px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.scanner-view-btn svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 .scanner-view-btn:hover {
@@ -150,6 +161,40 @@
 .scanner-view-btn.active {
   background: var(--accent);
   color: #fff;
+}
+
+/* ─── Panel tabs (Motherwave / Strategies) ──────────────────────────────── */
+.scanner-panel-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.scanner-panel-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text2);
+  padding: 8px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.scanner-panel-tab:hover {
+  color: var(--text);
+}
+
+.scanner-panel-tab.active {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
 }
 
 /* Theme + status */
@@ -353,6 +398,35 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ─── MW section header ─────────────────────────────────────────────────── */
+.mw-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mw-section-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.mw-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.mw-section-sub {
+  font-size: 11px;
+  color: var(--text3);
 }
 
 /* ─── MW direction filter ────────────────────────────────────────────────── */
@@ -1060,6 +1134,19 @@
   color: #ef4444;
 }
 
+.scanner-table-row {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.scanner-table-row:hover {
+  background: var(--bg2);
+}
+
+.scanner-table-row:hover .symbol-cell {
+  text-decoration: underline;
+}
+
 .symbol-cell {
   font-size: 12px;
   font-weight: 700;
@@ -1070,6 +1157,7 @@
 .symbol-cell:hover {
   text-decoration: underline;
 }
+
 
 .symbol-ticker {
   font-size: 9px;

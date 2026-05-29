@@ -33,6 +33,7 @@ const LS_KEY_BASE = "tgg_drawings_v2";
 const FIB_LEVELS = [
   { ratio: -1.618, label: "-1.618", color: "#26a69a", dash: "6 3", width: 1.2 },
   { ratio: -1.000, label: "-1", color: "#ef5350", dash: "4 3", width: 1.4 },
+  { ratio: -0.618, label: "-0.618", color: "#26a69a", dash: "5 3", width: 1.2 },
   { ratio: -0.236, label: "-0.236", color: "#fb8c00", dash: "4 2", width: 1.0 },
   { ratio: 0.000, label: "0", color: "#b2b5be", dash: "0", width: 1.6 },
   { ratio: 0.236, label: "0.236", color: "#fb8c00", dash: "4 2", width: 1.0 },

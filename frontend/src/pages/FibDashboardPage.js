@@ -25,6 +25,7 @@ const ENTRY_TFS = [
 const FIB_LEVELS = [
   { ratio: -1.618, badge: "Ext Target" },
   { ratio: -1.000, badge: "Target" },
+  { ratio: -0.618, badge: "Ext Golden" },
   { ratio: -0.236, badge: "Trap Top" },  // upper edge of trap zone
   { ratio: 0.000, badge: null },         // High (reference)
   { ratio: 0.236, badge: "Trap Bot" },  // lower edge of trap zone
