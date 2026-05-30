@@ -70,118 +70,114 @@ function buildTableRows(segments) {
 // ── Mother Wave Detection ──────────────────────────────────────────────────────
 //
 // Algorithm:
-//   1. Sort all waves by delta DESC to find the largest candidate.
-//   2. Start with the wave that has the highest absolute delta — that's the first
-//      Mother Wave candidate.
-//   3. Compute the Fibonacci -0.168 invalidation level for that wave:
-//        • Bullish wave  (toSide=high):  inv = toPrice + 0.168 × (toPrice - fromPrice)
-//          → invalidated if any SUBSEQUENT wave's toPrice (high end) > inv
-//        • Bearish wave  (toSide=low):   inv = toPrice - 0.168 × (fromPrice - toPrice)
-//          → invalidated if any SUBSEQUENT wave's toPrice (low end)  < inv
-//   4. Walk chronologically through waves that come AFTER the candidate.
-//      If any of those waves crosses the -0.168 level:
+//   1. Start with the wave that has the highest absolute delta — first candidate.
+//   2. Compute the Fibonacci -0.168 invalidation level:
+//        • Bullish wave: inv = fromPrice - 0.168 × span
+//          (level BELOW the wave's starting low — origin side)
+//          Invalidated when a subsequent BEARISH wave's toPrice (low) drops below inv
+//        • Bearish wave: inv = fromPrice + 0.168 × span
+//          (level ABOVE the wave's starting high — origin side)
+//          Invalidated when a subsequent BULLISH wave's toPrice (high) rises above inv
+//   3. Walk chronologically through waves AFTER the candidate.
+//      If any crosses the -0.168 level:
 //        • Discard current candidate.
-//        • From the waves AFTER the current candidate's end-time, pick the
-//          new largest-delta wave as the new candidate.
-//        • Repeat the fib check on the new candidate.
-//   5. The final un-invalidated candidate is the Mother Wave.
-//      Return it along with its fib levels for display.
+//        • From waves AFTER the old candidate, pick the new largest-delta wave.
+//        • Repeat fib check on the new candidate.
+//   4. Final un-invalidated candidate = Mother Wave.
 //
 function detectMotherWave(waves) {
   if (!waves || waves.length === 0) return null;
 
-  // Work on a chronologically sorted copy (by start time ascending)
   const byTime = [...waves].sort((a, b) => a.col1Time - b.col1Time);
 
-  // Helper: compute -0.168 invalidation price for a candidate wave row
+  // BULL: inv = col2Price + 0.168×span (above the HIGH) → crossed by bull wave going higher
+  // BEAR: inv = col2Price - 0.168×span (below the LOW)  → crossed by bear wave going lower
   function fibInvalidation(w) {
     const span = Math.abs(w.col2Price - w.col1Price);
-    if (w.dir === "bull") {
-      // Bullish: extends above the high → inv is above col2Price
-      return w.col2Price + 0.168 * span;
-    } else {
-      // Bearish: extends below the low → inv is below col2Price
-      return w.col2Price - 0.168 * span;
-    }
+    return w.dir === "bull"
+      ? w.col2Price + 0.168 * span   // above the end HIGH
+      : w.col2Price - 0.168 * span;  // below the end LOW
   }
 
-  // Helper: check if a wave crosses the invalidation level of the candidate
+  // Bull invalidated when a subsequent BULL wave's high crosses ABOVE inv
+  // Bear invalidated when a subsequent BEAR wave's low  drops BELOW inv
   function isInvalidated(candidate, inv, wave) {
-    // Only waves that started AFTER the candidate ended are checked
     if (wave.col1Time <= candidate.col2Time) return false;
     if (candidate.dir === "bull") {
-      // Invalidated if any subsequent wave's toPrice (high side) crosses above inv
-      return wave.col2Price > inv;
+      return wave.dir === "bull" && wave.col2Price > inv;
     } else {
-      // Invalidated if any subsequent wave's toPrice (low side) drops below inv
-      return wave.col2Price < inv;
+      return wave.dir === "bear" && wave.col2Price < inv;
     }
   }
 
-  // Helper: pick the largest-delta wave from a subset
   function largestInSubset(subset) {
     if (!subset.length) return null;
     return subset.reduce((best, w) => (w.delta > best.delta ? w : best), subset[0]);
   }
 
-  // Start: candidate = largest delta overall
   let candidate = largestInSubset(byTime);
-  const MAX_ITER = 20; // safety guard against infinite loops
+  const MAX_ITER = 20;
 
   for (let iter = 0; iter < MAX_ITER; iter++) {
     if (!candidate) break;
 
     const inv = fibInvalidation(candidate);
-
-    // Find waves strictly after this candidate's end time
     const afterCandidate = byTime.filter((w) => w.col1Time > candidate.col2Time);
-
-    // Check if any of those waves invalidates the candidate's fib
     const invalidatingWave = afterCandidate.find((w) => isInvalidated(candidate, inv, w));
 
-    if (!invalidatingWave) {
-      // No invalidation → this is the final Mother Wave
-      break;
-    }
+    if (!invalidatingWave) break; // not invalidated → this is the Mother Wave
 
-    // Invalidated: pick next candidate from waves that start AFTER the
-    // invalidating wave's start time (not the old candidate's end)
+    // Invalidated: pick largest wave from the pool after this candidate
     const pool = byTime.filter((w) => w.col1Time > candidate.col2Time);
     const next = largestInSubset(pool);
 
-    if (!next || next.waveNum === candidate.waveNum) break; // can't progress
-
+    if (!next || next.waveNum === candidate.waveNum) break;
     candidate = next;
   }
 
   if (!candidate) return null;
 
-  // Build full fib level set for display
   const span = Math.abs(candidate.col2Price - candidate.col1Price);
   const isBull = candidate.dir === "bull";
   const origin = candidate.col1Price;
   const end = candidate.col2Price;
 
+  // ── Correct fib structure (verified against TradingView chart) ──────────────
+  //
+  // BULL wave (col1=low/start, col2=high/end):
+  //   fib 0     = col2Price (end HIGH)   ← anchor top
+  //   fib 1     = col1Price (start LOW)  ← anchor bottom
+  //   fib -0.168 = col2Price + 0.168×span ← ABOVE the high (invalidation)
+  //   Display order top→bottom: -0.168, 0, 0.236...1
+  //   Invalidated when bull wave col2Price (high) crosses ABOVE inv
+  //
+  // BEAR wave (col1=high/start, col2=low/end):
+  //   fib 1     = col1Price (start HIGH) ← anchor top
+  //   fib 0     = col2Price (end LOW)    ← anchor bottom
+  //   fib -0.168 = col2Price - 0.168×span ← BELOW the low (invalidation)
+  //   Display order top→bottom: 1...0, -0.168
+  //   Invalidated when bear wave col2Price (low) drops BELOW inv
+
   const fibLevels = isBull
     ? {
-      "1.0": end,
-      "0.786": end - 0.214 * span,
-      "0.618": end - 0.382 * span,
+      "-0.168": end + 0.168 * span,   // above the HIGH (invalidation)
+      "0.0": end,                     // wave END = high
+      "0.236": end - 0.236 * span,
+      "0.382": end - 0.382 * span,
       "0.5": end - 0.5 * span,
-      "0.382": end - 0.618 * span,
-      "0.236": end - 0.764 * span,
-      "0.0": origin,
-      "-0.168": end + 0.168 * span,
+      "0.618": end - 0.618 * span,
+      "0.786": end - 0.786 * span,
+      "1.0": origin,                  // wave START = low
     }
     : {
-      "1.0": end,
-      "0.786": end + 0.214 * span,
-      "0.618": end + 0.382 * span,
-      "0.5": end + 0.5 * span,
-      "0.382": end + 0.618 * span,
-      "0.236": end + 0.764 * span,
-      "0.0": origin,
-      "-0.168": end - 0.168 * span,
+      "1.0": origin,                  // wave START = high
+      "0.786": origin - 0.214 * span,
+      "0.618": origin - 0.382 * span,
+      "0.5": origin - 0.5 * span,
+      "0.382": origin - 0.618 * span,
+      "0.236": origin - 0.764 * span,
+      "0.0": end,                     // wave END = low
+      "-0.168": end - 0.168 * span,   // below the LOW (invalidation)
     };
 
   return { wave: candidate, fibLevels, invalidation: fibLevels["-0.168"] };
@@ -274,9 +270,25 @@ function MotherWaveSection({ motherWave, onWaveClick }) {
   const { wave, fibLevels, invalidation } = motherWave;
   const isBull = wave.dir === "bull";
 
+  // BULL display: -0.168 (top/highest) → 0 → 0.236...1.0 (bottom/lowest)
+  // BEAR display: 1.0 (top/highest) → 0.786...0 → -0.168 (bottom/lowest)
   const fibOrder = isBull
-    ? ["-0.168", "1.0", "0.786", "0.618", "0.5", "0.382", "0.236", "0.0"]
-    : ["-0.168", "1.0", "0.786", "0.618", "0.5", "0.382", "0.236", "0.0"];
+    ? ["-0.168", "0.0", "0.236", "0.382", "0.5", "0.618", "0.786", "1.0"]
+    : ["1.0", "0.786", "0.618", "0.5", "0.382", "0.236", "0.0", "-0.168"];
+
+  // Bar width: proportional to how far each price is from the bottom of the
+  // full range (including -0.168 extension). Widest bar = highest price in bull,
+  // widest bar = highest price in bear (which is -0.168 for bear).
+  const allPrices = Object.values(fibLevels);
+  const minP = Math.min(...allPrices);
+  const maxP = Math.max(...allPrices);
+  const priceRange = maxP - minP || 1;
+
+  function barWidth(level) {
+    const price = fibLevels[level];
+    // Proportional distance from min price → 8% minimum so bars are visible
+    return Math.max(8, Math.round(((price - minP) / priceRange) * 100));
+  }
 
   return (
     <div className="mw-section">
@@ -284,14 +296,14 @@ function MotherWaveSection({ motherWave, onWaveClick }) {
         <span className="mw-title">Mother Wave</span>
         <span className="mw-subtitle">
           Dominant wave driving current structure · Fib invalidation at{" "}
-          <span className={`mw-inv-price ${isBull ? "cr-bull" : "cr-bear"}`}>
+          <span className="mw-inv-price-inline">
             {fmt(invalidation)}
           </span>{" "}
           (−0.168)
         </span>
       </div>
 
-      {/* Mother wave table — same columns as main table */}
+      {/* Mother wave row — same columns as main table */}
       <div className="mw-table-wrap">
         <table className="cr-table mw-table">
           <thead>
@@ -335,10 +347,8 @@ function MotherWaveSection({ motherWave, onWaveClick }) {
               <td>
                 <div className="cr-bar-wrap">
                   <div className="cr-bar-bg">
-                    <div
-                      className="cr-bar-fill"
-                      style={{ width: "100%", background: isBull ? "#639922" : "#E24B4A" }}
-                    />
+                    <div className="cr-bar-fill"
+                      style={{ width: "100%", background: isBull ? "#639922" : "#E24B4A" }} />
                   </div>
                   <span className="cr-bar-pct">100%</span>
                 </div>
@@ -355,33 +365,27 @@ function MotherWaveSection({ motherWave, onWaveClick }) {
         <div className="mw-fib-grid">
           {fibOrder.map((level) => {
             const price = fibLevels[level];
-            const isInvalidationLevel = level === "-0.168";
-            const isOrigin = level === "0.0";
-            const isEnd = level === "1.0";
+            const isInv = level === "-0.168";
+            const isAnchor = level === "0.0" || level === "1.0";
+            const bw = barWidth(level);
+
             return (
-              <div
-                key={level}
-                className={`mw-fib-row ${isInvalidationLevel ? "mw-fib-inv" : ""} ${isOrigin || isEnd ? "mw-fib-anchor" : ""}`}
+              <div key={level}
+                className={`mw-fib-row${isInv ? " mw-fib-inv" : ""}${isAnchor ? " mw-fib-anchor" : ""}`}
               >
                 <span className="mw-fib-level">{level}</span>
                 <div className="mw-fib-bar-track">
-                  <div
-                    className="mw-fib-bar-fill"
+                  <div className="mw-fib-bar-fill"
                     style={{
-                      width: isInvalidationLevel ? "100%" : `${Math.max(8, parseFloat(level) * 100)}%`,
-                      opacity: isInvalidationLevel ? 0.5 : 0.8,
-                      background: isInvalidationLevel
-                        ? (isBull ? "#3d84ff" : "#3d84ff")
-                        : isBull ? "#639922" : "#E24B4A",
+                      width: `${bw}%`,
+                      background: isInv ? "#3d84ff" : isBull ? "#639922" : "#E24B4A",
                     }}
                   />
                 </div>
-                <span className={`mw-fib-price ${isInvalidationLevel ? "mw-fib-inv-price" : ""}`}>
+                <span className={`mw-fib-price${isInv ? " mw-fib-inv-price" : ""}`}>
                   {fmt(price)}
                 </span>
-                {isInvalidationLevel && (
-                  <span className="mw-fib-tag">Invalidation</span>
-                )}
+                {isInv && <span className="mw-fib-tag">Invalidation</span>}
               </div>
             );
           })}

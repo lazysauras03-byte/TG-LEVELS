@@ -129,37 +129,95 @@ function computeWaveSegments(candles) {
   return segments;
 }
 
-// ─── Motherwave — LARGEST segment by absolute delta (= getLastMotherwave) ─────
+// ─── Motherwave — largest segment with -0.168 fib invalidation check ──────────
+//
+// Algorithm (mirrors ReportsPage detectMotherWave):
+//   1. Start with the largest delta segment as candidate.
+//   2. Compute -0.168 invalidation level:
+//      BULL: inv = col2Price + 0.168 × span  (above the END high)
+//      BEAR: inv = col2Price - 0.168 × span  (below the END low)
+//   3. Walk segments chronologically AFTER the candidate.
+//      BULL invalidated by a subsequent BULL segment whose toPrice > inv
+//      BEAR invalidated by a subsequent BEAR segment whose toPrice < inv
+//   4. If invalidated: new pool = all segments after candidate's toTime,
+//      pick largest delta from that pool, repeat from step 2.
+//   5. Final non-invalidated candidate = Mother Wave.
 function findMotherwave(candles) {
   const segments = computeWaveSegments(candles);
   if (!segments.length) return null;
 
-  const best = segments.reduce((acc, seg) => {
-    const d = Math.abs(seg.toPrice - seg.fromPrice);
-    const bd = Math.abs(acc.toPrice - acc.fromPrice);
-    return d > bd ? seg : acc;
-  }, segments[0]);
+  // Sort chronologically by start time
+  const byTime = [...segments].sort((a, b) => a.fromTime - b.fromTime);
 
-  const isBull = best.toSide === "high"; // tip is a high → bullish
+  function delta(seg) { return Math.abs(seg.toPrice - seg.fromPrice); }
+  function largest(pool) {
+    return pool.reduce((best, seg) => delta(seg) > delta(best) ? seg : best, pool[0]);
+  }
+  function isBullSeg(seg) { return seg.toSide === "high"; }
+
+  // -0.168 invalidation anchored to the wave END (toPrice)
+  // BULL: above the end high → inv = toPrice + 0.168 × span
+  // BEAR: below the end low  → inv = toPrice - 0.168 × span
+  function inv(seg) {
+    const span = delta(seg);
+    return isBullSeg(seg)
+      ? seg.toPrice + 0.168 * span
+      : seg.toPrice - 0.168 * span;
+  }
+
+  // Check if a subsequent segment crosses the invalidation level
+  function invalidates(candidate, invLevel, seg) {
+    if (seg.fromTime <= candidate.toTime) return false;
+    if (isBullSeg(candidate)) {
+      // Bull candidate invalidated by a bull segment going ABOVE inv
+      return isBullSeg(seg) && seg.toPrice > invLevel;
+    } else {
+      // Bear candidate invalidated by a bear segment going BELOW inv
+      return !isBullSeg(seg) && seg.toPrice < invLevel;
+    }
+  }
+
+  let candidate = largest(byTime);
+  const MAX_ITER = 20;
+
+  for (let i = 0; i < MAX_ITER; i++) {
+    if (!candidate) break;
+
+    const invLevel = inv(candidate);
+    const after = byTime.filter(s => s.fromTime > candidate.toTime);
+    const invalidated = after.find(s => invalidates(candidate, invLevel, s));
+
+    if (!invalidated) break; // not invalidated → this is the Mother Wave
+
+    // Pick largest from all segments after the current candidate
+    const pool = byTime.filter(s => s.fromTime > candidate.toTime);
+    if (!pool.length) break;
+    const next = largest(pool);
+    if (next.fromTime === candidate.fromTime) break; // no progress
+    candidate = next;
+  }
+
+  if (!candidate) return null;
+
+  const isBull = isBullSeg(candidate);
   return {
-    // public fields used by ScannerPage / buildChartUrl
     type: isBull ? "bullish" : "bearish",
-    high: isBull ? best.toPrice : best.fromPrice,
-    low: isBull ? best.fromPrice : best.toPrice,
-    startTime: best.fromTime,   // wave ORIGIN time
-    endTime: best.toTime,     // wave TIP   time
-    startPrice: best.fromPrice,  // wave ORIGIN price
-    endPrice: best.toPrice,    // wave TIP   price
-    startIndex: best.fromBarIndex,
-    endIndex: best.toBarIndex,
-    // keep segment fields for fib calculation
-    fromPrice: best.fromPrice,
-    toPrice: best.toPrice,
-    toSide: best.toSide,
-    fromTime: best.fromTime,
-    toTime: best.toTime,
+    high: isBull ? candidate.toPrice : candidate.fromPrice,
+    low: isBull ? candidate.fromPrice : candidate.toPrice,
+    startTime: candidate.fromTime,
+    endTime: candidate.toTime,
+    startPrice: candidate.fromPrice,
+    endPrice: candidate.toPrice,
+    startIndex: candidate.fromBarIndex,
+    endIndex: candidate.toBarIndex,
+    fromPrice: candidate.fromPrice,
+    toPrice: candidate.toPrice,
+    toSide: candidate.toSide,
+    fromTime: candidate.fromTime,
+    toTime: candidate.toTime,
   };
 }
+
 
 // ─── Fib price (matches FibDashboardPage computeFibLevels) ────────────────────
 // price(ratio) = toPrice + ratio × (fromPrice − toPrice)
@@ -231,7 +289,9 @@ function findS1S2S3(candles, emaLows, trapZone, motherwaveEndIndex) {
 }
 
 // ─── Strategy interface ───────────────────────────────────────────────────────
-function scan(symbol, candles) {
+// context is provided by scannerRunner — contains pre-computed motherwave,
+// trapZone, zone, and lastCandle. Strategies must use context, not recompute.
+function scan(symbol, candles, context = {}) {
   const result = {
     symbol,
     found: false,
@@ -239,7 +299,7 @@ function scan(symbol, candles) {
     motherwave: null,
     trapZone: null,
     s1: null, s2: null, s3: null,
-    lastCandle: candles.length > 0 ? candles[candles.length - 1] : null,
+    lastCandle: context.lastCandle || (candles.length > 0 ? candles[candles.length - 1] : null),
     candleCount: candles.length,
     scannedAt: new Date().toISOString(),
     error: null,
@@ -248,13 +308,14 @@ function scan(symbol, candles) {
   try {
     if (!candles || candles.length < 20) { result.error = "insufficient_data"; return result; }
 
-    const motherwave = findMotherwave(candles);
+    // Use pre-computed motherwave from runner context
+    const motherwave = context.motherwave || null;
     if (!motherwave) return result;
 
     result.motherwave = motherwave;
     result.patternStage = "motherwave";
 
-    const trapZone = calcTrapZone(motherwave);
+    const trapZone = context.trapZone || calcTrapZone(motherwave);
     result.trapZone = trapZone;
     result.patternStage = "trapzone";
 

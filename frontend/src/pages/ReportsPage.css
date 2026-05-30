@@ -853,9 +853,10 @@
   font-weight: 400;
 }
 
-.mw-inv-price {
+.mw-inv-price-inline {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  color: var(--blue, #3d84ff);
 }
 
 /* Mother wave table — reuses cr-table styles, just sits inside the card */

@@ -22,6 +22,7 @@
 const EventEmitter = require("events");
 const { fetchCandles } = require("./fyers");
 const strategies = require("./strategies/strategyRegistry");
+const { detectMotherWave, calcTrapZone, classifyZone } = require("./motherwave");
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const CONCURRENCY = parseInt(process.env.SCANNER_CONCURRENCY || "3");
@@ -164,9 +165,21 @@ class ScannerRunner extends EventEmitter {
       const candles = await fetchCandles(symbol, resolution, 5000);
       this._errors.delete(symbol);
 
+      // ── Compute Mother Wave ONCE for this symbol ───────────────────────────
+      // All strategies receive the same pre-computed motherwave via context.
+      // Strategies must NOT recompute it themselves.
+      const motherwave = detectMotherWave(candles);
+      const trapZone = motherwave ? calcTrapZone(motherwave) : null;
+      const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null;
+      const zone = motherwave && lastCandle
+        ? classifyZone(motherwave, lastCandle.close)
+        : "trap";
+
+      const context = { motherwave, trapZone, zone, lastCandle };
+
       for (const strategy of strategies) {
         try {
-          const result = strategy.scan(symbol, candles);
+          const result = strategy.scan(symbol, candles, context);
           this._results.get(strategy.id).set(symbol, result);
 
           if (result.found) {
