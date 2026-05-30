@@ -375,6 +375,7 @@ export default function ScannerPage() {
         <button className="scanner-header-back" onClick={() => navigate("/")}>← Back</button>
         <span className="scanner-header-title">Pattern Scanner</span>
 
+
         {/* Timeframe */}
         <div className="scanner-tf-group">
           {TIMEFRAMES.map(tf => (
@@ -475,250 +476,268 @@ export default function ScannerPage() {
         <div className="stat-chip"><span className="stat-chip-label">Duration</span>   <span className="stat-chip-val">{status?.lastScanDurationMs ? `${(status.lastScanDurationMs / 1000).toFixed(0)}s` : "—"}</span></div>
       </div>
 
-      {/* ══ PANEL TABS ══════════════════════════════════════════════════════ */}
-      <div className="scanner-panel-tabs">
+      {/* ══ PAGE NAV ════════════════════════════════════════════════════════ */}
+      <div className="scanner-page-nav">
         <button
-          className={`scanner-panel-tab ${activePanel === "motherwave" ? "active" : ""}`}
+          className={`scanner-page-nav-btn ${activePanel === "motherwave" ? "active" : ""}`}
           onClick={() => handlePanelTab("motherwave")}
         >
-          Motherwave Dashboard
+          <span className="scanner-page-nav-icon">⬡</span>
+          <span className="scanner-page-nav-label">Motherwave Dashboard</span>
+          {activePanel === "motherwave" && <span className="scanner-page-nav-arrow">›</span>}
         </button>
         {strategies.map(s => (
           <button
             key={s.id}
-            className={`scanner-panel-tab ${activePanel === s.id ? "active" : ""}`}
+            className={`scanner-page-nav-btn ${activePanel === s.id ? "active" : ""}`}
             onClick={() => handlePanelTab(s.id)}
             title={s.description}
           >
-            {s.name}
+            <span className="scanner-page-nav-icon">◈</span>
+            <span className="scanner-page-nav-label">{s.name}</span>
+            {activePanel === s.id && <span className="scanner-page-nav-arrow">›</span>}
           </button>
         ))}
+        <div className="scanner-page-nav-spacer" />
+        <button
+          className="scanner-page-nav-redirect"
+          onClick={() => navigate("/strategies")}
+          title="Open Strategy Dashboards — full page"
+        >
+          <span className="scanner-page-nav-redirect-label">Strategies</span>
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <line x1="4" y1="10" x2="16" y2="10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <polyline points="11,5 16,10 11,15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          </svg>
+        </button>
       </div>
 
       {/* ══ BODY ════════════════════════════════════════════════════════════ */}
-      <div className="scanner-body">
+      <div className="scanner-pages-wrap">
+        <div className="scanner-body" key={activePanel}>
 
-        {/* ── PANEL A: MOTHERWAVE DASHBOARD ───────────────────────────────── */}
-        {activePanel === "motherwave" && (
-          <div className="scanner-section mw-section">
+          {/* ── PANEL A: MOTHERWAVE DASHBOARD ───────────────────────────────── */}
+          {activePanel === "motherwave" && (
+            <div className="scanner-section mw-section">
 
-            <div className="mw-section-header">
-              <div className="mw-section-header-left">
-                <span className="mw-section-title">Motherwave Dashboard</span>
-                <span className="mw-section-sub">Latest motherwave per symbol on {tfLabel} — sorted by wave size ↓</span>
+              <div className="mw-section-header">
+                <div className="mw-section-header-left">
+                  <span className="mw-section-title">Motherwave Dashboard</span>
+                  <span className="mw-section-sub">Latest motherwave per symbol on {tfLabel} — sorted by wave size ↓</span>
+                </div>
+                {/* MW direction filter */}
+                <div className="mw-dir-filter">
+                  {[
+                    { key: "all", label: `All (${withMW.length})` },
+                    { key: "bull", label: `▲ Bull (${mwUptrend.length})` },
+                    { key: "bear", label: `▼ Bear (${mwDowntrend.length})` },
+                  ].map(f => (
+                    <button
+                      key={f.key}
+                      className={`mw-dir-btn ${mwFilter === f.key ? "active" : ""}`}
+                      onClick={() => setMwFilter(f.key)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              {/* MW direction filter */}
-              <div className="mw-dir-filter">
-                {[
-                  { key: "all", label: `All (${withMW.length})` },
-                  { key: "bull", label: `▲ Bull (${mwUptrend.length})` },
-                  { key: "bear", label: `▼ Bear (${mwDowntrend.length})` },
-                ].map(f => (
+
+              {withMW.length === 0 ? (
+                <div className="scanner-empty">
+                  <div className="scanner-empty-icon">〰</div>
+                  <div className="scanner-empty-title">No motherwave data yet</div>
+                  <div className="scanner-empty-sub">Click ▶ Scan Now to populate.</div>
+                </div>
+              ) : (
+                <>
+                  {/* Trend columns */}
+                  <div className="mw-trend-columns">
+                    {/* Uptrend */}
+                    <div className="trend-column uptrend-col">
+                      <div className="trend-col-header">
+                        <span className="trend-col-arrow">▲</span>
+                        <span className="trend-col-title">UPTREND</span>
+                        <span className="trend-col-count">
+                          {mwFilter === "bear" ? 0 : mwUptrend.length} stocks
+                        </span>
+                      </div>
+                      <div className="trend-col-body">
+                        {(mwFilter === "bear" ? [] : mwUptrend).length === 0 ? (
+                          <div className="trend-col-empty">No uptrend stocks</div>
+                        ) : (
+                          (mwFilter === "bear" ? [] : mwUptrend).map(r =>
+                            <MWCard key={r.symbol} r={r} timeframe={timeframe} />
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Downtrend */}
+                    <div className="trend-column downtrend-col">
+                      <div className="trend-col-header">
+                        <span className="trend-col-arrow">▼</span>
+                        <span className="trend-col-title">DOWNTREND</span>
+                        <span className="trend-col-count">
+                          {mwFilter === "bull" ? 0 : mwDowntrend.length} stocks
+                        </span>
+                      </div>
+                      <div className="trend-col-body">
+                        {(mwFilter === "bull" ? [] : mwDowntrend).length === 0 ? (
+                          <div className="trend-col-empty">No downtrend stocks</div>
+                        ) : (
+                          (mwFilter === "bull" ? [] : mwDowntrend).map(r =>
+                            <MWCard key={r.symbol} r={r} timeframe={timeframe} />
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Zone segregation — downtrend only */}
+                  <div className="zone-section">
+                    <div className="zone-section-title">
+                      Zone Segregation
+                      <span className="zone-section-sub">Downtrend stocks sorted by Fibonacci zone</span>
+                    </div>
+                    <div className="zone-trays">
+                      <ZoneTray
+                        label="TRAP ZONE"
+                        subLabel="Between fp(0) and fp(0.236) — at wave tip"
+                        items={trapZoneItems}
+                        colorClass="tray-trap"
+                        timeframe={timeframe}
+                      />
+                      <ZoneTray
+                        label="NEAR 0.382"
+                        subLabel="Within 5% of the 0.382 Fib level"
+                        items={near382Items}
+                        colorClass="tray-382"
+                        timeframe={timeframe}
+                      />
+                      <ZoneTray
+                        label="NEAR 0.618 (HOT)"
+                        subLabel="Within 5% of the 0.618 Fib level"
+                        items={near618Items}
+                        colorClass="tray-618"
+                        timeframe={timeframe}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── PANEL B: STRATEGY TABLE ──────────────────────────────────────── */}
+          {activePanel !== "motherwave" && (
+            <div className="scanner-section strat-section">
+              {/* Strategy description */}
+              {activeStrat && (
+                <div className="scanner-strategy-desc">{activeStrat.description}</div>
+              )}
+
+              {/* Stage filters + meta */}
+              <div className="scanner-controls">
+                {STAGE_FILTERS.map(f => (
                   <button
                     key={f.key}
-                    className={`mw-dir-btn ${mwFilter === f.key ? "active" : ""}`}
-                    onClick={() => setMwFilter(f.key)}
+                    className={`scanner-filter-btn ${stageFilter === f.key ? "active" : ""}`}
+                    onClick={() => setStageFilter(f.key)}
                   >
                     {f.label}
+                    {f.key === "signals" && counts.signals > 0 &&
+                      <span className="scanner-count-badge green">{counts.signals}</span>}
+                    {f.key === "partial" && counts.partial > 0 &&
+                      <span className="scanner-count-badge orange">{counts.partial}</span>}
+                    {f.key === "s1" && counts.s1 > 0 &&
+                      <span className="scanner-count-badge">{counts.s1}</span>}
                   </button>
                 ))}
+                <div className="scanner-controls-spacer" />
+                <span className="scanner-last-scan">
+                  {lastScan ? `Last: ${fmtTime(lastScan)}` : "Not scanned yet"}
+                </span>
+                <span className="scanner-res-badge">{tfLabel}</span>
               </div>
+
+              {/* Table content */}
+              {!activeStrategy ? (
+                <div className="scanner-empty">
+                  <div className="scanner-empty-icon">📋</div>
+                  <div className="scanner-empty-title">No strategies loaded</div>
+                  <div className="scanner-empty-sub">Click ▶ Scan Now to initialise.</div>
+                </div>
+              ) : stratFiltered.length === 0 ? (
+                <div className="scanner-empty">
+                  <div className="scanner-empty-icon">🔍</div>
+                  <div className="scanner-empty-title">
+                    {results.length === 0 ? "No scan results yet" : "No matches"}
+                  </div>
+                  <div className="scanner-empty-sub">
+                    {results.length === 0
+                      ? "Click ▶ Scan Now to run across all symbols."
+                      : "Try a different filter or search term."}
+                  </div>
+                </div>
+              ) : (
+                <div className="scanner-table-wrap">
+                  <table className="scanner-table">
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Stage</th>
+                        <th>Wave</th>
+                        <th>Trap High</th>
+                        <th>Trap Low</th>
+                        <th>S1 Close</th>
+                        <th>S2 Close</th>
+                        <th>S3 Close</th>
+                        <th>Last Price</th>
+                        <th>Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stratFiltered.map(r => {
+                        const { cls, text } = stageLabel(r);
+                        return (
+                          <tr
+                            key={r.symbol}
+                            className="scanner-table-row"
+                            onClick={() => openChart(r.symbol, timeframe, r.motherwave)}
+                            title="Open chart with Fib drawn"
+                          >
+                            <td>
+                              <div className="symbol-cell">{tickerOf(r.symbol)}</div>
+                              <div className="symbol-ticker">{exchangeOf(r.symbol)}</div>
+                            </td>
+                            <td><span className={`stage-pill ${cls}`}>{text}</span></td>
+                            <td>
+                              {r.motherwave
+                                ? <span className={`wave-dir ${r.motherwave.type === "bullish" ? "bull" : "bear"}`}>
+                                  {r.motherwave.type === "bullish" ? "▲ Bull" : "▼ Bear"}
+                                </span>
+                                : <span style={{ color: "var(--text3)" }}>—</span>}
+                            </td>
+                            <td className="price-cell">{fmt(r.trapZone?.high)}</td>
+                            <td className="price-cell">{fmt(r.trapZone?.low)}</td>
+                            <td className={`price-cell ${r.s1 ? "red" : ""}`}>{fmt(r.s1?.close)}</td>
+                            <td className={`price-cell ${r.s2 ? "green" : ""}`}>{fmt(r.s2?.close)}</td>
+                            <td className={`price-cell ${r.s3 ? "red" : ""}`}>{fmt(r.s3?.close)}</td>
+                            <td className="price-cell">{fmt(r.lastCandle?.close)}</td>
+                            <td style={{ color: "var(--text3)", fontSize: 10 }}>{fmtTime(r.scannedAt)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
+          )}
 
-            {withMW.length === 0 ? (
-              <div className="scanner-empty">
-                <div className="scanner-empty-icon">〰</div>
-                <div className="scanner-empty-title">No motherwave data yet</div>
-                <div className="scanner-empty-sub">Click ▶ Scan Now to populate.</div>
-              </div>
-            ) : (
-              <>
-                {/* Trend columns */}
-                <div className="mw-trend-columns">
-                  {/* Uptrend */}
-                  <div className="trend-column uptrend-col">
-                    <div className="trend-col-header">
-                      <span className="trend-col-arrow">▲</span>
-                      <span className="trend-col-title">UPTREND</span>
-                      <span className="trend-col-count">
-                        {mwFilter === "bear" ? 0 : mwUptrend.length} stocks
-                      </span>
-                    </div>
-                    <div className="trend-col-body">
-                      {(mwFilter === "bear" ? [] : mwUptrend).length === 0 ? (
-                        <div className="trend-col-empty">No uptrend stocks</div>
-                      ) : (
-                        (mwFilter === "bear" ? [] : mwUptrend).map(r =>
-                          <MWCard key={r.symbol} r={r} timeframe={timeframe} />
-                        )
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Downtrend */}
-                  <div className="trend-column downtrend-col">
-                    <div className="trend-col-header">
-                      <span className="trend-col-arrow">▼</span>
-                      <span className="trend-col-title">DOWNTREND</span>
-                      <span className="trend-col-count">
-                        {mwFilter === "bull" ? 0 : mwDowntrend.length} stocks
-                      </span>
-                    </div>
-                    <div className="trend-col-body">
-                      {(mwFilter === "bull" ? [] : mwDowntrend).length === 0 ? (
-                        <div className="trend-col-empty">No downtrend stocks</div>
-                      ) : (
-                        (mwFilter === "bull" ? [] : mwDowntrend).map(r =>
-                          <MWCard key={r.symbol} r={r} timeframe={timeframe} />
-                        )
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Zone segregation — downtrend only */}
-                <div className="zone-section">
-                  <div className="zone-section-title">
-                    Zone Segregation
-                    <span className="zone-section-sub">Downtrend stocks sorted by Fibonacci zone</span>
-                  </div>
-                  <div className="zone-trays">
-                    <ZoneTray
-                      label="TRAP ZONE"
-                      subLabel="Between fp(0) and fp(0.236) — at wave tip"
-                      items={trapZoneItems}
-                      colorClass="tray-trap"
-                      timeframe={timeframe}
-                    />
-                    <ZoneTray
-                      label="NEAR 0.382"
-                      subLabel="Within 5% of the 0.382 Fib level"
-                      items={near382Items}
-                      colorClass="tray-382"
-                      timeframe={timeframe}
-                    />
-                    <ZoneTray
-                      label="NEAR 0.618 (HOT)"
-                      subLabel="Within 5% of the 0.618 Fib level"
-                      items={near618Items}
-                      colorClass="tray-618"
-                      timeframe={timeframe}
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── PANEL B: STRATEGY TABLE ──────────────────────────────────────── */}
-        {activePanel !== "motherwave" && (
-          <div className="scanner-section strat-section">
-            {/* Strategy description */}
-            {activeStrat && (
-              <div className="scanner-strategy-desc">{activeStrat.description}</div>
-            )}
-
-            {/* Stage filters + meta */}
-            <div className="scanner-controls">
-              {STAGE_FILTERS.map(f => (
-                <button
-                  key={f.key}
-                  className={`scanner-filter-btn ${stageFilter === f.key ? "active" : ""}`}
-                  onClick={() => setStageFilter(f.key)}
-                >
-                  {f.label}
-                  {f.key === "signals" && counts.signals > 0 &&
-                    <span className="scanner-count-badge green">{counts.signals}</span>}
-                  {f.key === "partial" && counts.partial > 0 &&
-                    <span className="scanner-count-badge orange">{counts.partial}</span>}
-                  {f.key === "s1" && counts.s1 > 0 &&
-                    <span className="scanner-count-badge">{counts.s1}</span>}
-                </button>
-              ))}
-              <div className="scanner-controls-spacer" />
-              <span className="scanner-last-scan">
-                {lastScan ? `Last: ${fmtTime(lastScan)}` : "Not scanned yet"}
-              </span>
-              <span className="scanner-res-badge">{tfLabel}</span>
-            </div>
-
-            {/* Table content */}
-            {!activeStrategy ? (
-              <div className="scanner-empty">
-                <div className="scanner-empty-icon">📋</div>
-                <div className="scanner-empty-title">No strategies loaded</div>
-                <div className="scanner-empty-sub">Click ▶ Scan Now to initialise.</div>
-              </div>
-            ) : stratFiltered.length === 0 ? (
-              <div className="scanner-empty">
-                <div className="scanner-empty-icon">🔍</div>
-                <div className="scanner-empty-title">
-                  {results.length === 0 ? "No scan results yet" : "No matches"}
-                </div>
-                <div className="scanner-empty-sub">
-                  {results.length === 0
-                    ? "Click ▶ Scan Now to run across all symbols."
-                    : "Try a different filter or search term."}
-                </div>
-              </div>
-            ) : (
-              <div className="scanner-table-wrap">
-                <table className="scanner-table">
-                  <thead>
-                    <tr>
-                      <th>Symbol</th>
-                      <th>Stage</th>
-                      <th>Wave</th>
-                      <th>Trap High</th>
-                      <th>Trap Low</th>
-                      <th>S1 Close</th>
-                      <th>S2 Close</th>
-                      <th>S3 Close</th>
-                      <th>Last Price</th>
-                      <th>Time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stratFiltered.map(r => {
-                      const { cls, text } = stageLabel(r);
-                      return (
-                        <tr
-                          key={r.symbol}
-                          className="scanner-table-row"
-                          onClick={() => openChart(r.symbol, timeframe, r.motherwave)}
-                          title="Open chart with Fib drawn"
-                        >
-                          <td>
-                            <div className="symbol-cell">{tickerOf(r.symbol)}</div>
-                            <div className="symbol-ticker">{exchangeOf(r.symbol)}</div>
-                          </td>
-                          <td><span className={`stage-pill ${cls}`}>{text}</span></td>
-                          <td>
-                            {r.motherwave
-                              ? <span className={`wave-dir ${r.motherwave.type === "bullish" ? "bull" : "bear"}`}>
-                                {r.motherwave.type === "bullish" ? "▲ Bull" : "▼ Bear"}
-                              </span>
-                              : <span style={{ color: "var(--text3)" }}>—</span>}
-                          </td>
-                          <td className="price-cell">{fmt(r.trapZone?.high)}</td>
-                          <td className="price-cell">{fmt(r.trapZone?.low)}</td>
-                          <td className={`price-cell ${r.s1 ? "red" : ""}`}>{fmt(r.s1?.close)}</td>
-                          <td className={`price-cell ${r.s2 ? "green" : ""}`}>{fmt(r.s2?.close)}</td>
-                          <td className={`price-cell ${r.s3 ? "red" : ""}`}>{fmt(r.s3?.close)}</td>
-                          <td className="price-cell">{fmt(r.lastCandle?.close)}</td>
-                          <td style={{ color: "var(--text3)", fontSize: 10 }}>{fmtTime(r.scannedAt)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-      </div>{/* end scanner-body */}
+        </div>{/* end scanner-body */}
+      </div>{/* scanner-pages-wrap */}
     </div>
   );
 }

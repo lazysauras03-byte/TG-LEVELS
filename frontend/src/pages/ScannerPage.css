@@ -1277,3 +1277,45 @@
   font-size: 11px;
   text-align: center;
 }
+
+/* ─── Page-nav spacer + redirect arrow button ───────────────────────────── */
+.scanner-page-nav-spacer {
+  flex: 1 1 auto;
+}
+
+.scanner-page-nav-redirect {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text2);
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.scanner-page-nav-redirect:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg3, var(--bg));
+}
+
+.scanner-page-nav-redirect-label {
+  line-height: 1;
+}
+
+.scanner-page-nav-redirect svg {
+  display: block;
+  transition: transform 0.15s;
+}
+
+.scanner-page-nav-redirect:hover svg {
+  transform: translateX(3px);
+}
