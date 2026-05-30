@@ -99,14 +99,25 @@ function detectMotherWave(waves) {
       : w.col2Price - 0.168 * span;  // below the end LOW
   }
 
-  // Bull invalidated when a subsequent BULL wave's high crosses ABOVE inv
-  // Bear invalidated when a subsequent BEAR wave's low  drops BELOW inv
+  // Two conditions invalidate a candidate — either one is sufficient:
+  //   1. -0.168 breach: subsequent same-direction wave blows past the extension
+  //   2. fib(1) / origin breach: subsequent opposite wave crosses the wave origin
+  //      BULL origin = col1Price (the LOW)  — bear breaking below it
+  //      BEAR origin = col1Price (the HIGH) — bull breaking above it
   function isInvalidated(candidate, inv, wave) {
     if (wave.col1Time <= candidate.col2Time) return false;
     if (candidate.dir === "bull") {
-      return wave.dir === "bull" && wave.col2Price > inv;
+      // -0.168 breach: subsequent bull pushes above extension
+      if (wave.dir === "bull" && wave.col2Price > inv) return true;
+      // fib(1) breach: subsequent bear breaks below the wave origin (LOW)
+      if (wave.dir === "bear" && wave.col2Price < candidate.col1Price) return true;
+      return false;
     } else {
-      return wave.dir === "bear" && wave.col2Price < inv;
+      // -0.168 breach: subsequent bear pushes below extension
+      if (wave.dir === "bear" && wave.col2Price < inv) return true;
+      // fib(1) breach: subsequent bull breaks above the wave origin (HIGH)
+      if (wave.dir === "bull" && wave.col2Price > candidate.col1Price) return true;
+      return false;
     }
   }
 

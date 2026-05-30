@@ -27,14 +27,6 @@ const TIMEFRAMES = [
   { value: 10080, label: "1W" },
 ];
 
-const STAGE_FILTERS = [
-  { key: "all", label: "All" },
-  { key: "signals", label: "Full Signal" },
-  { key: "partial", label: "Watching" },
-  { key: "s1", label: "S1" },
-  { key: "mw", label: "Motherwave" },
-];
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(n, d = 2) {
   if (n == null || !isFinite(n)) return "—";
@@ -145,7 +137,6 @@ function openChart(symbol, timeframe, mw) {
 // ─── MWCard — one stock in the motherwave dashboard ───────────────────────────
 function MWCard({ r, timeframe }) {
   const isBull = r.motherwave?.type === "bullish";
-  const { cls, text } = stageLabel(r);
   const size = waveSize(r);
 
   return (
@@ -159,7 +150,6 @@ function MWCard({ r, timeframe }) {
           <span className="mw-card-ticker">{tickerOf(r.symbol)}</span>
           <span className="mw-card-exch">{exchangeOf(r.symbol)}</span>
         </div>
-        <span className={`stage-pill ${cls}`}>{text}</span>
       </div>
       <div className="mw-card-price">{fmt(r.lastCandle?.close)}</div>
       <div className="mw-card-wave">
@@ -202,7 +192,6 @@ function ZoneTray({ label, subLabel, items, colorClass, timeframe }) {
                 <span className="zone-tray-price">{fmt(r.lastCandle?.close)}</span>
               </div>
               <div className="zone-tray-item-right">
-                <span className={`stage-pill ${stageLabel(r).cls}`}>{stageLabel(r).text}</span>
                 {r.motherwave && (
                   <span className={`wave-dir ${r.motherwave.type === "bullish" ? "bull" : "bear"}`}>
                     {r.motherwave.type === "bullish" ? "▲" : "▼"}
@@ -228,13 +217,10 @@ export default function ScannerPage() {
   const [activeStrategy, setActiveStrategy] = useState(null);
   const [results, setResults] = useState([]);
   const [status, setStatus] = useState(null);
-  const [stageFilter, setStageFilter] = useState("all");
-  const [search, setSearch] = useState("");
   const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(false);
   const [lastScan, setLastScan] = useState(null);
   const [mwFilter, setMwFilter] = useState("all"); // "all"|"bull"|"bear"
-  const [activePanel, setActivePanel] = useState("motherwave"); // "motherwave"|strategy.id
   const [timeframe, setTimeframe] = useState(() => {
     try { const v = localStorage.getItem("tgg_scanner_tf"); return v ? JSON.parse(v) : 15; }
     catch { return 15; }
@@ -319,7 +305,6 @@ export default function ScannerPage() {
   // ── Derived data ──────────────────────────────────────────────────────────
   const isRunning = status?.running || !!progress;
   const pct = progress ? Math.round((progress.done / Math.max(1, progress.total)) * 100) : 0;
-  const activeStrat = strategies.find(s => s.id === activeStrategy);
   const tfLabel = TIMEFRAMES.find(t => t.value === timeframe)?.label || `${timeframe}m`;
 
   // Motherwave dashboard — all results with a motherwave, sorted by wave size desc
@@ -336,35 +321,11 @@ export default function ScannerPage() {
   const near382Items = useMemo(() => downWithZone.filter(r => getZoneTray(r) === "near382"), [downWithZone]);
   const near618Items = useMemo(() => downWithZone.filter(r => getZoneTray(r) === "hot618"), [downWithZone]);
 
-  // Strategy section filters (table only)
-  const stratFiltered = useMemo(() => {
-    return results.filter(r => {
-      if (search && !r.symbol.toLowerCase().includes(search.toLowerCase())) return false;
-      switch (stageFilter) {
-        case "signals": return r.patternStage === "s3_complete";
-        case "partial": return r.patternStage === "s2";
-        case "s1": return r.patternStage === "s1";
-        case "mw": return r.patternStage === "motherwave" || r.patternStage === "trapzone";
-        default: return true;
-      }
-    });
-  }, [results, search, stageFilter]);
-
   const counts = useMemo(() => ({
     signals: results.filter(r => r.patternStage === "s3_complete").length,
     partial: results.filter(r => r.patternStage === "s2").length,
     s1: results.filter(r => r.patternStage === "s1").length,
   }), [results]);
-
-  // ── Panel switching ───────────────────────────────────────────────────────
-  // When a strategy tab is clicked, switch to that strategy panel
-  function handlePanelTab(panelKey) {
-    setActivePanel(panelKey);
-    if (panelKey !== "motherwave") {
-      setActiveStrategy(panelKey);
-      setStageFilter("all");
-    }
-  }
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -391,47 +352,6 @@ export default function ScannerPage() {
         </div>
 
         <div className="scanner-header-spacer" />
-
-        {/* Search */}
-        <div className="scanner-header-search-wrap">
-          <span className="scanner-search-icon">⌕</span>
-          <input
-            className="scanner-header-search"
-            placeholder="Search symbol…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-
-        {/* View toggle — dashboard/table icons, properly fitted */}
-        <div className="scanner-view-toggle">
-          <button
-            className={`scanner-view-btn ${activePanel === "motherwave" ? "active" : ""}`}
-            onClick={() => handlePanelTab("motherwave")}
-            title="Motherwave Dashboard"
-          >
-            {/* Grid/dashboard icon */}
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="1" y="1" width="6" height="6" rx="1" fill="currentColor" opacity="0.9" />
-              <rect x="9" y="1" width="6" height="6" rx="1" fill="currentColor" opacity="0.9" />
-              <rect x="1" y="9" width="6" height="6" rx="1" fill="currentColor" opacity="0.9" />
-              <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" opacity="0.9" />
-            </svg>
-          </button>
-          <button
-            className={`scanner-view-btn ${activePanel !== "motherwave" ? "active" : ""}`}
-            onClick={() => strategies.length > 0 && handlePanelTab(strategies[0]?.id)}
-            title="Strategies Table"
-          >
-            {/* Table/list icon */}
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="1" y="1" width="14" height="2.5" rx="0.75" fill="currentColor" opacity="0.9" />
-              <rect x="1" y="5" width="14" height="2.5" rx="0.75" fill="currentColor" opacity="0.5" />
-              <rect x="1" y="9" width="14" height="2.5" rx="0.75" fill="currentColor" opacity="0.5" />
-              <rect x="1" y="13" width="14" height="2.5" rx="0.75" fill="currentColor" opacity="0.5" />
-            </svg>
-          </button>
-        </div>
 
         {/* Theme */}
         <button className="scanner-theme-btn" onClick={toggleTheme} title="Toggle theme">
@@ -476,28 +396,8 @@ export default function ScannerPage() {
         <div className="stat-chip"><span className="stat-chip-label">Duration</span>   <span className="stat-chip-val">{status?.lastScanDurationMs ? `${(status.lastScanDurationMs / 1000).toFixed(0)}s` : "—"}</span></div>
       </div>
 
-      {/* ══ PAGE NAV ════════════════════════════════════════════════════════ */}
+      {/* ══ STRATEGIES REDIRECT ═════════════════════════════════════════════ */}
       <div className="scanner-page-nav">
-        <button
-          className={`scanner-page-nav-btn ${activePanel === "motherwave" ? "active" : ""}`}
-          onClick={() => handlePanelTab("motherwave")}
-        >
-          <span className="scanner-page-nav-icon">⬡</span>
-          <span className="scanner-page-nav-label">Motherwave Dashboard</span>
-          {activePanel === "motherwave" && <span className="scanner-page-nav-arrow">›</span>}
-        </button>
-        {strategies.map(s => (
-          <button
-            key={s.id}
-            className={`scanner-page-nav-btn ${activePanel === s.id ? "active" : ""}`}
-            onClick={() => handlePanelTab(s.id)}
-            title={s.description}
-          >
-            <span className="scanner-page-nav-icon">◈</span>
-            <span className="scanner-page-nav-label">{s.name}</span>
-            {activePanel === s.id && <span className="scanner-page-nav-arrow">›</span>}
-          </button>
-        ))}
         <div className="scanner-page-nav-spacer" />
         <button
           className="scanner-page-nav-redirect"
@@ -514,10 +414,10 @@ export default function ScannerPage() {
 
       {/* ══ BODY ════════════════════════════════════════════════════════════ */}
       <div className="scanner-pages-wrap">
-        <div className="scanner-body" key={activePanel}>
+        <div className="scanner-body">
 
           {/* ── PANEL A: MOTHERWAVE DASHBOARD ───────────────────────────────── */}
-          {activePanel === "motherwave" && (
+          {(
             <div className="scanner-section mw-section">
 
               <div className="mw-section-header">
@@ -625,113 +525,6 @@ export default function ScannerPage() {
                     </div>
                   </div>
                 </>
-              )}
-            </div>
-          )}
-
-          {/* ── PANEL B: STRATEGY TABLE ──────────────────────────────────────── */}
-          {activePanel !== "motherwave" && (
-            <div className="scanner-section strat-section">
-              {/* Strategy description */}
-              {activeStrat && (
-                <div className="scanner-strategy-desc">{activeStrat.description}</div>
-              )}
-
-              {/* Stage filters + meta */}
-              <div className="scanner-controls">
-                {STAGE_FILTERS.map(f => (
-                  <button
-                    key={f.key}
-                    className={`scanner-filter-btn ${stageFilter === f.key ? "active" : ""}`}
-                    onClick={() => setStageFilter(f.key)}
-                  >
-                    {f.label}
-                    {f.key === "signals" && counts.signals > 0 &&
-                      <span className="scanner-count-badge green">{counts.signals}</span>}
-                    {f.key === "partial" && counts.partial > 0 &&
-                      <span className="scanner-count-badge orange">{counts.partial}</span>}
-                    {f.key === "s1" && counts.s1 > 0 &&
-                      <span className="scanner-count-badge">{counts.s1}</span>}
-                  </button>
-                ))}
-                <div className="scanner-controls-spacer" />
-                <span className="scanner-last-scan">
-                  {lastScan ? `Last: ${fmtTime(lastScan)}` : "Not scanned yet"}
-                </span>
-                <span className="scanner-res-badge">{tfLabel}</span>
-              </div>
-
-              {/* Table content */}
-              {!activeStrategy ? (
-                <div className="scanner-empty">
-                  <div className="scanner-empty-icon">📋</div>
-                  <div className="scanner-empty-title">No strategies loaded</div>
-                  <div className="scanner-empty-sub">Click ▶ Scan Now to initialise.</div>
-                </div>
-              ) : stratFiltered.length === 0 ? (
-                <div className="scanner-empty">
-                  <div className="scanner-empty-icon">🔍</div>
-                  <div className="scanner-empty-title">
-                    {results.length === 0 ? "No scan results yet" : "No matches"}
-                  </div>
-                  <div className="scanner-empty-sub">
-                    {results.length === 0
-                      ? "Click ▶ Scan Now to run across all symbols."
-                      : "Try a different filter or search term."}
-                  </div>
-                </div>
-              ) : (
-                <div className="scanner-table-wrap">
-                  <table className="scanner-table">
-                    <thead>
-                      <tr>
-                        <th>Symbol</th>
-                        <th>Stage</th>
-                        <th>Wave</th>
-                        <th>Trap High</th>
-                        <th>Trap Low</th>
-                        <th>S1 Close</th>
-                        <th>S2 Close</th>
-                        <th>S3 Close</th>
-                        <th>Last Price</th>
-                        <th>Time</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stratFiltered.map(r => {
-                        const { cls, text } = stageLabel(r);
-                        return (
-                          <tr
-                            key={r.symbol}
-                            className="scanner-table-row"
-                            onClick={() => openChart(r.symbol, timeframe, r.motherwave)}
-                            title="Open chart with Fib drawn"
-                          >
-                            <td>
-                              <div className="symbol-cell">{tickerOf(r.symbol)}</div>
-                              <div className="symbol-ticker">{exchangeOf(r.symbol)}</div>
-                            </td>
-                            <td><span className={`stage-pill ${cls}`}>{text}</span></td>
-                            <td>
-                              {r.motherwave
-                                ? <span className={`wave-dir ${r.motherwave.type === "bullish" ? "bull" : "bear"}`}>
-                                  {r.motherwave.type === "bullish" ? "▲ Bull" : "▼ Bear"}
-                                </span>
-                                : <span style={{ color: "var(--text3)" }}>—</span>}
-                            </td>
-                            <td className="price-cell">{fmt(r.trapZone?.high)}</td>
-                            <td className="price-cell">{fmt(r.trapZone?.low)}</td>
-                            <td className={`price-cell ${r.s1 ? "red" : ""}`}>{fmt(r.s1?.close)}</td>
-                            <td className={`price-cell ${r.s2 ? "green" : ""}`}>{fmt(r.s2?.close)}</td>
-                            <td className={`price-cell ${r.s3 ? "red" : ""}`}>{fmt(r.s3?.close)}</td>
-                            <td className="price-cell">{fmt(r.lastCandle?.close)}</td>
-                            <td style={{ color: "var(--text3)", fontSize: 10 }}>{fmtTime(r.scannedAt)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
               )}
             </div>
           )}

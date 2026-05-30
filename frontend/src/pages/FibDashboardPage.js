@@ -137,12 +137,50 @@ function getTrapZoneStatus(fibLevels, currentPrice) {
 function getLastMotherwave(candles, emaHighs, emaLows) {
   const { segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
   if (!segments.length) return null;
-  // Use the largest wave by absolute delta — matches Reports page "Δ Descending" top row
-  return segments.reduce((best, seg) => {
-    const d = Math.abs(seg.toPrice - seg.fromPrice);
-    const bd = Math.abs(best.toPrice - best.fromPrice);
-    return d > bd ? seg : best;
-  }, segments[0]);
+
+  // Full invalidation algorithm — mirrors motherwave.js detectMotherWave
+  const byTime = [...segments].sort((a, b) => a.fromTime - b.fromTime);
+  const span = s => Math.abs(s.toPrice - s.fromPrice);
+  const isBull = s => s.toSide === "high";
+  const largest = pool => pool.reduce((b, s) => span(s) > span(b) ? s : b, pool[0]);
+
+  // -0.168 extension level beyond the tip
+  const invLevel = s => isBull(s)
+    ? s.toPrice + 0.168 * span(s)   // above HIGH tip
+    : s.toPrice - 0.168 * span(s);  // below LOW tip
+
+  // Two conditions that invalidate a candidate:
+  //   1. -0.168 breach: same-direction segment blows past the extension
+  //   2. fib(1) / origin breach: opposite segment crosses the wave origin
+  //      BULL origin = fromPrice (LOW)  — bear breaking below it
+  //      BEAR origin = fromPrice (HIGH) — bull breaking above it
+  const crosses = (candidate, inv, seg) => {
+    if (seg.fromTime <= candidate.toTime) return false;
+    if (isBull(candidate)) {
+      if (isBull(seg) && seg.toPrice > inv) return true;
+      if (!isBull(seg) && seg.toPrice < candidate.fromPrice) return true;
+      return false;
+    } else {
+      if (!isBull(seg) && seg.toPrice < inv) return true;
+      if (isBull(seg) && seg.toPrice > candidate.fromPrice) return true;
+      return false;
+    }
+  };
+
+  let candidate = largest(byTime);
+  for (let i = 0; i < 20; i++) {
+    if (!candidate) break;
+    const inv = invLevel(candidate);
+    const after = byTime.filter(s => s.fromTime > candidate.toTime);
+    if (!after.find(s => crosses(candidate, inv, s))) break; // not invalidated
+    const pool = byTime.filter(s => s.fromTime > candidate.toTime);
+    if (!pool.length) break;
+    const next = largest(pool);
+    if (next.fromTime === candidate.fromTime) break;
+    candidate = next;
+  }
+
+  return candidate;
 }
 
 function getBias(segment) {

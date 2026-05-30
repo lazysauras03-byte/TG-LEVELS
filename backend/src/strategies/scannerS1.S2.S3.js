@@ -155,25 +155,29 @@ function findMotherwave(candles) {
   }
   function isBullSeg(seg) { return seg.toSide === "high"; }
 
-  // -0.168 invalidation anchored to the wave END (toPrice)
-  // BULL: above the end high → inv = toPrice + 0.168 × span
-  // BEAR: below the end low  → inv = toPrice - 0.168 × span
+  // -0.168 extension level (beyond the tip)
   function inv(seg) {
     const span = delta(seg);
     return isBullSeg(seg)
-      ? seg.toPrice + 0.168 * span
-      : seg.toPrice - 0.168 * span;
+      ? seg.toPrice + 0.168 * span   // above the HIGH tip
+      : seg.toPrice - 0.168 * span;  // below the LOW tip
   }
 
-  // Check if a subsequent segment crosses the invalidation level
+  // Two conditions invalidate a candidate — either one is sufficient:
+  //   1. -0.168 breach: subsequent same-direction segment blows past the extension
+  //   2. fib(1) / origin breach: subsequent opposite segment crosses the wave origin
+  //      BULL origin = fromPrice (the LOW)  — bear breaking below it
+  //      BEAR origin = fromPrice (the HIGH) — bull breaking above it
   function invalidates(candidate, invLevel, seg) {
     if (seg.fromTime <= candidate.toTime) return false;
     if (isBullSeg(candidate)) {
-      // Bull candidate invalidated by a bull segment going ABOVE inv
-      return isBullSeg(seg) && seg.toPrice > invLevel;
+      if (isBullSeg(seg) && seg.toPrice > invLevel) return true;          // -0.168 breach
+      if (!isBullSeg(seg) && seg.toPrice < candidate.fromPrice) return true; // origin breach
+      return false;
     } else {
-      // Bear candidate invalidated by a bear segment going BELOW inv
-      return !isBullSeg(seg) && seg.toPrice < invLevel;
+      if (!isBullSeg(seg) && seg.toPrice < invLevel) return true;         // -0.168 breach
+      if (isBullSeg(seg) && seg.toPrice > candidate.fromPrice) return true;  // origin breach
+      return false;
     }
   }
 

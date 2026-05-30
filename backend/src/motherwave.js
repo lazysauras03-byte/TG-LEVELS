@@ -120,15 +120,33 @@ function detectMotherWave(candles) {
   const isBull = s => s.toSide === "high";
   const largest = pool => pool.reduce((b, s) => span(s) > span(b) ? s : b, pool[0]);
 
+  // -0.168 extension level (beyond the tip, away from origin)
+  // BULL: above the HIGH tip  → toPrice + 0.168 * span
+  // BEAR: below the LOW tip   → toPrice - 0.168 * span
   const invLevel = s => isBull(s)
-    ? s.toPrice + 0.168 * span(s)   // above end HIGH
-    : s.toPrice - 0.168 * span(s);  // below end LOW
+    ? s.toPrice + 0.168 * span(s)
+    : s.toPrice - 0.168 * span(s);
 
+  // Two invalidation conditions — either one negates the candidate:
+  //   1. -0.168 breach: a subsequent same-direction segment blows past the extension level
+  //   2. fib(1) / origin breach: a subsequent opposite-direction segment crosses the wave origin
+  //      BULL origin = fromPrice (the LOW)  — price going BELOW it means the low is broken
+  //      BEAR origin = fromPrice (the HIGH) — price going ABOVE it means the high is broken
   const crosses = (candidate, inv, seg) => {
     if (seg.fromTime <= candidate.toTime) return false;
-    return isBull(candidate)
-      ? isBull(seg) && seg.toPrice > inv
-      : !isBull(seg) && seg.toPrice < inv;
+    if (isBull(candidate)) {
+      // -0.168: subsequent bull pushes above extension
+      if (isBull(seg) && seg.toPrice > inv) return true;
+      // fib(1): subsequent bear breaks below the wave origin (LOW)
+      if (!isBull(seg) && seg.toPrice < candidate.fromPrice) return true;
+      return false;
+    } else {
+      // -0.168: subsequent bear pushes below extension
+      if (!isBull(seg) && seg.toPrice < inv) return true;
+      // fib(1): subsequent bull breaks above the wave origin (HIGH)
+      if (isBull(seg) && seg.toPrice > candidate.fromPrice) return true;
+      return false;
+    }
   };
 
   let candidate = largest(byTime);
