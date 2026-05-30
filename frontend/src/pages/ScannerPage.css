@@ -163,38 +163,72 @@
   color: #fff;
 }
 
-/* ─── Panel tabs (Motherwave / Strategies) ──────────────────────────────── */
-.scanner-panel-tabs {
+/* ─── Page Nav (replaces flat tabs) ─────────────────────────────────────── */
+.scanner-page-nav {
   display: flex;
-  gap: 0;
-  padding: 0 16px;
+  gap: 6px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
   flex-shrink: 0;
   overflow-x: auto;
 }
 
-.scanner-panel-tab {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
+.scanner-page-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   color: var(--text2);
-  padding: 8px 18px;
+  padding: 7px 14px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  letter-spacing: 0.3px;
-  transition: color 0.12s, border-color 0.12s;
+  letter-spacing: 0.2px;
+  transition: all 0.15s;
+  position: relative;
 }
 
-.scanner-panel-tab:hover {
+.scanner-page-nav-btn:hover {
   color: var(--text);
+  border-color: var(--accent);
+  background: var(--bg3, var(--bg));
 }
 
-.scanner-panel-tab.active {
-  color: var(--accent);
-  border-bottom: 2px solid var(--accent);
+.scanner-page-nav-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+
+.scanner-page-nav-icon {
+  font-size: 13px;
+  opacity: 0.8;
+  line-height: 1;
+}
+
+.scanner-page-nav-label {
+  line-height: 1;
+}
+
+.scanner-page-nav-arrow {
+  font-size: 16px;
+  font-weight: 300;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+/* ─── Slide/page container ───────────────────────────────────────────────── */
+.scanner-pages-wrap {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Theme + status */
@@ -353,6 +387,19 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+  animation: page-slide-in 0.18s ease;
+}
+
+@keyframes page-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 /* ─── Section ───────────────────────────────────────────────────────────── */
@@ -828,12 +875,52 @@
   border-color: rgba(148, 163, 184, 0.25);
 }
 
+.tray-236 {
+  border-color: rgba(34, 211, 238, 0.3);
+}
+
+.tray-236 .zone-tray-title {
+  color: #22d3ee;
+}
+
 .tray-382 {
   border-color: rgba(99, 102, 241, 0.3);
 }
 
+.tray-500 {
+  border-color: rgba(168, 85, 247, 0.3);
+}
+
+.tray-500 .zone-tray-title {
+  color: #a855f7;
+}
+
 .tray-618 {
   border-color: rgba(234, 179, 8, 0.35);
+}
+
+.tray-786 {
+  border-color: rgba(249, 115, 22, 0.35);
+}
+
+.tray-786 .zone-tray-title {
+  color: #f97316;
+}
+
+.tray-100 {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.tray-100 .zone-tray-title {
+  color: #ef4444;
+}
+
+.tray-retracing {
+  border-color: rgba(100, 116, 139, 0.2);
+}
+
+.tray-retracing .zone-tray-title {
+  color: var(--text3);
 }
 
 .zone-tray-header {

@@ -61,10 +61,13 @@ function stageLabel(r) {
   if (r.patternStage === "motherwave") return { cls: "mw", text: "Motherwave" };
   return { cls: "none", text: "—" };
 }
-// Fib price matching FibDashboardPage: price = toPrice + ratio*(fromPrice-toPrice)
-// ratio=0 → tip (toPrice/endPrice), ratio=1 → origin (fromPrice/startPrice)
+// Fib price: price = toPrice + ratio*(fromPrice-toPrice)
+// ratio=0 → tip (toPrice), ratio=1 → origin (fromPrice)
+// Uses toPrice/fromPrice (same as motherwave.js) for consistency with toSide checks.
 function fibPrice(mw, ratio) {
-  return mw.endPrice + ratio * (mw.startPrice - mw.endPrice);
+  const to = mw.toPrice ?? mw.endPrice;
+  const from = mw.fromPrice ?? mw.startPrice;
+  return to + ratio * (from - to);
 }
 
 function getZoneTray(r) {
@@ -72,13 +75,26 @@ function getZoneTray(r) {
   const last = r.lastCandle?.close;
   if (!last) return "trap";
   const mw = r.motherwave;
-  const waveRange = Math.abs(mw.high - mw.low);
-  const tol = waveRange * 0.05;
-  const fib382 = fibPrice(mw, 0.382);
-  const fib618 = fibPrice(mw, 0.618);
-  if (Math.abs(last - fib618) <= tol) return "hot618";
-  if (Math.abs(last - fib382) <= tol) return "near382";
-  return "trap";
+  const span = Math.abs(mw.fromPrice - mw.toPrice);
+  const tol = span * 0.05;
+
+  // NEAR 0.618 — highest priority (HOT zone)
+  if (Math.abs(last - fibPrice(mw, 0.618)) <= tol) return "hot618";
+
+  // NEAR 0.382
+  if (Math.abs(last - fibPrice(mw, 0.382)) <= tol) return "near382";
+
+  // TRAP ZONE: price between fp(0)=wave tip and fp(0.236)
+  // This is the orange highlighted box on the chart — just inside the wave end.
+  // BEAR: fp(0)=bottom, fp(0.236)=above it  → low=fp(0), high=fp(0.236)
+  // BULL: fp(0)=top,    fp(0.236)=below it  → low=fp(0.236), high=fp(0)
+  const tip = fibPrice(mw, 0);      // wave end price
+  const ret = fibPrice(mw, 0.236);  // first retracement level
+  const trapHigh = Math.max(tip, ret);
+  const trapLow = Math.min(tip, ret);
+  if (last >= trapLow && last <= trapHigh) return "trap";
+
+  return "other"; // outside trap, 382, 618 — not shown in zone trays
 }
 function waveSize(r) {
   if (!r.motherwave) return 0;
@@ -569,7 +585,7 @@ export default function ScannerPage() {
                   <div className="zone-trays">
                     <ZoneTray
                       label="TRAP ZONE"
-                      subLabel="Between −0.236 and +0.236"
+                      subLabel="Between fp(0) and fp(0.236) — at wave tip"
                       items={trapZoneItems}
                       colorClass="tray-trap"
                       timeframe={timeframe}

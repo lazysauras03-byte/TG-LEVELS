@@ -41,7 +41,7 @@ function computeSegments(candles) {
   if (!candles || candles.length < 5) return [];
 
   const eH = calcEMA(candles.map(c => c.high), 9);
-  const eL = calcEMA(candles.map(c => c.low),  9);
+  const eL = calcEMA(candles.map(c => c.low), 9);
 
   let state = 0, bestPrice = null, bestBar = null, legTouchedEMA = false;
   let lastPrice = null, lastBar = null, prevWaveType = "";
@@ -54,13 +54,13 @@ function computeSegments(candles) {
     if (emaH == null || emaL == null) continue;
 
     const isGreen = c.close > c.open;
-    const isRed   = c.close < c.open;
+    const isRed = c.close < c.open;
     const touchHigh = (isGreen && c.close > emaH) || (isRed && c.open > emaH);
-    const touchLow  = (isGreen && c.open  < emaL) || (isRed && c.close < emaL);
+    const touchLow = (isGreen && c.open < emaL) || (isRed && c.close < emaL);
 
     if (state === 0) {
-      if (touchHigh) { state = 1;  bestPrice = c.high; bestBar = i; legTouchedEMA = true; }
-      else if (touchLow)  { state = -1; bestPrice = c.low;  bestBar = i; legTouchedEMA = true; }
+      if (touchHigh) { state = 1; bestPrice = c.high; bestBar = i; legTouchedEMA = true; }
+      else if (touchLow) { state = -1; bestPrice = c.low; bestBar = i; legTouchedEMA = true; }
       continue;
     }
 
@@ -115,9 +115,9 @@ function detectMotherWave(candles) {
   const segs = computeSegments(candles);
   if (!segs.length) return null;
 
-  const byTime  = [...segs].sort((a, b) => a.fromTime - b.fromTime);
-  const span    = s => Math.abs(s.toPrice - s.fromPrice);
-  const isBull  = s => s.toSide === "high";
+  const byTime = [...segs].sort((a, b) => a.fromTime - b.fromTime);
+  const span = s => Math.abs(s.toPrice - s.fromPrice);
+  const isBull = s => s.toSide === "high";
   const largest = pool => pool.reduce((b, s) => span(s) > span(b) ? s : b, pool[0]);
 
   const invLevel = s => isBull(s)
@@ -127,7 +127,7 @@ function detectMotherWave(candles) {
   const crosses = (candidate, inv, seg) => {
     if (seg.fromTime <= candidate.toTime) return false;
     return isBull(candidate)
-      ? isBull(seg)  && seg.toPrice > inv
+      ? isBull(seg) && seg.toPrice > inv
       : !isBull(seg) && seg.toPrice < inv;
   };
 
@@ -149,27 +149,27 @@ function detectMotherWave(candles) {
   if (!candidate) return null;
 
   const bull = isBull(candidate);
-  const s    = span(candidate);
+  const s = span(candidate);
 
   return {
     // Direction
-    type:         bull ? "bullish" : "bearish",
+    type: bull ? "bullish" : "bearish",
     // Price bounds
-    high:         bull ? candidate.toPrice   : candidate.fromPrice,
-    low:          bull ? candidate.fromPrice : candidate.toPrice,
+    high: bull ? candidate.toPrice : candidate.fromPrice,
+    low: bull ? candidate.fromPrice : candidate.toPrice,
     // Segment fields (used everywhere for fib)
-    fromPrice:    candidate.fromPrice,
-    toPrice:      candidate.toPrice,
-    toSide:       candidate.toSide,
-    fromTime:     candidate.fromTime,
-    toTime:       candidate.toTime,
+    fromPrice: candidate.fromPrice,
+    toPrice: candidate.toPrice,
+    toSide: candidate.toSide,
+    fromTime: candidate.fromTime,
+    toTime: candidate.toTime,
     // Backward compat aliases
-    startPrice:   candidate.fromPrice,
-    endPrice:     candidate.toPrice,
-    startTime:    candidate.fromTime,
-    endTime:      candidate.toTime,
-    startIndex:   candidate.fromBarIndex,
-    endIndex:     candidate.toBarIndex,
+    startPrice: candidate.fromPrice,
+    endPrice: candidate.toPrice,
+    startTime: candidate.fromTime,
+    endTime: candidate.toTime,
+    startIndex: candidate.fromBarIndex,
+    endIndex: candidate.toBarIndex,
     // -0.168 invalidation level
     invalidation: bull
       ? candidate.toPrice + 0.168 * s
@@ -186,25 +186,40 @@ function fibPrice(mw, ratio) {
 }
 
 function calcTrapZone(mw) {
-  const a = fibPrice(mw, -0.236);
-  const b = fibPrice(mw,  0.236);
+  // Trap zone = the orange highlighted box on the chart:
+  //   fp(0)    = wave tip (toPrice) — the end of the wave
+  //   fp(0.236) = first retracement level back INTO the wave
+  // This is the same for both bull and bear waves.
+  const tip = fibPrice(mw, 0);      // = toPrice
+  const ret = fibPrice(mw, 0.236);  // first retracement
   return {
-    high:   Math.max(a, b),
-    low:    Math.min(a, b),
-    center: (a + b) / 2,
-    range:  Math.abs(mw.toPrice - mw.fromPrice),
+    high: Math.max(tip, ret),
+    low: Math.min(tip, ret),
+    center: (tip + ret) / 2,
+    range: Math.abs(mw.toPrice - mw.fromPrice),
   };
 }
 
 function classifyZone(mw, currentPrice) {
-  if (!mw || currentPrice == null) return "trap";
-  const waveRange = Math.abs(mw.high - mw.low);
-  const tol    = waveRange * 0.05;
-  const fib382 = fibPrice(mw, 0.382);
-  const fib618 = fibPrice(mw, 0.618);
-  if (Math.abs(currentPrice - fib618) <= tol) return "hot618";
-  if (Math.abs(currentPrice - fib382) <= tol) return "near382";
-  return "trap";
+  if (!mw || currentPrice == null) return "other";
+  const span = Math.abs(mw.fromPrice - mw.toPrice);
+  const tol = span * 0.05;
+
+  // NEAR 0.618 — highest priority (HOT zone)
+  if (Math.abs(currentPrice - fibPrice(mw, 0.618)) <= tol) return "hot618";
+
+  // NEAR 0.382
+  if (Math.abs(currentPrice - fibPrice(mw, 0.382)) <= tol) return "near382";
+
+  // TRAP ZONE: price between fp(0)=wave tip and fp(0.236)
+  // This matches the highlighted orange box on the chart.
+  const tip = fibPrice(mw, 0);      // wave end / tip
+  const ret = fibPrice(mw, 0.236);  // first retracement
+  const trapHigh = Math.max(tip, ret);
+  const trapLow = Math.min(tip, ret);
+  if (currentPrice >= trapLow && currentPrice <= trapHigh) return "trap";
+
+  return "other";
 }
 
 module.exports = { detectMotherWave, fibPrice, calcTrapZone, classifyZone, computeSegments };

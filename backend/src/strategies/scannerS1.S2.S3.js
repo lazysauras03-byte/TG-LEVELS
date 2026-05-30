@@ -12,10 +12,10 @@
  *   price(ratio) = toPrice + ratio × (fromPrice − toPrice)
  *   where toPrice = wave TIP (ratio 0), fromPrice = wave ORIGIN (ratio 1).
  *
- * TRAP ZONE  (FibDashboard definition — NOT ±0.236×range around endPrice):
- *   trapHigh = price(−0.236)  — whichever of the two is higher
- *   trapLow  = price(+0.236)  — whichever is lower
- *   i.e. the band between the −0.236 and +0.236 fib levels.
+ * TRAP ZONE  (band from wave TIP to the 0.236 extension beyond it):
+ *   BULL wave (toSide="high"): tip = toPrice (the HIGH), ext = fp(-0.236) above it
+ *   BEAR wave (toSide="low") : tip = toPrice (the LOW),  ext = fp(+0.236) below it
+ *   trapHigh = max(tip, ext),  trapLow = min(tip, ext)
  *
  * ZONE SEGREGATION (matching getZoneTray in ScannerPage):
  *   near382  : |lastClose − fib(0.382)| ≤ 5% of wave range
@@ -229,10 +229,12 @@ function fibPrice(mw, ratio) {
 // ─── Trap zone (matches FibDashboard definition) ──────────────────────────────
 // Trap zone = band between fib(-0.236) and fib(+0.236)
 function calcTrapZone(mw) {
-  const a = fibPrice(mw, -0.236);
-  const b = fibPrice(mw, 0.236);
-  const high = Math.max(a, b);
-  const low = Math.min(a, b);
+  // Trap zone = fp(0) to fp(0.236): the orange highlighted box on the chart.
+  // fp(0) = wave tip (toPrice), fp(0.236) = first retracement back into the wave.
+  const tip = fibPrice(mw, 0);
+  const ret = fibPrice(mw, 0.236);
+  const high = Math.max(tip, ret);
+  const low = Math.min(tip, ret);
   const range = Math.abs(mw.toPrice - mw.fromPrice);
   const center = (high + low) / 2;
   return { high, low, center, range };
