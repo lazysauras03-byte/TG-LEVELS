@@ -220,7 +220,6 @@ export default function ScannerPage() {
   const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(false);
   const [lastScan, setLastScan] = useState(null);
-  const [mwFilter, setMwFilter] = useState("all"); // "all"|"bull"|"bear"
   const [timeframe, setTimeframe] = useState(() => {
     try { const v = localStorage.getItem("tgg_scanner_tf"); return v ? JSON.parse(v) : 15; }
     catch { return 15; }
@@ -425,22 +424,6 @@ export default function ScannerPage() {
                   <span className="mw-section-title">Motherwave Dashboard</span>
                   <span className="mw-section-sub">Latest motherwave per symbol on {tfLabel} — sorted by wave size ↓</span>
                 </div>
-                {/* MW direction filter */}
-                <div className="mw-dir-filter">
-                  {[
-                    { key: "all", label: `All (${withMW.length})` },
-                    { key: "bull", label: `▲ Bull (${mwUptrend.length})` },
-                    { key: "bear", label: `▼ Bear (${mwDowntrend.length})` },
-                  ].map(f => (
-                    <button
-                      key={f.key}
-                      className={`mw-dir-btn ${mwFilter === f.key ? "active" : ""}`}
-                      onClick={() => setMwFilter(f.key)}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {withMW.length === 0 ? (
@@ -459,14 +442,14 @@ export default function ScannerPage() {
                         <span className="trend-col-arrow">▲</span>
                         <span className="trend-col-title">UPTREND</span>
                         <span className="trend-col-count">
-                          {mwFilter === "bear" ? 0 : mwUptrend.length} stocks
+                          {mwUptrend.length} stocks
                         </span>
                       </div>
                       <div className="trend-col-body">
-                        {(mwFilter === "bear" ? [] : mwUptrend).length === 0 ? (
+                        {mwUptrend.length === 0 ? (
                           <div className="trend-col-empty">No uptrend stocks</div>
                         ) : (
-                          (mwFilter === "bear" ? [] : mwUptrend).map(r =>
+                          mwUptrend.map(r =>
                             <MWCard key={r.symbol} r={r} timeframe={timeframe} />
                           )
                         )}
@@ -479,14 +462,14 @@ export default function ScannerPage() {
                         <span className="trend-col-arrow">▼</span>
                         <span className="trend-col-title">DOWNTREND</span>
                         <span className="trend-col-count">
-                          {mwFilter === "bull" ? 0 : mwDowntrend.length} stocks
+                          {mwDowntrend.length} stocks
                         </span>
                       </div>
                       <div className="trend-col-body">
-                        {(mwFilter === "bull" ? [] : mwDowntrend).length === 0 ? (
+                        {mwDowntrend.length === 0 ? (
                           <div className="trend-col-empty">No downtrend stocks</div>
                         ) : (
-                          (mwFilter === "bull" ? [] : mwDowntrend).map(r =>
+                          mwDowntrend.map(r =>
                             <MWCard key={r.symbol} r={r} timeframe={timeframe} />
                           )
                         )}

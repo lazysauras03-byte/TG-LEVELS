@@ -138,22 +138,19 @@ function getLastMotherwave(candles, emaHighs, emaLows) {
   const { segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
   if (!segments.length) return null;
 
-  // Full invalidation algorithm — mirrors motherwave.js detectMotherWave
   const byTime = [...segments].sort((a, b) => a.fromTime - b.fromTime);
   const span = s => Math.abs(s.toPrice - s.fromPrice);
   const isBull = s => s.toSide === "high";
   const largest = pool => pool.reduce((b, s) => span(s) > span(b) ? s : b, pool[0]);
 
-  // -0.168 extension level beyond the tip
+  // -0.618 extension level beyond the tip (invalidation)
   const invLevel = s => isBull(s)
-    ? s.toPrice + 0.168 * span(s)   // above HIGH tip
-    : s.toPrice - 0.168 * span(s);  // below LOW tip
+    ? s.toPrice + 0.618 * span(s)   // above HIGH tip
+    : s.toPrice - 0.618 * span(s);  // below LOW tip
 
   // Two conditions that invalidate a candidate:
-  //   1. -0.168 breach: same-direction segment blows past the extension
+  //   1. -0.618 breach: same-direction segment blows past the extension
   //   2. fib(1) / origin breach: opposite segment crosses the wave origin
-  //      BULL origin = fromPrice (LOW)  — bear breaking below it
-  //      BEAR origin = fromPrice (HIGH) — bull breaking above it
   const crosses = (candidate, inv, seg) => {
     if (seg.fromTime <= candidate.toTime) return false;
     if (isBull(candidate)) {
@@ -167,12 +164,35 @@ function getLastMotherwave(candles, emaHighs, emaLows) {
     }
   };
 
+  // 2.5x Ratio Rule: MW span / CW span >= 2.5
+  // CW = largest opposite-direction segment starting after MW ends
+  // No opposite segment found → pass (no counter-move yet)
+  const passes25x = (candidate) => {
+    const after = byTime.filter(s => s.fromTime > candidate.toTime);
+    const opposite = after.filter(s => isBull(s) !== isBull(candidate));
+    if (!opposite.length) return true;
+    const cw = opposite.reduce((b, s) => span(s) > span(b) ? s : b, opposite[0]);
+    return span(candidate) / span(cw) >= 2.5;
+  };
+
   let candidate = largest(byTime);
   for (let i = 0; i < 20; i++) {
     if (!candidate) break;
+
+    // 2.5x ratio check first
+    if (!passes25x(candidate)) {
+      const pool = byTime.filter(s => s.fromTime > candidate.toTime);
+      if (!pool.length) break;
+      const next = largest(pool);
+      if (next.fromTime === candidate.fromTime) break;
+      candidate = next;
+      continue;
+    }
+
+    // Fib invalidation check
     const inv = invLevel(candidate);
     const after = byTime.filter(s => s.fromTime > candidate.toTime);
-    if (!after.find(s => crosses(candidate, inv, s))) break; // not invalidated
+    if (!after.find(s => crosses(candidate, inv, s))) break; // confirmed
     const pool = byTime.filter(s => s.fromTime > candidate.toTime);
     if (!pool.length) break;
     const next = largest(pool);
@@ -181,6 +201,113 @@ function getLastMotherwave(candles, emaHighs, emaLows) {
   }
 
   return candidate;
+}
+
+// ── Report-style Mother Wave detection (mirrors ReportsPage.detectMotherWave) ─
+// Operates on buildTableRows output (wave rows), not raw segments.
+// Returns a segment-compatible object: { fromPrice, toPrice, toSide, waveNum, fromTime, toTime }
+// or null if no mother wave found.
+function buildWaveRows(segments) {
+  return segments.map((seg, i) => {
+    const isBull = seg.toSide === "high";
+    return {
+      id: `seg-${i}`,
+      dir: isBull ? "bull" : "bear",
+      col1Time: seg.fromTime,
+      col1Price: seg.fromPrice,
+      col2Time: seg.toTime,
+      col2Price: seg.toPrice,
+      delta: +Math.abs(seg.toPrice - seg.fromPrice).toFixed(2),
+      waveNum: seg.waveNum,
+    };
+  });
+}
+
+function detectMotherWaveReportStyle(waves) {
+  if (!waves || waves.length === 0) return null;
+
+  const byTime = [...waves].sort((a, b) => a.col1Time - b.col1Time);
+
+  function fibInvalidation(w) {
+    const span = Math.abs(w.col2Price - w.col1Price);
+    return w.dir === "bull"
+      ? w.col2Price + 0.618 * span   // above HIGH (invalidation)
+      : w.col2Price - 0.618 * span;  // below LOW (invalidation)
+  }
+
+  function isInvalidated(candidate, inv, wave) {
+    if (wave.col1Time <= candidate.col2Time) return false;
+    if (candidate.dir === "bull") {
+      if (wave.dir === "bull" && wave.col2Price > inv) return true;
+      if (wave.dir === "bear" && wave.col2Price < candidate.col1Price) return true;
+      return false;
+    } else {
+      if (wave.dir === "bear" && wave.col2Price < inv) return true;
+      if (wave.dir === "bull" && wave.col2Price > candidate.col1Price) return true;
+      return false;
+    }
+  }
+
+  // 2.5x Ratio Rule: MW delta / CW delta >= 2.5
+  // CW = largest opposite-direction wave starting after MW ends
+  // No opposite wave found → pass
+  function passes25xRule(candidate) {
+    const afterMW = byTime.filter((w) => w.col1Time > candidate.col2Time);
+    const oppositeWaves = afterMW.filter((w) => w.dir !== candidate.dir);
+    if (!oppositeWaves.length) return true;
+    const cw = oppositeWaves.reduce((best, w) => (w.delta > best.delta ? w : best), oppositeWaves[0]);
+    return candidate.delta / cw.delta >= 2.5;
+  }
+
+  function largestInSubset(subset) {
+    if (!subset.length) return null;
+    return subset.reduce((best, w) => (w.delta > best.delta ? w : best), subset[0]);
+  }
+
+  let candidate = largestInSubset(byTime);
+  const MAX_ITER = 20;
+
+  for (let iter = 0; iter < MAX_ITER; iter++) {
+    if (!candidate) break;
+
+    // 2.5x ratio check first
+    if (!passes25xRule(candidate)) {
+      const pool = byTime.filter((w) => w.col1Time > candidate.col2Time);
+      const next = largestInSubset(pool);
+      if (!next || next.waveNum === candidate.waveNum) break;
+      candidate = next;
+      continue;
+    }
+
+    // Fib invalidation check
+    const inv = fibInvalidation(candidate);
+    const afterCandidate = byTime.filter((w) => w.col1Time > candidate.col2Time);
+    const invalidatingWave = afterCandidate.find((w) => isInvalidated(candidate, inv, w));
+    if (!invalidatingWave) break; // passes both → confirmed
+    const pool = byTime.filter((w) => w.col1Time > candidate.col2Time);
+    const next = largestInSubset(pool);
+    if (!next || next.waveNum === candidate.waveNum) break;
+    candidate = next;
+  }
+
+  if (!candidate) return null;
+
+  // Convert row back to a segment-compatible object for WaveCard / computeFibLevels
+  return {
+    fromPrice: candidate.col1Price,
+    toPrice: candidate.col2Price,
+    toSide: candidate.dir === "bull" ? "high" : "low",
+    waveNum: candidate.waveNum,
+    fromTime: candidate.col1Time,
+    toTime: candidate.col2Time,
+  };
+}
+
+function detectMotherWaveFromCandles(candles, emaHighs, emaLows) {
+  const { segments } = updateWavesIndicatorPure(candles, emaHighs, emaLows);
+  if (!segments.length) return null;
+  const rows = buildWaveRows(segments);
+  return detectMotherWaveReportStyle(rows);
 }
 
 function getBias(segment) {
@@ -434,8 +561,13 @@ function useColData(symbol, tfValue) {
           data.emaHighs || [],
           data.emaLows || []
         );
+        const reportMotherSegment = detectMotherWaveFromCandles(
+          data.candles,
+          data.emaHighs || [],
+          data.emaLows || []
+        );
         const lastClose = data.candles[data.candles.length - 1].close;
-        setState({ status: "done", segment, candles: data.candles, emaHighsData: data.emaHighs || [], emaLowsData: data.emaLows || [], lastClose });
+        setState({ status: "done", segment, reportMotherSegment, candles: data.candles, emaHighsData: data.emaHighs || [], emaLowsData: data.emaLows || [], lastClose });
       } else {
         setState({ status: "error", segment: null });
       }
@@ -606,18 +738,20 @@ function HtfColumn({ symbol }) {
     { label: "15Min", value: 15 },
   ];
 
-  const { status, segment, lastClose } = useColData(symbol, activeTF);
-  const fibLevels = computeFibLevels(segment);
-  const bias = getBias(segment);
+  const { status, segment, reportMotherSegment, lastClose } = useColData(symbol, activeTF);
+  // Use report-style mother wave (detectMotherWave algorithm) for display
+  const motherSegment = reportMotherSegment || segment;
+  const fibLevels = computeFibLevels(motherSegment);
+  const bias = getBias(motherSegment);
   const waveLabel = activeTF >= 10080 ? "Weekly wave" : activeTF >= 1440 ? "Daily wave" : activeTF >= 60 ? "1H wave" : "15Min wave";
 
   function handleWaveClick() {
-    if (!segment) return;
+    if (!motherSegment) return;
     const params = new URLSearchParams({
       symbol,
       resolution: String(activeTF),
-      waveFrom: String(segment.fromTime),
-      waveTo: String(segment.toTime),
+      waveFrom: String(motherSegment.fromTime),
+      waveTo: String(motherSegment.toTime),
     });
     window.open(`/charts?${params.toString()}`, "_blank");
   }
@@ -638,7 +772,7 @@ function HtfColumn({ symbol }) {
             {tf.label}
           </button>
         ))}
-        <DrawFibOnChartBtn symbol={symbol} resolution={activeTF} segment={segment} />
+        <DrawFibOnChartBtn symbol={symbol} resolution={activeTF} segment={motherSegment} />
       </div>
 
       <div className="fdb-bias-line">
@@ -653,7 +787,7 @@ function HtfColumn({ symbol }) {
         {status === "loading" ? (
           <div className="fdb-state"><div className="fdb-spinner" /></div>
         ) : (
-          <WaveCard segment={segment} tfLabel={waveLabel} onClick={segment ? handleWaveClick : undefined} />
+          <WaveCard segment={motherSegment} tfLabel={waveLabel} onClick={motherSegment ? handleWaveClick : undefined} />
         )}
 
         <div className="fdb-sep" />

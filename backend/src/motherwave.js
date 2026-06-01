@@ -9,13 +9,14 @@
  *
  * Algorithm:
  *   1. Largest delta segment → first candidate.
- *   2. -0.168 fib invalidation:
- *      BULL: inv = toPrice + 0.168 × span  (above end HIGH)
- *      BEAR: inv = toPrice - 0.168 × span  (below end LOW)
- *   3. Walk segments after candidate chronologically:
- *      BULL invalidated by subsequent BULL toPrice > inv
- *      BEAR invalidated by subsequent BEAR toPrice < inv
- *   4. If invalidated → largest from remaining pool → repeat.
+ *   2. 2.5x Ratio Rule: MW span / CW span >= 2.5
+ *      CW = largest opposite-direction segment after MW ends.
+ *      No opposite segment → pass (no counter-move yet).
+ *   3. -0.618 fib invalidation:
+ *      BULL: inv = toPrice + 0.618 × span  (above end HIGH)
+ *      BEAR: inv = toPrice - 0.618 × span  (below end LOW)
+ *      Also invalidated if opposite wave crosses the 1.0 origin.
+ *   4. If fails either check → largest from pool after candidate → repeat.
  *   5. Final candidate = Mother Wave.
  * ─────────────────────────────────────────────────────────────────
  */
@@ -120,42 +121,59 @@ function detectMotherWave(candles) {
   const isBull = s => s.toSide === "high";
   const largest = pool => pool.reduce((b, s) => span(s) > span(b) ? s : b, pool[0]);
 
-  // -0.168 extension level (beyond the tip, away from origin)
-  // BULL: above the HIGH tip  → toPrice + 0.168 * span
-  // BEAR: below the LOW tip   → toPrice - 0.168 * span
+  // -0.618 extension level (beyond the tip, away from origin)
+  // BULL: above the HIGH tip  → toPrice + 0.618 * span
+  // BEAR: below the LOW tip   → toPrice - 0.618 * span
   const invLevel = s => isBull(s)
-    ? s.toPrice + 0.168 * span(s)
-    : s.toPrice - 0.168 * span(s);
+    ? s.toPrice + 0.618 * span(s)
+    : s.toPrice - 0.618 * span(s);
 
   // Two invalidation conditions — either one negates the candidate:
-  //   1. -0.168 breach: a subsequent same-direction segment blows past the extension level
+  //   1. -0.618 breach: a subsequent same-direction segment blows past the extension level
   //   2. fib(1) / origin breach: a subsequent opposite-direction segment crosses the wave origin
-  //      BULL origin = fromPrice (the LOW)  — price going BELOW it means the low is broken
-  //      BEAR origin = fromPrice (the HIGH) — price going ABOVE it means the high is broken
   const crosses = (candidate, inv, seg) => {
     if (seg.fromTime <= candidate.toTime) return false;
     if (isBull(candidate)) {
-      // -0.168: subsequent bull pushes above extension
       if (isBull(seg) && seg.toPrice > inv) return true;
-      // fib(1): subsequent bear breaks below the wave origin (LOW)
       if (!isBull(seg) && seg.toPrice < candidate.fromPrice) return true;
       return false;
     } else {
-      // -0.168: subsequent bear pushes below extension
       if (!isBull(seg) && seg.toPrice < inv) return true;
-      // fib(1): subsequent bull breaks above the wave origin (HIGH)
       if (isBull(seg) && seg.toPrice > candidate.fromPrice) return true;
       return false;
     }
+  };
+
+  // 2.5x Ratio Rule: MW span / CW span >= 2.5
+  // CW = largest opposite-direction segment starting after MW ends
+  // No opposite segment found → pass (no counter-move yet)
+  const passes25x = (candidate) => {
+    const after = byTime.filter(s => s.fromTime > candidate.toTime);
+    const opposite = after.filter(s => isBull(s) !== isBull(candidate));
+    if (!opposite.length) return true;
+    const cw = opposite.reduce((b, s) => span(s) > span(b) ? s : b, opposite[0]);
+    return span(candidate) / span(cw) >= 2.5;
   };
 
   let candidate = largest(byTime);
 
   for (let i = 0; i < 20; i++) {
     if (!candidate) break;
+
+    // Step 1: 2.5x ratio check
+    if (!passes25x(candidate)) {
+      const pool = byTime.filter(s => s.fromTime > candidate.toTime);
+      if (!pool.length) break;
+      const next = largest(pool);
+      if (next.fromTime === candidate.fromTime) break;
+      candidate = next;
+      continue;
+    }
+
+    // Step 2: Fib invalidation check (-0.618 or 1.0 origin breach)
     const inv = invLevel(candidate);
     const after = byTime.filter(s => s.fromTime > candidate.toTime);
-    if (!after.find(s => crosses(candidate, inv, s))) break; // no invalidation
+    if (!after.find(s => crosses(candidate, inv, s))) break; // confirmed MW
 
     const pool = byTime.filter(s => s.fromTime > candidate.toTime);
     if (!pool.length) break;
@@ -188,10 +206,10 @@ function detectMotherWave(candles) {
     endTime: candidate.toTime,
     startIndex: candidate.fromBarIndex,
     endIndex: candidate.toBarIndex,
-    // -0.168 invalidation level
+    // -0.618 invalidation level
     invalidation: bull
-      ? candidate.toPrice + 0.168 * s
-      : candidate.toPrice - 0.168 * s,
+      ? candidate.toPrice + 0.618 * s
+      : candidate.toPrice - 0.618 * s,
     span: s,
   };
 }
