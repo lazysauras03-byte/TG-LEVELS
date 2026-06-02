@@ -7,17 +7,34 @@
  *
  * Strategies never recompute the mother wave themselves.
  *
- * Algorithm:
- *   1. Largest delta segment → first candidate.
- *   2. 2.5x Ratio Rule: MW span / CW span >= 2.5
- *      CW = largest segment (ANY direction) after MW ends.
- *      No segment after MW → pass (no counter-move yet).
- *   3. -0.618 fib invalidation:
- *      BULL: inv = toPrice + 0.618 × span  (above end HIGH)
- *      BEAR: inv = toPrice - 0.618 × span  (below end LOW)
- *      Also invalidated if opposite wave crosses the 1.0 origin.
- *   4. If fails either check → largest from pool after candidate → repeat.
- *   5. Final candidate = Mother Wave.
+ * ── ALGORITHM (exact sequential walk) ────────────────────────────
+ *
+ *   waves = all wave segments sorted chronologically (oldest first)
+ *   i = 0
+ *
+ *   while i < waves.length:
+ *     candidate = waves[i]
+ *     nextWave  = waves[i + 1]   ← the IMMEDIATELY next wave in time
+ *
+ *     if no nextWave → candidate is MW (nothing challenged it)
+ *
+ *     RATIO CHECK:
+ *       candidate.delta / nextWave.delta >= 2.5 ?
+ *         FAIL → i++, continue   (move to very next wave, not largest)
+ *         PASS → check fib invalidation against ALL waves after candidate
+ *
+ *     FIB INVALIDATION:
+ *       BULL MW inv = toPrice + 0.618 × span  (above tip)
+ *       BEAR MW inv = toPrice − 0.618 × span  (below tip)
+ *       Invalidated when subsequent wave:
+ *         BULL: BULL wave HIGH > inv   OR  BEAR wave LOW < origin (fromPrice)
+ *         BEAR: BEAR wave LOW  < inv   OR  BULL wave HIGH > origin (fromPrice)
+ *
+ *       No breach → MW confirmed
+ *       Breach found:
+ *         i = index of the breaking wave
+ *         continue (restart from that wave)
+ *
  * ─────────────────────────────────────────────────────────────────
  */
 
@@ -112,73 +129,71 @@ function computeSegments(candles) {
 }
 
 // ─── Core detection ───────────────────────────────────────────────────────────
+//
+// Implements the exact sequential walk algorithm:
+//   i=0 → candidate=waves[i], nextWave=waves[i+1]
+//   ratio fail → i++ (next wave, no skipping)
+//   ratio pass → check fib invalidation across ALL waves after candidate
+//     no breach → MW confirmed
+//     breach     → i = index of breaking wave, restart
+//
 function detectMotherWave(candles) {
   const segs = computeSegments(candles);
   if (!segs.length) return null;
 
-  const byTime = [...segs].sort((a, b) => a.fromTime - b.fromTime);
+  // Sort chronologically — oldest first
+  const waves = [...segs].sort((a, b) => a.fromTime - b.fromTime);
+
   const span = s => Math.abs(s.toPrice - s.fromPrice);
   const isBull = s => s.toSide === "high";
-  const largest = pool => pool.reduce((b, s) => span(s) > span(b) ? s : b, pool[0]);
 
-  // -0.618 extension level (beyond the tip, away from origin)
+  // -0.618 invalidation level beyond the tip
   const invLevel = s => isBull(s)
-    ? s.toPrice + 0.618 * span(s)
-    : s.toPrice - 0.618 * span(s);
+    ? s.toPrice + 0.618 * span(s)   // above HIGH tip
+    : s.toPrice - 0.618 * span(s);  // below LOW tip
 
-  // Two invalidation conditions — either one negates the candidate:
-  //   1. -0.618 breach: a subsequent same-direction segment blows past the extension level
-  //   2. fib(1) / origin breach: a subsequent opposite-direction segment crosses the wave origin
-  const crosses = (candidate, inv, seg) => {
+  // Returns true if `seg` breaches the candidate's fib bounds
+  const breachesFib = (candidate, inv, seg) => {
     if (seg.fromTime <= candidate.toTime) return false;
     if (isBull(candidate)) {
-      if (isBull(seg) && seg.toPrice > inv) return true;
-      if (!isBull(seg) && seg.toPrice < candidate.fromPrice) return true;
-      return false;
+      if (isBull(seg) && seg.toPrice > inv) return true; // -0.618 breach
+      if (!isBull(seg) && seg.toPrice < candidate.fromPrice) return true; // origin breach
     } else {
-      if (!isBull(seg) && seg.toPrice < inv) return true;
-      if (isBull(seg) && seg.toPrice > candidate.fromPrice) return true;
-      return false;
+      if (!isBull(seg) && seg.toPrice < inv) return true; // -0.618 breach
+      if (isBull(seg) && seg.toPrice > candidate.fromPrice) return true; // origin breach
     }
+    return false;
   };
 
-  // 2.5x Ratio Rule: MW span / CW span >= 2.5
-  // CW = largest segment of ANY direction starting after MW ends
-  // No segment after MW → pass (no counter-move yet)
-  const passes25x = (candidate) => {
-    const after = byTime.filter(s => s.fromTime > candidate.toTime);
-    if (!after.length) return true; // nothing after → pass
-    const cw = after.reduce((b, s) => span(s) > span(b) ? s : b, after[0]);
-    return span(candidate) / span(cw) >= 2.5;
-  };
+  let i = 0;
 
-  let candidate = largest(byTime);
+  while (i < waves.length) {
+    const candidate = waves[i];
+    const nextWave = waves[i + 1]; // immediately next chronological wave
 
-  for (let i = 0; i < 20; i++) {
-    if (!candidate) break;
+    // No next wave → nothing challenged the candidate → MW confirmed
+    if (!nextWave) break;
 
-    // Step 1: 2.5x ratio check
-    if (!passes25x(candidate)) {
-      const pool = byTime.filter(s => s.fromTime > candidate.toTime);
-      if (!pool.length) break;
-      const next = largest(pool);
-      if (next.fromTime === candidate.fromTime) break;
-      candidate = next;
+    // ── Ratio check: candidate.delta / nextWave.delta >= 2.5 ─────────────
+    const ratio = span(candidate) / span(nextWave);
+    if (ratio < 2.5) {
+      // FAIL — move one step forward (not to largest, just +1)
+      i += 1;
       continue;
     }
 
-    // Step 2: Fib invalidation check (-0.618 or 1.0 origin breach)
+    // ── Ratio passed — check fib invalidation across all waves after candidate
     const inv = invLevel(candidate);
-    const after = byTime.filter(s => s.fromTime > candidate.toTime);
-    if (!after.find(s => crosses(candidate, inv, s))) break; // confirmed MW
+    const breakingWave = waves.slice(i + 1).find(w => breachesFib(candidate, inv, w));
 
-    const pool = byTime.filter(s => s.fromTime > candidate.toTime);
-    if (!pool.length) break;
-    const next = largest(pool);
-    if (next.fromTime === candidate.fromTime) break;
-    candidate = next;
+    if (!breakingWave) break; // No breach → MW confirmed
+
+    // Invalidated — restart from the breaking wave
+    const breakIdx = waves.indexOf(breakingWave);
+    i = breakIdx;
   }
 
+  const candidate = waves[i];
   if (!candidate) return null;
 
   const bull = isBull(candidate);
