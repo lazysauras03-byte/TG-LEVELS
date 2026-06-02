@@ -70,8 +70,12 @@ const NAV_ITEMS = [
 export default function HomePage() {
   const navigate = useNavigate();
   const cardRefs = useRef([]);
-  const marketStatus = useMarketStatus();
+  const marketStatus = useMarketStatus(); // "live" | "closed" | "connecting"
   const isLive = marketStatus === "live";
+  const isConnecting = marketStatus === "connecting";
+  // dot class: green = live, grey = connecting, red = closed
+  const dotClass = isLive ? "green" : isConnecting ? "grey" : "red";
+  const statusLabel = isLive ? "Market Live" : isConnecting ? "Connecting…" : "Market Closed";
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
@@ -107,8 +111,8 @@ export default function HomePage() {
             {theme === "dark" ? "☀ Light" : "🌙 Dark"}
           </button>
           <div className="home-header-tag">
-            <span className={`home-dot ${isLive ? "green" : "red"}`} />
-            {isLive ? "Market Live" : "Market Closed"}
+            <span className={`home-dot ${dotClass}`} />
+            {statusLabel}
           </div>
         </div>
       </header>
@@ -140,7 +144,7 @@ export default function HomePage() {
               <div className="home-card-top">
                 <div className="home-card-icon">{item.icon}</div>
                 <span className={`home-card-tag home-card-tag--${item.tagColor}`}>
-                  {item.dynamic ? (isLive ? "Market Live" : "Market Closed") : item.tag}
+                  {item.dynamic ? statusLabel : item.tag}
                 </span>
               </div>
 

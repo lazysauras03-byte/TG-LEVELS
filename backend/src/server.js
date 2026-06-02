@@ -548,6 +548,27 @@ function startTickWatchdog() {
   }, TICK_WATCHDOG_MS);
   console.log(`[Watchdog] Started (timeout: ${TICK_WATCHDOG_MS / 1000}s, grace: ${WATCHDOG_GRACE_MS / 1000}s)`);
 
+  // ── Market-close detector ───────────────────────────────────────────────────
+  // Checks every 60s whether the market has closed for ALL active symbols.
+  // When isAnyMarketLive transitions true → false, stops the tick stream
+  // immediately so Fyers doesn't keep sending post-close ticks that would
+  // keep ticksFlowing=true after the exchange is closed.
+  let wasAnyLive = isAnyMarketLive(getActiveTickSymbols());
+  setInterval(() => {
+    const nowLive = isAnyMarketLive(getActiveTickSymbols());
+    if (wasAnyLive && !nowLive) {
+      // Market just closed — stop stream, clear tick timestamps, notify clients
+      console.log("[Watchdog] Market closed — stopping tick stream and clearing tick state.");
+      lastTickAt = 0;
+      lastConnectAt = 0;
+      // Clear all per-symbol tick timestamps so ticksFlowing() returns false
+      lastTickBySymbol.clear();
+      tickStream.stop();
+      io.emit("market_status", { ticksFlowing: false, tickStreamActive: false });
+    }
+    wasAnyLive = nowLive;
+  }, 60_000); // check every 60s — market close is a once-per-day event
+
   // Periodic status broadcast — interval is half the watchdog so clients
   // learn ticksFlowing changes promptly without hammering the socket.
   const STATUS_BROADCAST_MS = Math.max(10_000, Math.floor(TICK_WATCHDOG_MS / 2));
