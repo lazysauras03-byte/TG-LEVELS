@@ -11,7 +11,6 @@ import SYMBOLS from "../symbols.json";
 import "./ReportsPage.css";
 
 import { BACKEND } from "../config";
-import { detectMotherWaveFromRows } from "../utils/detectMotherWave";
 
 // ── Timeframes ────────────────────────────────────────────────────────────────
 const TIMEFRAMES = [
@@ -384,8 +383,22 @@ export default function ReportsPage() {
     return { allWaves: rows, allDates: dates };
   }, [candles, emaHighs, emaLows]);
 
-  // ── Mother Wave computation ─────────────────────────────────────────────────
-  const motherWave = useMemo(() => detectMotherWaveFromRows(allWaves), [allWaves]);
+  // ── Mother Wave — fetched from backend (single source of truth) ────────────
+  const [motherWave, setMotherWave] = useState(null);
+
+  useEffect(() => {
+    if (!symbol || timeframe == null) return;
+    let cancelled = false;
+    fetch(`${BACKEND}/api/motherwave?symbol=${encodeURIComponent(symbol)}&resolution=${timeframe}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled) return;
+        // API returns { wave, fibLevels, invalidation } or { motherwave: null }
+        setMotherWave(data && data.wave ? data : null);
+      })
+      .catch(() => { if (!cancelled) setMotherWave(null); });
+    return () => { cancelled = true; };
+  }, [symbol, timeframe, candles]); // re-fetch when candles update (live market)
 
   // ── Filter + sort ───────────────────────────────────────────────────────────
   const filtered = useMemo(() => {

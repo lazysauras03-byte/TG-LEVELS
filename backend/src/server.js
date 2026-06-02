@@ -13,6 +13,7 @@ const { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, is
 const symbolsRouter = require("./symbolsRouter");
 const scannerRouter = require("./scannerRouter");
 const { scanner } = require("./scannerRunner");
+const { detectMotherWaveForAPI } = require("./motherwave");
 
 const app = express();
 const server = http.createServer(app);
@@ -418,6 +419,44 @@ app.get("/api/signals", async (req, res) => {
 
 app.use("/api/symbols", symbolsRouter);
 app.use("/api/scanner", scannerRouter);
+
+/**
+ * GET /api/motherwave?symbol=X&resolution=Y
+ *
+ * Returns the Mother Wave result for the requested symbol + resolution.
+ * Single source of truth — ReportsPage and FibDashboardPage call this
+ * instead of running their own local MW detection.
+ *
+ * Response: { wave, fibLevels, invalidation } | { motherwave: null }
+ */
+app.get("/api/motherwave", async (req, res) => {
+  const symbol = req.query.symbol || SYMBOL;
+  const resolution = parseInt(req.query.resolution || RESOLUTION);
+
+  try {
+    // Try the in-memory cache first (populated by /api/chart or auto-refresh)
+    let candles = null;
+    const cache = getCache(symbol, resolution);
+    if (cache.candles && cache.candles.length > 0) {
+      candles = cache.candles;
+    } else {
+      // Cache miss — fetch from Fyers
+      const { candles: fetched } = await fetchAndProcess(symbol, resolution);
+      candles = fetched;
+    }
+
+    if (!candles || !candles.length) {
+      return res.json({ motherwave: null });
+    }
+
+    const result = detectMotherWaveForAPI(candles);
+    if (!result) return res.json({ motherwave: null });
+    res.json(result);
+  } catch (err) {
+    console.error("[/api/motherwave] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── Tick Watchdog ────────────────────────────────────────────────────────────
 function startTickWatchdog() {

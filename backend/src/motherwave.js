@@ -261,4 +261,123 @@ function classifyZone(mw, currentPrice) {
   return "other";
 }
 
-module.exports = { detectMotherWave, fibPrice, calcTrapZone, classifyZone, computeSegments };
+// ─── API-ready MW detection ───────────────────────────────────────────────────
+//
+// Returns the exact shape consumed by ReportsPage and FibDashboardPage:
+//   { wave, fibLevels, invalidation }
+//
+// `wave` mirrors the row shape built by the frontend pages so the same JSX
+// rendering code works with zero changes on the frontend side:
+//   wave.dir        : "bull" | "bear"
+//   wave.col1Time   : fromTime  (ms)
+//   wave.col1Price  : fromPrice (origin)
+//   wave.col2Time   : toTime    (ms)
+//   wave.col2Price  : toPrice   (tip)
+//   wave.delta      : abs price span
+//   wave.waveNum    : counting label (-1 = latest, -N = oldest)
+//   wave.label      : "HH→LH" etc.
+//   wave.toSide     : "high" | "low"
+//
+function detectMotherWaveForAPI(candles) {
+  const segs = computeSegments(candles);
+  if (!segs.length) return null;
+
+  // Sort chronologically — oldest first
+  const waves = [...segs].sort((a, b) => a.fromTime - b.fromTime);
+
+  // Assign waveNum: -N for oldest, -1 for newest (matches WavesIndicator.js)
+  const total = waves.length;
+  waves.forEach((w, i) => { w._waveNum = -(total - i); });
+
+  const sp = s => Math.abs(s.toPrice - s.fromPrice);
+  const bull = s => s.toSide === "high";
+
+  const invLevel = s => bull(s)
+    ? s.toPrice + 0.618 * sp(s)
+    : s.toPrice - 0.618 * sp(s);
+
+  const breachesFib = (candidate, inv, seg) => {
+    if (seg.fromTime <= candidate.toTime) return false;
+    if (bull(candidate)) {
+      if (bull(seg) && seg.toPrice > inv) return true;
+      if (!bull(seg) && seg.toPrice < candidate.fromPrice) return true;
+    } else {
+      if (!bull(seg) && seg.toPrice < inv) return true;
+      if (bull(seg) && seg.toPrice > candidate.fromPrice) return true;
+    }
+    return false;
+  };
+
+  let i = 0;
+  while (i < waves.length) {
+    const candidate = waves[i];
+    const nextWave = waves[i + 1];
+    if (!nextWave) break;
+
+    const ratio = sp(candidate) / sp(nextWave);
+    if (ratio < 2.5) { i += 1; continue; }
+
+    const inv = invLevel(candidate);
+    const breakingWave = waves.slice(i + 1).find(w => breachesFib(candidate, inv, w));
+    if (!breakingWave) break;
+    i = waves.indexOf(breakingWave);
+  }
+
+  const cand = waves[i];
+  if (!cand) return null;
+
+  const isBull = bull(cand);
+  const span = sp(cand);
+  const origin = cand.fromPrice;
+  const end = cand.toPrice;
+
+  // ── Wave row (matches ReportsPage buildTableRows shape) ─────────────────
+  const wave = {
+    dir: isBull ? "bull" : "bear",
+    col1Time: cand.fromTime,
+    col1Price: cand.fromPrice,
+    col2Time: cand.toTime,
+    col2Price: cand.toPrice,
+    delta: +span.toFixed(2),
+    waveNum: cand._waveNum,
+    label: (cand.prevWaveType && cand.currWaveType)
+      ? `${cand.prevWaveType}\u2192${cand.currWaveType}`
+      : "—",
+    toSide: cand.toSide,
+    fromPrice: cand.fromPrice,
+    toPrice: cand.toPrice,
+    fromTime: cand.fromTime,
+    toTime: cand.toTime,
+  };
+
+  // ── Fib levels (identical to detectMotherWave.js on frontend) ───────────
+  const fibLevels = isBull
+    ? {
+      "-0.618": end + 0.618 * span,
+      "0.0": end,
+      "0.236": end - 0.236 * span,
+      "0.382": end - 0.382 * span,
+      "0.5": end - 0.5 * span,
+      "0.618": end - 0.618 * span,
+      "0.786": end - 0.786 * span,
+      "1.0": origin,
+    }
+    : {
+      "1.0": origin,
+      "0.786": origin - 0.214 * span,
+      "0.618": origin - 0.382 * span,
+      "0.5": origin - 0.5 * span,
+      "0.382": origin - 0.618 * span,
+      "0.236": origin - 0.764 * span,
+      "0.0": end,
+      "-0.618": end - 0.618 * span,
+    };
+
+  return {
+    wave,
+    fibLevels,
+    invalidation: fibLevels["-0.618"],
+  };
+}
+
+module.exports = { detectMotherWave, detectMotherWaveForAPI, fibPrice, calcTrapZone, classifyZone, computeSegments };

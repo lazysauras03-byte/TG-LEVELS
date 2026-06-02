@@ -1,11 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { updateWavesIndicatorPure } from "../indicators/WavesIndicator";
 import { BACKEND } from "../config";
-import {
-  detectMotherWaveFromSegments,
-  mwWaveToSegment,
-} from "../utils/detectMotherWave";
 import { useTheme } from "../App";
 import SYMBOLS from "../symbols.json";
 import "./FibDashboardPage.css";
@@ -384,14 +379,32 @@ function useColData(symbol, tfValue) {
       if (ctrl.signal.aborted) return;
 
       if (data?.candles?.length) {
-        // Use shared detectMotherWaveFromSegments — correct sequential algorithm
-        const { segments: segs } = updateWavesIndicatorPure(
-          data.candles,
-          data.emaHighs || [],
-          data.emaLows || []
-        );
-        const mwResult = detectMotherWaveFromSegments(segs);
-        const segment = mwResult ? mwWaveToSegment(mwResult.wave) : null;
+        // Fetch Mother Wave from backend — single source of truth in motherwave.js
+        let mwResult = null;
+        try {
+          const mwR = await fetch(
+            `${BACKEND}/api/motherwave?symbol=${encodeURIComponent(sym)}&resolution=${res}`,
+            { signal: ctrl.signal }
+          );
+          if (mwR.ok) {
+            const mwData = await mwR.json();
+            if (mwData && mwData.wave) mwResult = mwData;
+          }
+        } catch (_) { /* MW fetch failed — segment stays null */ }
+
+        if (ctrl.signal.aborted) return;
+
+        // Convert wave row → segment shape for FibDashboard card/chart code
+        const wave = mwResult ? mwResult.wave : null;
+        const segment = wave ? {
+          fromPrice: wave.col1Price,
+          toPrice: wave.col2Price,
+          toSide: wave.dir === "bull" ? "high" : "low",
+          waveNum: wave.waveNum,
+          fromTime: wave.col1Time,
+          toTime: wave.col2Time,
+        } : null;
+
         const lastClose = data.candles[data.candles.length - 1].close;
         setState({
           status: "done",
