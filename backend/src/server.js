@@ -70,8 +70,11 @@ let lastTickAt = 0;
 let lastConnectAt = 0;
 const lastTickBySymbol = new Map(); // symbol → Date.now() of last tick received
 
-// ── ticksFlowing: true if any subscribed symbol got a tick in last 90s ────────
-const TICK_FLOWING_WINDOW_MS = 90_000;
+// ── ticksFlowing: true if any subscribed symbol got a tick within watchdog window ─
+// Window matches TICK_WATCHDOG_MS so both agree on what "stale" means.
+// e.g. TICK_WATCHDOG_MS=60000 → green dot stays on for 60s after last tick,
+// then watchdog reconnects AND ticksFlowing flips false at the same time.
+const TICK_FLOWING_WINDOW_MS = TICK_WATCHDOG_MS;
 function ticksFlowing() {
   const syms = getActiveTickSymbols();
   const cutoff = Date.now() - TICK_FLOWING_WINDOW_MS;
@@ -83,12 +86,21 @@ function cacheKey(symbol, resolution) { return `${symbol}:${resolution}`; }
 
 function getCache(symbol, resolution) {
   const k = cacheKey(symbol, resolution);
-  if (!symbolCacheMap.has(k)) symbolCacheMap.set(k, { candles: [], result: null, lastFetch: 0 });
+  if (!symbolCacheMap.has(k)) symbolCacheMap.set(k, { candles: [], result: null, lastFetch: 0, motherwaveResult: null, motherwaveAt: 0 });
   return symbolCacheMap.get(k);
 }
 
 function setCache(symbol, resolution, candles, result) {
-  symbolCacheMap.set(cacheKey(symbol, resolution), { candles, result, lastFetch: Date.now() });
+  const existing = symbolCacheMap.get(cacheKey(symbol, resolution)) || {};
+  symbolCacheMap.set(cacheKey(symbol, resolution), {
+    ...existing,
+    candles,
+    result,
+    lastFetch: Date.now(),
+    // Invalidate MW cache — candles changed, so MW may have changed
+    motherwaveResult: null,
+    motherwaveAt: 0,
+  });
 }
 
 // ─── Candle Builder ───────────────────────────────────────────────────────────
@@ -312,7 +324,20 @@ async function fetchAndBroadcast(symbol, resolution, isAutoRefresh = true) {
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString(), tickStreamActive: tickStream.isConnected(), liveMarket: isLiveMarket(), tradingDay: isTradingDay(), tickSymbols: getActiveTickSymbols() });
+  const activeSyms = getActiveTickSymbols();
+  res.json({
+    status: "ok",
+    time: new Date().toISOString(),
+    tickStreamActive: tickStream.isConnected(),
+    // ticksFlowing is the SOURCE OF TRUTH for market open/closed on the frontend.
+    // Derived from actual tick timestamps, not the clock.
+    ticksFlowing: ticksFlowing(),
+    // Clock-based helpers — used for cache TTL decisions, not for UI status.
+    liveMarket: isAnyMarketLive(activeSyms),
+    tradingDay: isTradingDay(),
+    tickSymbols: activeSyms,
+    watchdogWindowMs: TICK_WATCHDOG_MS,
+  });
 });
 
 app.get("/api/auth/status", async (req, res) => {
@@ -331,19 +356,42 @@ app.post("/api/auth/token", async (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+/**
+ * GET /api/chart?symbol=X&resolution=Y
+ *
+ * Single endpoint for all chart data — no more POST/GET split on the frontend.
+ * The backend decides whether to serve from cache or re-fetch from Fyers based on:
+ *   - isLiveMarket(symbol): symbol-aware (MCX stays live until 23:30 / 14:00 Sat)
+ *   - isTradingDay(symbol): MCX is a trading day on Saturdays too
+ *
+ * Cache TTL (symbol-aware):
+ *   Live market  : 60s  (auto-refreshes from Fyers when stale)
+ *   Weekday/off  : 5min
+ *   Weekend/off  : 24hr (MCX Sat treated as weekday for MCX symbols)
+ */
 app.get("/api/chart", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
   const cache = getCache(symbol, resolution);
-  const cacheTTL = isLiveMarket() ? 60_000 : isTradingDay() ? 5 * 60_000 : 24 * 60 * 60_000;
+
+  // Symbol-aware TTL — MCX gets live treatment until 23:30 (or 14:00 Sat)
+  const live = isLiveMarket(symbol);
+  const tradingDay = isTradingDay(symbol);
+  const cacheTTL = live ? 60_000 : tradingDay ? 5 * 60_000 : 24 * 60 * 60_000;
+
   if (cache.result && cache.candles.length > 0 && Date.now() - cache.lastFetch < cacheTTL) {
     return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
   }
   try {
     const { candles, result } = await fetchAndProcess(symbol, resolution);
+    // After a fresh fetch, also sync tick subscription for this symbol
+    if (live) setImmediate(() => updateTickSubscription().catch(console.error));
     res.json(buildPayload(candles, result, symbol, resolution));
   } catch (err) {
-    if (cache.result && cache.candles.length > 0) { console.warn(`[/api/chart] Fetch failed (${err.message}), serving stale cache`); return res.json(buildPayload(cache.candles, cache.result, symbol, resolution)); }
+    if (cache.result && cache.candles.length > 0) {
+      console.warn(`[/api/chart] Fetch failed (${err.message}), serving stale cache`);
+      return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
+    }
     console.error("[/api/chart] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
@@ -366,7 +414,7 @@ app.post("/api/chart/refresh", async (req, res) => {
   const resolution = parseInt(req.query.resolution || RESOLUTION);
   const requestingSocketId = req.body?.socketId || null;
 
-  console.log(`[REFRESH] symbol=${symbol} res=${resolution}m socket=${requestingSocketId || "broadcast"} liveMarket=${isLiveMarket()}`);
+  console.log(`[REFRESH] symbol=${symbol} res=${resolution}m socket=${requestingSocketId || "broadcast"} liveMarket=${isLiveMarket(symbol)}`);
 
   // Pre-register the requesting socket's symbol so tick filtering is accurate
   // even before the socket emits set_symbol (which may arrive slightly later).
@@ -427,31 +475,53 @@ app.use("/api/scanner", scannerRouter);
  * Single source of truth — ReportsPage and FibDashboardPage call this
  * instead of running their own local MW detection.
  *
+ * Caching: mirrors /api/chart TTL logic —
+ *   60s  during live market
+ *   5min on weekdays outside market hours
+ *   24hr on weekends / holidays
+ *
  * Response: { wave, fibLevels, invalidation } | { motherwave: null }
  */
 app.get("/api/motherwave", async (req, res) => {
   const symbol = req.query.symbol || SYMBOL;
   const resolution = parseInt(req.query.resolution || RESOLUTION);
 
+  // ── Same TTL logic as /api/chart ──────────────────────────────────────────
+  // Symbol-aware TTL — same logic as /api/chart
+  const live = isLiveMarket(symbol);
+  const cacheTTL = live ? 60_000 : isTradingDay(symbol) ? 5 * 60_000 : 24 * 60 * 60_000;
+  const cache = getCache(symbol, resolution);
+
+  // Serve cached MW result if still fresh
+  if (cache.motherwaveResult !== null && Date.now() - cache.motherwaveAt < cacheTTL) {
+    return res.json(cache.motherwaveResult);
+  }
+
   try {
-    // Try the in-memory cache first (populated by /api/chart or auto-refresh)
+    // Use in-memory candle cache (populated by /api/chart or auto-refresh).
+    // Fall back to a live fetch only if cache is cold.
     let candles = null;
-    const cache = getCache(symbol, resolution);
     if (cache.candles && cache.candles.length > 0) {
       candles = cache.candles;
     } else {
-      // Cache miss — fetch from Fyers
       const { candles: fetched } = await fetchAndProcess(symbol, resolution);
       candles = fetched;
     }
 
     if (!candles || !candles.length) {
+      cache.motherwaveResult = { motherwave: null };
+      cache.motherwaveAt = Date.now();
       return res.json({ motherwave: null });
     }
 
     const result = detectMotherWaveForAPI(candles);
-    if (!result) return res.json({ motherwave: null });
-    res.json(result);
+    const payload = result || { motherwave: null };
+
+    // Store in cache alongside candles
+    cache.motherwaveResult = payload;
+    cache.motherwaveAt = Date.now();
+
+    res.json(payload);
   } catch (err) {
     console.error("[/api/motherwave] Error:", err.message);
     res.status(500).json({ error: err.message });
@@ -469,6 +539,8 @@ function startTickWatchdog() {
     if (silenceMs > TICK_WATCHDOG_MS) {
       console.warn(`[Watchdog] No tick for ${(silenceMs / 1000).toFixed(1)}s — reconnecting WebSocket`);
       lastTickAt = 0; lastConnectAt = 0;
+      // Immediately tell all clients ticks stopped — don't wait for broadcast timer
+      io.emit("market_status", { ticksFlowing: false, tickStreamActive: false });
       tickStream.stop();
       // Restart with the FULL current symbol list (not just [SYMBOL])
       setTimeout(() => maybeStartTickStream(), 1000);
@@ -476,11 +548,13 @@ function startTickWatchdog() {
   }, TICK_WATCHDOG_MS);
   console.log(`[Watchdog] Started (timeout: ${TICK_WATCHDOG_MS / 1000}s, grace: ${WATCHDOG_GRACE_MS / 1000}s)`);
 
-  // Broadcast ticksFlowing every 30s so all clients stay in sync.
-  // Uses the same market_status event already handled by the frontend.
+  // Periodic status broadcast — interval is half the watchdog so clients
+  // learn ticksFlowing changes promptly without hammering the socket.
+  const STATUS_BROADCAST_MS = Math.max(10_000, Math.floor(TICK_WATCHDOG_MS / 2));
   setInterval(() => {
-    io.emit("market_status", { ticksFlowing: ticksFlowing() });
-  }, 30_000);
+    io.emit("market_status", { ticksFlowing: ticksFlowing(), tickStreamActive: tickStream.isConnected() });
+  }, STATUS_BROADCAST_MS);
+  console.log(`[Watchdog] Status broadcast every ${STATUS_BROADCAST_MS / 1000}s`);
 }
 
 // ─── Auto-refresh fallback ────────────────────────────────────────────────────
@@ -515,7 +589,7 @@ function startAutoRefresh() {
 async function initialRestFetch() {
   const valid = await validateToken().catch(() => false);
   if (!valid) { console.log("[INIT] Not authenticated — skipping initial REST fetch. Chart will be empty."); return; }
-  const dayLabel = isTradingDay() ? (isLiveMarket() ? "live market" : "weekday (market closed)") : "weekend/holiday";
+  const dayLabel = isTradingDay() ? (isAnyMarketLive(getActiveTickSymbols()) ? "live market" : "weekday (market closed)") : "weekend/holiday";
   console.log(`[INIT] Pre-warming all resolutions for ${SYMBOL} (${dayLabel})...`);
   const ALL_RESOLUTIONS = [1, 3, 5, 15, 60, 1440, 10080];
   for (const res of ALL_RESOLUTIONS) {
@@ -608,11 +682,12 @@ app.get("*", (req, res, next) => {
 const PORT = parseInt(process.env.PORT || "9004");
 server.listen(PORT, async () => {
   console.log(`\n✅ TGG Backend running on http://localhost:${PORT}`);
-  console.log(`   Health  : http://localhost:${PORT}/health`);
-  console.log(`   Chart   : http://localhost:${PORT}/api/chart`);
-  console.log(`   Auth    : http://localhost:${PORT}/api/auth/status`);
-  console.log(`   Symbols : http://localhost:${PORT}/api/symbols`);
-  console.log(`   Scanner : http://localhost:${PORT}/api/scanner/signals\n`);
+  console.log(`   Health     : http://localhost:${PORT}/health`);
+  console.log(`   Chart      : http://localhost:${PORT}/api/chart`);
+  console.log(`   Motherwave : http://localhost:${PORT}/api/motherwave`);
+  console.log(`   Auth       : http://localhost:${PORT}/api/auth/status`);
+  console.log(`   Symbols    : http://localhost:${PORT}/api/symbols`);
+  console.log(`   Scanner    : http://localhost:${PORT}/api/scanner/signals\n`);
   startAutoRefresh();
   startTickWatchdog();
   await initialRestFetch();
@@ -673,7 +748,7 @@ server.listen(PORT, async () => {
 
     // No auto-start — scan is triggered manually from the UI or POST /api/scanner/trigger
   });
-  if (isLiveMarket()) { console.log("[INIT] Market is live — starting tick stream for real-time candles."); await maybeStartTickStream(); }
+  if (isAnyMarketLive(getActiveTickSymbols())) { console.log("[INIT] Market is live — starting tick stream for real-time candles."); await maybeStartTickStream(); }
   else if (isTradingDay()) { console.log("[INIT] Weekday outside market hours — REST data ready. Tick stream inactive."); }
   else { console.log("[INIT] Weekend/holiday — REST data loaded from last session. No tick stream."); }
 });

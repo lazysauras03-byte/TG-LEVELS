@@ -62,11 +62,31 @@ function StatusBar({
       ? { open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close }
       : null;
 
-  // Pure tick truth — no clock, no fallback.
-  // ticksFlowing=null (not yet known) → show nothing yet
-  // ticksFlowing=true  → Market Open
-  // ticksFlowing=false → Market Closed
-  const isLive = !!ticksFlowing;
+  // ── Market status derivation — source of truth is ticks, not the clock ──────
+  // ticksFlowing=null  → server hasn't confirmed yet (initial connect)
+  // ticksFlowing=true  → ticks arriving within watchdog window → Market Open
+  // ticksFlowing=false → no ticks in window → Market Closed (or pre-open)
+  //
+  // Four display states:
+  //   "connecting"  — socket not yet connected OR ticksFlowing still null
+  //   "open"        — ticksFlowing true
+  //   "closed"      — ticksFlowing false, socket connected
+  //   "offline"     — socket.io disconnected entirely
+  const marketState = !connected
+    ? "offline"
+    : ticksFlowing === null
+      ? "connecting"
+      : ticksFlowing
+        ? "open"
+        : "closed";
+
+  const STATUS_CONFIG = {
+    offline: { color: "var(--red)", label: "Offline", pulse: false },
+    connecting: { color: "var(--text2)", label: "Connecting…", pulse: false },
+    open: { color: "var(--green)", label: "Market Open", pulse: true },
+    closed: { color: "var(--amber, #f59e0b)", label: "Market Closed", pulse: false },
+  };
+  const sc = STATUS_CONFIG[marketState];
 
   return (
     <header style={S.bar}>
@@ -140,17 +160,20 @@ function StatusBar({
 
       <div style={S.sep} />
 
-      {/* Market status */}
+      {/* Market status — driven by ticksFlowing, not the clock */}
       <div style={S.statusGroup}>
         <div style={{
           ...S.dot,
-          background: !connected ? "var(--red)" : isLive ? "var(--green)" : "var(--red)",
+          background: sc.color,
+          animation: sc.pulse ? "pulse 2s infinite" : "none",
+          opacity: marketState === "connecting" ? 0.5 : 1,
         }} />
         <span style={{
-          color: !connected ? "var(--red)" : isLive ? "var(--green)" : "var(--red)",
+          color: sc.color,
           fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
+          opacity: marketState === "connecting" ? 0.7 : 1,
         }}>
-          {!connected ? "OFFLINE" : isLive ? "Market Open" : "Market Closed"}
+          {sc.label}
         </span>
       </div>
 
@@ -317,7 +340,7 @@ const S = {
     width: 6, height: 6,
     borderRadius: "50%",
     flexShrink: 0,
-    animation: "pulse 2s infinite",
+    transition: "background 0.3s",
   },
 
   rightActions: {

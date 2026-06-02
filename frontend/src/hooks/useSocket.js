@@ -20,6 +20,8 @@ const BACKEND =
   `${window.location.protocol}//${window.location.hostname}:9004`;
 
 // ── IST live-market check (frontend guard for REST poll fallback only) ─────────
+// NOTE: This is used ONLY to gate the REST poll fallback timer — not for routing
+// GET vs POST. The backend handles all routing decisions via isLiveMarket(symbol).
 function isMCXSymbol(symbol) {
   return symbol && String(symbol).toUpperCase().startsWith("MCX:");
 }
@@ -30,10 +32,16 @@ function isLiveMarketFrontend(symbol) {
   const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
   const istMin = (utcMin + istOffset) % (24 * 60);
   const istDate = new Date(now.getTime() + istOffset * 60000);
-  const dow = istDate.getUTCDay();
-  if (dow === 0 || dow === 6) return false;
-  const closeMin = isMCXSymbol(symbol) ? (23 * 60 + 30) : (15 * 60 + 30);
-  return istMin >= (9 * 60 + 15) && istMin < closeMin;
+  const dow = istDate.getUTCDay(); // 0=Sun, 6=Sat
+  if (dow === 0) return false; // Sunday — nothing trades
+  if (isMCXSymbol(symbol)) {
+    // MCX: Mon–Fri 09:00–23:30, Saturday 09:00–14:00
+    if (dow === 6) return istMin >= (9 * 60) && istMin < (14 * 60);
+    return istMin >= (9 * 60) && istMin < (23 * 60 + 30);
+  }
+  // NSE/BSE: Mon–Fri 09:15–15:30 only
+  if (dow === 6) return false;
+  return istMin >= (9 * 60 + 15) && istMin < (15 * 60 + 30);
 }
 
 function sleep(ms) {
@@ -115,7 +123,17 @@ export function useSocket() {
       const sym = activeSymbolRef.current;
       if (!res || !sym) return;
       if (Date.now() - lastSocketUpdateRef.current < POLL_INTERVAL_MS) return;
+      // During REST fallback (socket dead) — fetch chart AND sync market status
+      // so the StatusBar dot stays accurate without a socket event.
       await fetchChart(sym, res, { retries: 1 });
+      try {
+        const hRes = await fetch(`${BACKEND}/health`);
+        if (hRes.ok) {
+          const h = await hRes.json();
+          if (h?.ticksFlowing != null) setTicksFlowing(!!h.ticksFlowing);
+          if (h?.tickStreamActive != null) setTickStreamActive(!!h.tickStreamActive);
+        }
+      } catch (_) { /* health check failed — status stays as-is */ }
     }, POLL_INTERVAL_MS);
   }
 
@@ -143,7 +161,13 @@ export function useSocket() {
       }
     });
 
-    socket.on("disconnect", () => setConnected(false));
+    socket.on("disconnect", () => {
+      setConnected(false);
+      // Reset to null so StatusBar shows "Connecting…" not "Market Closed"
+      // when the socket reconnects. Server will re-send market_status on connect.
+      setTicksFlowing(null);
+      setTickStreamActive(false);
+    });
 
     socket.on("chart_update", (d) => {
       if (!matchesActive(d)) return;

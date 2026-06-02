@@ -317,34 +317,15 @@ export default function ReportsPage() {
     setFDate("all"); setFDir("all"); setFSize("all"); setFQ("");
     setSortCol("delta"); setSortDir("asc");
     try {
-      const isLive = (() => {
-        const now = new Date();
-        const istMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + 330) % 1440;
-        const dow = new Date(now.getTime() + 330 * 60000).getUTCDay();
-        return dow !== 0 && dow !== 6 && istMin >= 555 && istMin < 931;
-      })();
-      const url = isLive
-        ? `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`
-        : `${BACKEND}/api/chart?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
-      const r = await fetch(url, { method: isLive ? "POST" : "GET" });
+      // Backend handles live vs cached automatically based on symbol's market hours.
+      // Always GET — no POST/refresh decision needed on frontend.
+      const r = await fetch(`${BACKEND}/api/chart?symbol=${encodeURIComponent(sym)}&resolution=${res}`);
       const data = r.ok ? await r.json() : null;
 
       if (data?.candles?.length) {
         setCandles(data.candles);
         setEmaHighs(data.emaHighs || []);
         setEmaLows(data.emaLows || []);
-        setLoadState("done");
-        return;
-      }
-
-      const getUrl = `${BACKEND}/api/chart?symbol=${encodeURIComponent(sym)}&resolution=${res}`;
-      const r2 = await fetch(getUrl);
-      const data2 = r2.ok ? await r2.json() : null;
-
-      if (data2?.candles?.length) {
-        setCandles(data2.candles);
-        setEmaHighs(data2.emaHighs || []);
-        setEmaLows(data2.emaLows || []);
         setLoadState("done");
       } else {
         setLoadState("error");
@@ -389,16 +370,17 @@ export default function ReportsPage() {
   useEffect(() => {
     if (!symbol || timeframe == null) return;
     let cancelled = false;
+    // /api/chart auto-refreshes internally when market is live, so by the time
+    // this fires the server cache is already fresh — no delay needed.
     fetch(`${BACKEND}/api/motherwave?symbol=${encodeURIComponent(symbol)}&resolution=${timeframe}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (cancelled) return;
-        // API returns { wave, fibLevels, invalidation } or { motherwave: null }
         setMotherWave(data && data.wave ? data : null);
       })
       .catch(() => { if (!cancelled) setMotherWave(null); });
     return () => { cancelled = true; };
-  }, [symbol, timeframe, candles]); // re-fetch when candles update (live market)
+  }, [symbol, timeframe]);
 
   // ── Filter + sort ───────────────────────────────────────────────────────────
   const filtered = useMemo(() => {

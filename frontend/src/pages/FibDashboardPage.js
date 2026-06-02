@@ -233,8 +233,12 @@ function BiasPill({ bias }) {
   return <span className="fdb-pill fdb-p-neutral">— Neutral</span>;
 }
 
-function WaveCard({ segment, tfLabel, onClick }) {
-  if (!segment) return <div className="fdb-no-wave">No mother wave detected</div>;
+function WaveCard({ segment, tfLabel, onClick, mwError }) {
+  if (!segment) return (
+    <div className="fdb-no-wave">
+      {mwError ? "⚠ Mother wave unavailable — backend error" : "No mother wave detected"}
+    </div>
+  );
   const isBull = segment.toSide === "high";
   const delta = Math.abs(segment.toPrice - segment.fromPrice).toFixed(1);
   const waveNum = segment.waveNum != null ? segment.waveNum : null;
@@ -348,7 +352,7 @@ function EntryBlock({ entry }) {
 // ── Data hook ────────────────────────────────────────────────────────────────
 
 function useColData(symbol, tfValue) {
-  const [state, setState] = useState({ status: "idle", segment: null });
+  const [state, setState] = useState({ status: "idle", segment: null, mwError: false });
   const abortRef = useRef(null);
 
   const fetchCol = useCallback(async (sym, res) => {
@@ -356,31 +360,25 @@ function useColData(symbol, tfValue) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    setState((s) => ({ ...s, status: "loading" }));
+    setState((s) => ({ ...s, status: "loading", mwError: false }));
     try {
       let data = null;
-      // Try POST refresh first, fall back to GET
+      // Backend handles live vs cached automatically based on symbol's market hours.
+      // Always GET — no POST/refresh decision needed on frontend.
       try {
         const r = await fetch(
-          `${BACKEND}/api/chart/refresh?symbol=${encodeURIComponent(sym)}&resolution=${res}`,
-          { method: "POST", signal: ctrl.signal }
-        );
-        if (r.ok) data = await r.json();
-      } catch (_) { /* fall through to GET */ }
-
-      if (!data?.candles?.length) {
-        const r2 = await fetch(
           `${BACKEND}/api/chart?symbol=${encodeURIComponent(sym)}&resolution=${res}`,
           { signal: ctrl.signal }
         );
-        if (r2.ok) data = await r2.json();
-      }
+        if (r.ok) data = await r.json();
+      } catch (_) { /* network error — data stays null */ }
 
       if (ctrl.signal.aborted) return;
 
       if (data?.candles?.length) {
         // Fetch Mother Wave from backend — single source of truth in motherwave.js
         let mwResult = null;
+        let mwError = false;
         try {
           const mwR = await fetch(
             `${BACKEND}/api/motherwave?symbol=${encodeURIComponent(sym)}&resolution=${res}`,
@@ -389,8 +387,12 @@ function useColData(symbol, tfValue) {
           if (mwR.ok) {
             const mwData = await mwR.json();
             if (mwData && mwData.wave) mwResult = mwData;
+          } else {
+            mwError = true;
           }
-        } catch (_) { /* MW fetch failed — segment stays null */ }
+        } catch (_) {
+          mwError = true;
+        }
 
         if (ctrl.signal.aborted) return;
 
@@ -414,13 +416,14 @@ function useColData(symbol, tfValue) {
           emaHighsData: data.emaHighs || [],
           emaLowsData: data.emaLows || [],
           lastClose,
+          mwError,
         });
       } else {
-        setState({ status: "error", segment: null });
+        setState({ status: "error", segment: null, mwError: false });
       }
     } catch (e) {
       if (e.name === "AbortError") return;
-      setState({ status: "error", segment: null });
+      setState({ status: "error", segment: null, mwError: false });
     }
   }, []);
 
@@ -585,7 +588,7 @@ function HtfColumn({ symbol }) {
     { label: "15Min", value: 15 },
   ];
 
-  const { status, segment, reportMotherSegment, lastClose } = useColData(symbol, activeTF);
+  const { status, segment, reportMotherSegment, lastClose, mwError } = useColData(symbol, activeTF);
   // Use report-style mother wave (detectMotherWave algorithm) for display
   const motherSegment = reportMotherSegment || segment;
   const fibLevels = computeFibLevels(motherSegment);
@@ -634,7 +637,7 @@ function HtfColumn({ symbol }) {
         {status === "loading" ? (
           <div className="fdb-state"><div className="fdb-spinner" /></div>
         ) : (
-          <WaveCard segment={motherSegment} tfLabel={waveLabel} onClick={motherSegment ? handleWaveClick : undefined} />
+          <WaveCard segment={motherSegment} tfLabel={waveLabel} onClick={motherSegment ? handleWaveClick : undefined} mwError={mwError} />
         )}
 
         <div className="fdb-sep" />

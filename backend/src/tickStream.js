@@ -5,11 +5,14 @@
  *
  * THREE market state helpers (exported):
  *
- *   isLiveMarket()  — TRUE only Mon–Fri 09:15–15:30 IST
- *                     ONLY condition under which the tick stream runs.
+ *   isLiveMarket(symbol)  — Symbol-aware live market check.
+ *                           NSE/BSE: Mon–Fri 09:15–15:30 IST
+ *                           MCX:     Mon–Fri 09:00–23:30, Sat 09:00–14:00
  *
- *   isTradingDay()  — TRUE on Mon–Fri regardless of time.
- *                     Used for cache TTL and REST poll decisions.
+ *   isTradingDay(symbol)  — True if today is a trading day for this symbol.
+ *                           NSE/BSE: Mon–Fri
+ *                           MCX:     Mon–Sat
+ *                           No symbol → true if any market is open (Mon–Sat).
  *
  *   isMarketOpen()  — Alias for isLiveMarket(). Kept for back-compat.
  *
@@ -26,9 +29,14 @@ const { fyersDataSocket } = require("fyers-api-v3");
 const { loadToken } = require("./fyers");
 
 // Market hours IST
-const MARKET_OPEN_MIN = 9 * 60 + 15;   // 555  — NSE/BSE open
-const MARKET_CLOSE_MIN = 15 * 60 + 30;  // 930  — NSE/BSE close
-const MCX_CLOSE_MIN = 23 * 60 + 30;  // 1410 — MCX/commodity close
+const NSE_OPEN_MIN = 9 * 60 + 15;   // 555  — NSE/BSE open
+const NSE_CLOSE_MIN = 15 * 60 + 30;  // 930  — NSE/BSE close
+const MCX_OPEN_MIN = 9 * 60 + 0;    // 540  — MCX open (Mon–Fri)
+const MCX_CLOSE_MIN = 23 * 60 + 30;  // 1410 — MCX weekday close
+const MCX_SAT_CLOSE = 14 * 60 + 0;   // 840  — MCX Saturday close
+// Backward-compat aliases (server.js uses MARKET_OPEN_MIN indirectly via isLiveMarket)
+const MARKET_OPEN_MIN = NSE_OPEN_MIN;
+const MARKET_CLOSE_MIN = NSE_CLOSE_MIN;
 
 /** Returns true if the symbol belongs to MCX (commodity exchange). */
 function isMCXSymbol(symbol) {
@@ -62,9 +70,15 @@ function nowIST() {
  */
 function isLiveMarket(symbol) {
   const { mins, dow } = nowIST();
-  if (dow === 0 || dow === 6) return false;    // weekend
-  const closeMin = isMCXSymbol(symbol) ? MCX_CLOSE_MIN : MARKET_CLOSE_MIN;
-  return mins >= MARKET_OPEN_MIN && mins < closeMin;
+  if (dow === 0) return false;  // Sunday — nothing trades
+  if (isMCXSymbol(symbol)) {
+    // MCX: Mon–Fri 09:00–23:30, Saturday 09:00–14:00
+    if (dow === 6) return mins >= MCX_OPEN_MIN && mins < MCX_SAT_CLOSE;
+    return mins >= MCX_OPEN_MIN && mins < MCX_CLOSE_MIN;
+  }
+  // NSE/BSE/NFO/CDS: Mon–Fri 09:15–15:30 only
+  if (dow === 6) return false;
+  return mins >= NSE_OPEN_MIN && mins < NSE_CLOSE_MIN;
 }
 
 /**
@@ -81,9 +95,21 @@ function isAnyMarketLive(symbols) {
  * REST fetches and cache TTL decisions use this.
  * Does NOT mean the market is currently live.
  */
-function isTradingDay() {
+/**
+ * isTradingDay — true if any exchange is open today.
+ *   NSE/BSE/NFO: Mon–Fri
+ *   MCX: Mon–Sat
+ * Pass `symbol` to get the correct answer for that exchange.
+ * Without symbol, returns true if NSE OR MCX is open (conservative — Mon–Sat).
+ */
+function isTradingDay(symbol) {
   const { dow } = nowIST();
-  return dow !== 0 && dow !== 6;
+  if (dow === 0) return false;  // Sunday — nothing
+  if (dow === 6) {
+    // Saturday: only MCX trades
+    return symbol ? isMCXSymbol(symbol) : true;  // no symbol = any market
+  }
+  return true;  // Mon–Fri: always a trading day
 }
 
 /**
