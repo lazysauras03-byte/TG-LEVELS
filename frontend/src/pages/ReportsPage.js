@@ -123,13 +123,12 @@ function detectMotherWave(waves) {
   }
 
   // 2.5x Ratio Rule: MW delta / CW delta >= 2.5
-  // CW = largest opposite-direction wave starting after the MW ends
-  // If no opposite wave exists yet → pass (market hasn't retraced yet)
+  // CW = largest wave of ANY direction starting after the MW ends
+  // If no wave exists after MW → pass (nothing has challenged it yet)
   function passes25xRule(candidate) {
     const afterMW = byTime.filter((w) => w.col1Time > candidate.col2Time);
-    const oppositeWaves = afterMW.filter((w) => w.dir !== candidate.dir);
-    if (!oppositeWaves.length) return true; // no counter-move yet → pass
-    const cw = oppositeWaves.reduce((best, w) => (w.delta > best.delta ? w : best), oppositeWaves[0]);
+    if (!afterMW.length) return true; // nothing after → pass
+    const cw = afterMW.reduce((best, w) => (w.delta > best.delta ? w : best), afterMW[0]);
     return candidate.delta / cw.delta >= 2.5;
   }
 

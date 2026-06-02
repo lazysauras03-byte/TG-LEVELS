@@ -165,13 +165,12 @@ function getLastMotherwave(candles, emaHighs, emaLows) {
   };
 
   // 2.5x Ratio Rule: MW span / CW span >= 2.5
-  // CW = largest opposite-direction segment starting after MW ends
-  // No opposite segment found → pass (no counter-move yet)
+  // CW = largest segment of ANY direction starting after MW ends
+  // No segment after MW → pass (nothing has challenged it yet)
   const passes25x = (candidate) => {
     const after = byTime.filter(s => s.fromTime > candidate.toTime);
-    const opposite = after.filter(s => isBull(s) !== isBull(candidate));
-    if (!opposite.length) return true;
-    const cw = opposite.reduce((b, s) => span(s) > span(b) ? s : b, opposite[0]);
+    if (!after.length) return true; // nothing after → pass
+    const cw = after.reduce((b, s) => span(s) > span(b) ? s : b, after[0]);
     return span(candidate) / span(cw) >= 2.5;
   };
 

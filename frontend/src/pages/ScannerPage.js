@@ -311,8 +311,10 @@ export default function ScannerPage() {
     results.filter(r => r.motherwave).sort((a, b) => waveSize(b) - waveSize(a)),
     [results]
   );
+  // MW Bull = UPTREND, MW Bear = DOWNTREND, no MW = No Valid MW (excluded from both)
   const mwUptrend = useMemo(() => withMW.filter(r => r.motherwave.type === "bullish"), [withMW]);
   const mwDowntrend = useMemo(() => withMW.filter(r => r.motherwave.type === "bearish"), [withMW]);
+  const noValidMW = useMemo(() => results.filter(r => !r.motherwave), [results]);
 
   // Zone trays — downtrend stocks
   const downWithZone = useMemo(() => mwDowntrend.filter(r => r.trapZone), [mwDowntrend]);
@@ -390,6 +392,7 @@ export default function ScannerPage() {
         <div className="stat-chip"><span className="stat-chip-label">S1 Formed</span>  <span className="stat-chip-val">{counts.s1}</span></div>
         <div className="stat-chip"><span className="stat-chip-label">Uptrend</span>    <span className="stat-chip-val green">{mwUptrend.length}</span></div>
         <div className="stat-chip"><span className="stat-chip-label">Downtrend</span>  <span className="stat-chip-val red">{mwDowntrend.length}</span></div>
+        <div className="stat-chip"><span className="stat-chip-label">No Valid MW</span><span className="stat-chip-val" style={{ color: "#888" }}>{noValidMW.length}</span></div>
         <div className="stat-chip"><span className="stat-chip-label">Resolution</span> <span className="stat-chip-val accent">{tfLabel}</span></div>
         <div className="stat-chip"><span className="stat-chip-label">Last Scan</span>  <span className="stat-chip-val" style={{ fontSize: 11 }}>{lastScan ? fmtTime(lastScan) : "—"}</span></div>
         <div className="stat-chip"><span className="stat-chip-label">Duration</span>   <span className="stat-chip-val">{status?.lastScanDurationMs ? `${(status.lastScanDurationMs / 1000).toFixed(0)}s` : "—"}</span></div>

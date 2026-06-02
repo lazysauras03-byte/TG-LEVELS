@@ -10,8 +10,8 @@
  * Algorithm:
  *   1. Largest delta segment → first candidate.
  *   2. 2.5x Ratio Rule: MW span / CW span >= 2.5
- *      CW = largest opposite-direction segment after MW ends.
- *      No opposite segment → pass (no counter-move yet).
+ *      CW = largest segment (ANY direction) after MW ends.
+ *      No segment after MW → pass (no counter-move yet).
  *   3. -0.618 fib invalidation:
  *      BULL: inv = toPrice + 0.618 × span  (above end HIGH)
  *      BEAR: inv = toPrice - 0.618 × span  (below end LOW)
@@ -122,8 +122,6 @@ function detectMotherWave(candles) {
   const largest = pool => pool.reduce((b, s) => span(s) > span(b) ? s : b, pool[0]);
 
   // -0.618 extension level (beyond the tip, away from origin)
-  // BULL: above the HIGH tip  → toPrice + 0.618 * span
-  // BEAR: below the LOW tip   → toPrice - 0.618 * span
   const invLevel = s => isBull(s)
     ? s.toPrice + 0.618 * span(s)
     : s.toPrice - 0.618 * span(s);
@@ -145,13 +143,12 @@ function detectMotherWave(candles) {
   };
 
   // 2.5x Ratio Rule: MW span / CW span >= 2.5
-  // CW = largest opposite-direction segment starting after MW ends
-  // No opposite segment found → pass (no counter-move yet)
+  // CW = largest segment of ANY direction starting after MW ends
+  // No segment after MW → pass (no counter-move yet)
   const passes25x = (candidate) => {
     const after = byTime.filter(s => s.fromTime > candidate.toTime);
-    const opposite = after.filter(s => isBull(s) !== isBull(candidate));
-    if (!opposite.length) return true;
-    const cw = opposite.reduce((b, s) => span(s) > span(b) ? s : b, opposite[0]);
+    if (!after.length) return true; // nothing after → pass
+    const cw = after.reduce((b, s) => span(s) > span(b) ? s : b, after[0]);
     return span(candidate) / span(cw) >= 2.5;
   };
 
@@ -222,12 +219,8 @@ function fibPrice(mw, ratio) {
 }
 
 function calcTrapZone(mw) {
-  // Trap zone = the orange highlighted box on the chart:
-  //   fp(0)    = wave tip (toPrice) — the end of the wave
-  //   fp(0.236) = first retracement level back INTO the wave
-  // This is the same for both bull and bear waves.
-  const tip = fibPrice(mw, 0);      // = toPrice
-  const ret = fibPrice(mw, 0.236);  // first retracement
+  const tip = fibPrice(mw, 0);
+  const ret = fibPrice(mw, 0.236);
   return {
     high: Math.max(tip, ret),
     low: Math.min(tip, ret),
@@ -241,16 +234,11 @@ function classifyZone(mw, currentPrice) {
   const span = Math.abs(mw.fromPrice - mw.toPrice);
   const tol = span * 0.05;
 
-  // NEAR 0.618 — highest priority (HOT zone)
   if (Math.abs(currentPrice - fibPrice(mw, 0.618)) <= tol) return "hot618";
-
-  // NEAR 0.382
   if (Math.abs(currentPrice - fibPrice(mw, 0.382)) <= tol) return "near382";
 
-  // TRAP ZONE: price between fp(0)=wave tip and fp(0.236)
-  // This matches the highlighted orange box on the chart.
-  const tip = fibPrice(mw, 0);      // wave end / tip
-  const ret = fibPrice(mw, 0.236);  // first retracement
+  const tip = fibPrice(mw, 0);
+  const ret = fibPrice(mw, 0.236);
   const trapHigh = Math.max(tip, ret);
   const trapLow = Math.min(tip, ret);
   if (currentPrice >= trapLow && currentPrice <= trapHigh) return "trap";
