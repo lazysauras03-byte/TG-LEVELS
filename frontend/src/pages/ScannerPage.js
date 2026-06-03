@@ -78,21 +78,43 @@ function fibPrice(wave, ratio) {
 }
 
 // ─── Zone tray classification ─────────────────────────────────────────────────
+//
+// Priority (first match wins):
+//   1. NEAR 0.618 (HOT) — last price inside ±0.5% of span around fp(0.618)
+//   2. NEAR 0.382       — last price inside ±0.5% of span around fp(0.382)
+//   3. TRAP ZONE        — last price between fp(-0.236) and fp(0.236)
+//                         (the band straddling the wave tip on both sides)
+//   4. other            — not shown in any tray
+//
+// fp(ratio) = toPrice + ratio * (fromPrice - toPrice)
+//   ratio=0    → wave tip (toPrice)
+//   ratio=0.236 → first retracement into wave
+//   ratio=-0.236 → extension beyond tip (opposite direction)
+//
 function getZoneTray(r) {
   const w = mwWave(r);
-  if (!r.trapZone || !w) return "trap";
+  if (!w) return "other";
   const last = r.lastCandle?.close;
-  if (!last) return "trap";
+  if (!last) return "other";
+
   const span = Math.abs(w.fromPrice - w.toPrice);
-  const tol = span * 0.05;
+  const tol = span * 0.005; // ±0.5% of wave span
 
-  if (Math.abs(last - fibPrice(w, 0.618)) <= tol) return "hot618";
-  if (Math.abs(last - fibPrice(w, 0.382)) <= tol) return "near382";
+  // 1. NEAR 0.618 — tight ±0.5% band
+  const f618 = fibPrice(w, 0.618);
+  if (last >= f618 - tol && last <= f618 + tol) return "hot618";
 
-  const tip = fibPrice(w, 0);
-  const ret = fibPrice(w, 0.236);
-  const trapHigh = Math.max(tip, ret);
-  const trapLow = Math.min(tip, ret);
+  // 2. NEAR 0.382 — tight ±0.5% band
+  const f382 = fibPrice(w, 0.382);
+  if (last >= f382 - tol && last <= f382 + tol) return "near382";
+
+  // 3. TRAP ZONE — between fp(-0.236) and fp(0.236)
+  //    fp(-0.236) is the extension beyond the tip (above tip for bear, below for bull)
+  //    fp(0.236) is the first retracement back into the wave
+  const trapEdge1 = fibPrice(w, -0.236); // extension side
+  const trapEdge2 = fibPrice(w, 0.236);  // retracement side
+  const trapHigh = Math.max(trapEdge1, trapEdge2);
+  const trapLow = Math.min(trapEdge1, trapEdge2);
   if (last >= trapLow && last <= trapHigh) return "trap";
 
   return "other";
