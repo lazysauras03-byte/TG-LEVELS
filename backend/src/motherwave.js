@@ -10,7 +10,7 @@
  * ── ALGORITHM (exact sequential walk) ────────────────────────────
  *
  *   waves = all wave segments sorted chronologically (oldest first)
- *   i = 0
+ *   i = index of the LARGEST wave by delta  ← Step 1: start from biggest
  *
  *   while i < waves.length:
  *     candidate = waves[i]
@@ -131,7 +131,7 @@ function computeSegments(candles) {
 // ─── Core detection ───────────────────────────────────────────────────────────
 //
 // Implements the exact sequential walk algorithm:
-//   i=0 → candidate=waves[i], nextWave=waves[i+1]
+//   Step 1: i = index of the LARGEST wave by delta (not i=0)
 //   ratio fail → i++ (next wave, no skipping)
 //   ratio pass → check fib invalidation across ALL waves after candidate
 //     no breach → MW confirmed
@@ -165,7 +165,14 @@ function detectMotherWave(candles) {
     return false;
   };
 
-  let i = 0;
+  // Step 1: Start from the largest wave by delta (not the oldest)
+  let largestIdx = 0;
+  let largestDelta = 0;
+  for (let k = 0; k < waves.length; k++) {
+    const d = span(waves[k]);
+    if (d > largestDelta) { largestDelta = d; largestIdx = k; }
+  }
+  let i = largestIdx;
 
   while (i < waves.length) {
     const candidate = waves[i];
@@ -283,7 +290,13 @@ function detectMotherWaveForAPI(candles) {
   if (!segs.length) return null;
 
   // Sort chronologically — oldest first
-  const waves = [...segs].sort((a, b) => a.fromTime - b.fromTime);
+  const allWaves = [...segs].sort((a, b) => a.fromTime - b.fromTime);
+
+  // —— Match WavesIndicator.js exactly: cap to last MAX_WAVES=50 segments ——
+  // Frontend does: segments.slice(-MAX_WAVES) then numbers -(ns-i) ... -1
+  // Backend must do the same so waveNum shown here matches what chart shows.
+  const MAX_WAVES = 50;
+  const waves = allWaves.slice(-MAX_WAVES);
 
   // Assign waveNum: -N for oldest, -1 for newest (matches WavesIndicator.js)
   const total = waves.length;
@@ -308,7 +321,15 @@ function detectMotherWaveForAPI(candles) {
     return false;
   };
 
-  let i = 0;
+  // Step 1: Start from the largest wave by delta (not the oldest)
+  let largestIdx = 0;
+  let largestDelta = 0;
+  for (let k = 0; k < waves.length; k++) {
+    const d = sp(waves[k]);
+    if (d > largestDelta) { largestDelta = d; largestIdx = k; }
+  }
+  let i = largestIdx;
+
   while (i < waves.length) {
     const candidate = waves[i];
     const nextWave = waves[i + 1];
