@@ -14,6 +14,12 @@
  * Symbol filtering:
  *   MCX continuous contract symbols (ending in -I or -I suffix pattern)
  *   are silently dropped — Fyers does not support them for intraday history.
+ *
+ * MW shape:
+ *   detectMotherWaveForAPI returns { wave, fibLevels, invalidation }.
+ *   context.motherwave is that full object.
+ *   Strategies access context.motherwave.wave.endIndex etc.
+ *   trapZone and zone are derived here and passed separately for convenience.
  * ─────────────────────────────────────────────────────────────────
  */
 
@@ -22,7 +28,7 @@
 const EventEmitter = require("events");
 const { fetchCandles } = require("./fyers");
 const strategies = require("./strategies/strategyRegistry");
-const { detectMotherWave, calcTrapZone, classifyZone } = require("./motherwave");
+const { detectMotherWaveForAPI, calcTrapZone, classifyZone } = require("./motherwave");
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const CONCURRENCY = parseInt(process.env.SCANNER_CONCURRENCY || "3");
@@ -166,16 +172,24 @@ class ScannerRunner extends EventEmitter {
       this._errors.delete(symbol);
 
       // ── Compute Mother Wave ONCE for this symbol ───────────────────────────
-      // All strategies receive the same pre-computed motherwave via context.
-      // Strategies must NOT recompute it themselves.
-      const motherwave = detectMotherWave(candles);
-      const trapZone = motherwave ? calcTrapZone(motherwave) : null;
+      // detectMotherWaveForAPI is THE one function — returns { wave, fibLevels, invalidation }.
+      // Strategies receive context.motherwave = this full object.
+      // They access context.motherwave.wave.endIndex for S1 search start bar.
+      const mwResult = detectMotherWaveForAPI(candles);
+
+      // Derive trapZone and zone from the new shape for convenience
+      const trapZone = mwResult ? calcTrapZone(mwResult) : null;
       const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null;
-      const zone = motherwave && lastCandle
-        ? classifyZone(motherwave, lastCandle.close)
+      const zone = mwResult && lastCandle
+        ? classifyZone(mwResult, lastCandle.close)
         : "trap";
 
-      const context = { motherwave, trapZone, zone, lastCandle };
+      const context = {
+        motherwave: mwResult,   // full { wave, fibLevels, invalidation }
+        trapZone,
+        zone,
+        lastCandle,
+      };
 
       for (const strategy of strategies) {
         try {

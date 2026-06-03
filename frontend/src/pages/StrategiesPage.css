@@ -1189,3 +1189,284 @@
   font-size: 11px;
   text-align: center;
 }
+
+/* ─── Per-stock assignment dropdown ──────────────────────────────────────────── */
+.sp-assign-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sp-assign-select {
+  appearance: none;
+  background: var(--bg2, #1e1e2e);
+  color: var(--text2, #aaa);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+  min-width: 68px;
+}
+
+.sp-assign-select:hover {
+  border-color: var(--accent, #6c8fff);
+}
+
+.sp-assign-wrap.sp-assign-watch .sp-assign-select {
+  border-color: #6c8fff;
+  color: #6c8fff;
+}
+
+.sp-assign-wrap.sp-assign-s1 .sp-assign-select {
+  border-color: #f5c542;
+  color: #f5c542;
+}
+
+.sp-assign-wrap.sp-assign-s2 .sp-assign-select {
+  border-color: #f5a623;
+  color: #f5a623;
+}
+
+.sp-assign-wrap.sp-assign-s3 .sp-assign-select {
+  border-color: #4caf81;
+  color: #4caf81;
+}
+
+.sp-assign-wrap.sp-assign-skip .sp-assign-select {
+  border-color: #555;
+  color: #555;
+}
+
+/* MWCard assigned highlight */
+.sp-mw-card.sp-mw-assigned-watch {
+  box-shadow: 0 0 0 1.5px #6c8fff44;
+}
+
+.sp-mw-card.sp-mw-assigned-s1 {
+  box-shadow: 0 0 0 1.5px #f5c54244;
+}
+
+.sp-mw-card.sp-mw-assigned-s2 {
+  box-shadow: 0 0 0 1.5px #f5a62344;
+}
+
+.sp-mw-card.sp-mw-assigned-s3 {
+  box-shadow: 0 0 0 1.5px #4caf8144;
+}
+
+.sp-mw-card.sp-mw-assigned-skip {
+  opacity: 0.4;
+}
+
+/* ZoneTray assigned highlight */
+.sp-zone-tray-item.sp-zt-assigned-watch {
+  background: #6c8fff11;
+}
+
+.sp-zone-tray-item.sp-zt-assigned-s1 {
+  background: #f5c54211;
+}
+
+.sp-zone-tray-item.sp-zt-assigned-s2 {
+  background: #f5a62311;
+}
+
+.sp-zone-tray-item.sp-zt-assigned-s3 {
+  background: #4caf8111;
+}
+
+.sp-zone-tray-item.sp-zt-assigned-skip {
+  opacity: 0.4;
+}
+
+/* Watchlist view toggle button */
+.sp-view-watchlist-btn {
+  position: relative;
+  font-size: 14px;
+}
+
+.sp-wl-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  background: var(--accent, #6c8fff);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 1px 4px;
+  pointer-events: none;
+}
+
+/* ─── Watchlist Panel ─────────────────────────────────────────────────────────── */
+.sp-wl-section {
+  padding: 16px;
+}
+
+.sp-wl-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border, #333);
+}
+
+.sp-wl-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text1, #eee);
+}
+
+.sp-wl-count {
+  font-size: 12px;
+  color: var(--accent, #6c8fff);
+  font-weight: 600;
+}
+
+.sp-wl-clear-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border, #444);
+  color: var(--text3, #777);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sp-wl-clear-btn:hover {
+  border-color: #e55;
+  color: #e55;
+}
+
+.sp-wl-group {
+  margin-bottom: 20px;
+}
+
+.sp-wl-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.sp-wl-group-watch .sp-wl-group-label {
+  color: #6c8fff;
+  background: #6c8fff15;
+}
+
+.sp-wl-group-s1 .sp-wl-group-label {
+  color: #f5c542;
+  background: #f5c54215;
+}
+
+.sp-wl-group-s2 .sp-wl-group-label {
+  color: #f5a623;
+  background: #f5a62315;
+}
+
+.sp-wl-group-s3 .sp-wl-group-label {
+  color: #4caf81;
+  background: #4caf8115;
+}
+
+.sp-wl-group-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sp-wl-card {
+  background: var(--bg2, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 7px;
+  padding: 10px 12px;
+  min-width: 140px;
+  max-width: 180px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.sp-wl-card:hover {
+  border-color: var(--accent, #6c8fff);
+}
+
+.sp-wl-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.sp-wl-card-sym {
+  display: flex;
+  flex-direction: column;
+}
+
+.sp-wl-card-ticker {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text1, #eee);
+}
+
+.sp-wl-card-exch {
+  font-size: 9px;
+  color: var(--text3, #666);
+  margin-top: 1px;
+}
+
+.sp-wl-card-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.sp-wl-card-price {
+  font-size: 12px;
+  color: var(--text1, #eee);
+  font-weight: 500;
+}
+
+.sp-wl-card-zone {
+  font-size: 10px;
+  color: var(--text3, #777);
+  margin-top: 3px;
+}
+
+.sp-wl-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text3, #666);
+}
+
+.sp-wl-empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.sp-wl-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text2, #aaa);
+  margin-bottom: 8px;
+}
+
+.sp-wl-empty-sub {
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 360px;
+  margin: 0 auto;
+}
+
+/* Stats bar watchlist chip */
+.sp-stat .sp-stat-val.accent {
+  color: var(--accent, #6c8fff);
+}

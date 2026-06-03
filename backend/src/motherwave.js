@@ -2,10 +2,14 @@
  * motherwave.js
  * ─────────────────────────────────────────────────────────────────
  * Single source of truth for Mother Wave detection.
- * Used by scannerRunner.js — computed ONCE per symbol per scan,
- * then passed into every strategy via scan(symbol, candles, context).
  *
- * Strategies never recompute the mother wave themselves.
+ * ONE public function: detectMotherWaveForAPI
+ *   → Used by scannerRunner.js, /api/motherwave endpoint, everywhere.
+ *   → Returns: { wave, fibLevels, invalidation }
+ *   → wave.endIndex is included so S1 search knows which bar to start from.
+ *
+ * All pages (ScannerPage, StrategiesPage, ReportsPage, FibDashboardPage)
+ * receive the same shape — no more two-function split.
  *
  * ── ALGORITHM (exact sequential walk) ────────────────────────────
  *
@@ -128,162 +132,30 @@ function computeSegments(candles) {
   return segments;
 }
 
-// ─── Core detection ───────────────────────────────────────────────────────────
+// ─── API-ready MW detection — THE ONE PUBLIC FUNCTION ─────────────────────────
 //
-// Implements the exact sequential walk algorithm:
-//   Step 1: i = index of the LARGEST wave by delta (not i=0)
-//   ratio fail → i++ (next wave, no skipping)
-//   ratio pass → check fib invalidation across ALL waves after candidate
-//     no breach → MW confirmed
-//     breach     → i = index of breaking wave, restart
+// Returns: { wave, fibLevels, invalidation }
 //
-function detectMotherWave(candles) {
-  const segs = computeSegments(candles);
-  if (!segs.length) return null;
-
-  // Sort chronologically — oldest first
-  const waves = [...segs].sort((a, b) => a.fromTime - b.fromTime);
-
-  const span = s => Math.abs(s.toPrice - s.fromPrice);
-  const isBull = s => s.toSide === "high";
-
-  // -0.618 invalidation level beyond the tip
-  const invLevel = s => isBull(s)
-    ? s.toPrice + 0.618 * span(s)   // above HIGH tip
-    : s.toPrice - 0.618 * span(s);  // below LOW tip
-
-  // Returns true if `seg` breaches the candidate's fib bounds
-  const breachesFib = (candidate, inv, seg) => {
-    if (seg.fromTime <= candidate.toTime) return false;
-    if (isBull(candidate)) {
-      if (isBull(seg) && seg.toPrice > inv) return true; // -0.618 breach
-      if (!isBull(seg) && seg.toPrice < candidate.fromPrice) return true; // origin breach
-    } else {
-      if (!isBull(seg) && seg.toPrice < inv) return true; // -0.618 breach
-      if (isBull(seg) && seg.toPrice > candidate.fromPrice) return true; // origin breach
-    }
-    return false;
-  };
-
-  // Step 1: Start from the largest wave by delta (not the oldest)
-  let largestIdx = 0;
-  let largestDelta = 0;
-  for (let k = 0; k < waves.length; k++) {
-    const d = span(waves[k]);
-    if (d > largestDelta) { largestDelta = d; largestIdx = k; }
-  }
-  let i = largestIdx;
-
-  while (i < waves.length) {
-    const candidate = waves[i];
-    const nextWave = waves[i + 1]; // immediately next chronological wave
-
-    // No next wave → nothing challenged the candidate → MW confirmed
-    if (!nextWave) break;
-
-    // ── Ratio check: candidate.delta / nextWave.delta >= 2.5 ─────────────
-    const ratio = span(candidate) / span(nextWave);
-    if (ratio < 2.5) {
-      // FAIL — move one step forward (not to largest, just +1)
-      i += 1;
-      continue;
-    }
-
-    // ── Ratio passed — check fib invalidation across all waves after candidate
-    const inv = invLevel(candidate);
-    const breakingWave = waves.slice(i + 1).find(w => breachesFib(candidate, inv, w));
-
-    if (!breakingWave) break; // No breach → MW confirmed
-
-    // Invalidated — restart from the breaking wave
-    const breakIdx = waves.indexOf(breakingWave);
-    i = breakIdx;
-  }
-
-  const candidate = waves[i];
-  if (!candidate) return null;
-
-  const bull = isBull(candidate);
-  const s = span(candidate);
-
-  return {
-    // Direction
-    type: bull ? "bullish" : "bearish",
-    // Price bounds
-    high: bull ? candidate.toPrice : candidate.fromPrice,
-    low: bull ? candidate.fromPrice : candidate.toPrice,
-    // Segment fields (used everywhere for fib)
-    fromPrice: candidate.fromPrice,
-    toPrice: candidate.toPrice,
-    toSide: candidate.toSide,
-    fromTime: candidate.fromTime,
-    toTime: candidate.toTime,
-    // Backward compat aliases
-    startPrice: candidate.fromPrice,
-    endPrice: candidate.toPrice,
-    startTime: candidate.fromTime,
-    endTime: candidate.toTime,
-    startIndex: candidate.fromBarIndex,
-    endIndex: candidate.toBarIndex,
-    // -0.618 invalidation level
-    invalidation: bull
-      ? candidate.toPrice + 0.618 * s
-      : candidate.toPrice - 0.618 * s,
-    span: s,
-  };
-}
-
-// ─── Fib helpers ──────────────────────────────────────────────────────────────
-// price = toPrice + ratio × (fromPrice − toPrice)
-// ratio=0 → tip (toPrice), ratio=1 → origin (fromPrice)
-function fibPrice(mw, ratio) {
-  return mw.toPrice + ratio * (mw.fromPrice - mw.toPrice);
-}
-
-function calcTrapZone(mw) {
-  const tip = fibPrice(mw, 0);
-  const ret = fibPrice(mw, 0.236);
-  return {
-    high: Math.max(tip, ret),
-    low: Math.min(tip, ret),
-    center: (tip + ret) / 2,
-    range: Math.abs(mw.toPrice - mw.fromPrice),
-  };
-}
-
-function classifyZone(mw, currentPrice) {
-  if (!mw || currentPrice == null) return "other";
-  const span = Math.abs(mw.fromPrice - mw.toPrice);
-  const tol = span * 0.05;
-
-  if (Math.abs(currentPrice - fibPrice(mw, 0.618)) <= tol) return "hot618";
-  if (Math.abs(currentPrice - fibPrice(mw, 0.382)) <= tol) return "near382";
-
-  const tip = fibPrice(mw, 0);
-  const ret = fibPrice(mw, 0.236);
-  const trapHigh = Math.max(tip, ret);
-  const trapLow = Math.min(tip, ret);
-  if (currentPrice >= trapLow && currentPrice <= trapHigh) return "trap";
-
-  return "other";
-}
-
-// ─── API-ready MW detection ───────────────────────────────────────────────────
+// wave shape:
+//   wave.dir          : "bull" | "bear"
+//   wave.col1Time     : fromTime  (ms)  — wave origin time
+//   wave.col1Price    : fromPrice       — wave origin price
+//   wave.col2Time     : toTime    (ms)  — wave tip time
+//   wave.col2Price    : toPrice         — wave tip price
+//   wave.delta        : abs price span
+//   wave.waveNum      : counting label (-1 = latest, -N = oldest)
+//   wave.label        : "HH→LH" etc.
+//   wave.toSide       : "high" | "low"
+//   wave.fromPrice    : same as col1Price (for fib math)
+//   wave.toPrice      : same as col2Price (for fib math)
+//   wave.fromTime     : same as col1Time
+//   wave.toTime       : same as col2Time
+//   wave.endIndex     : bar index of wave tip — used by scannerS1.S2.S3 to know
+//                       which bar to start S1 search from
+//   wave.startIndex   : bar index of wave origin
 //
-// Returns the exact shape consumed by ReportsPage and FibDashboardPage:
-//   { wave, fibLevels, invalidation }
-//
-// `wave` mirrors the row shape built by the frontend pages so the same JSX
-// rendering code works with zero changes on the frontend side:
-//   wave.dir        : "bull" | "bear"
-//   wave.col1Time   : fromTime  (ms)
-//   wave.col1Price  : fromPrice (origin)
-//   wave.col2Time   : toTime    (ms)
-//   wave.col2Price  : toPrice   (tip)
-//   wave.delta      : abs price span
-//   wave.waveNum    : counting label (-1 = latest, -N = oldest)
-//   wave.label      : "HH→LH" etc.
-//   wave.toSide     : "high" | "low"
+// fibLevels: { "-0.618", "0.0", "0.236", "0.382", "0.5", "0.618", "0.786", "1.0" }
+// invalidation: same as fibLevels["-0.618"]
 //
 function detectMotherWaveForAPI(candles) {
   const segs = computeSegments(candles);
@@ -292,13 +164,11 @@ function detectMotherWaveForAPI(candles) {
   // Sort chronologically — oldest first
   const allWaves = [...segs].sort((a, b) => a.fromTime - b.fromTime);
 
-  // —— Match WavesIndicator.js exactly: cap to last MAX_WAVES=50 segments ——
-  // Frontend does: segments.slice(-MAX_WAVES) then numbers -(ns-i) ... -1
-  // Backend must do the same so waveNum shown here matches what chart shows.
+  // Cap to last MAX_WAVES=50 segments (matches WavesIndicator.js frontend)
   const MAX_WAVES = 50;
   const waves = allWaves.slice(-MAX_WAVES);
 
-  // Assign waveNum: -N for oldest, -1 for newest (matches WavesIndicator.js)
+  // Assign waveNum: -N for oldest, -1 for newest
   const total = waves.length;
   waves.forEach((w, i) => { w._waveNum = -(total - i); });
 
@@ -365,13 +235,16 @@ function detectMotherWaveForAPI(candles) {
       ? `${cand.prevWaveType}\u2192${cand.currWaveType}`
       : "—",
     toSide: cand.toSide,
+    // Flat fields for fib math (same as old detectMotherWave shape)
     fromPrice: cand.fromPrice,
     toPrice: cand.toPrice,
     fromTime: cand.fromTime,
     toTime: cand.toTime,
+    startIndex: cand.fromBarIndex,
+    endIndex: cand.toBarIndex,   // ← used by scannerS1.S2.S3 for S1 search start
   };
 
-  // ── Fib levels (identical to detectMotherWave.js on frontend) ───────────
+  // ── Fib levels ──────────────────────────────────────────────────────────
   const fibLevels = isBull
     ? {
       "-0.618": end + 0.618 * span,
@@ -401,4 +274,49 @@ function detectMotherWaveForAPI(candles) {
   };
 }
 
-module.exports = { detectMotherWave, detectMotherWaveForAPI, fibPrice, calcTrapZone, classifyZone, computeSegments };
+// ─── Fib helpers (still exported for any router that needs them) ──────────────
+function fibPrice(mw, ratio) {
+  // mw can be the full { wave, fibLevels } object OR a raw wave object
+  const w = mw.wave || mw;
+  const to = w.toPrice ?? w.endPrice;
+  const from = w.fromPrice ?? w.startPrice;
+  return to + ratio * (from - to);
+}
+
+function calcTrapZone(mw) {
+  const w = mw.wave || mw;
+  const tip = fibPrice(w, 0);
+  const ret = fibPrice(w, 0.236);
+  return {
+    high: Math.max(tip, ret),
+    low: Math.min(tip, ret),
+    center: (tip + ret) / 2,
+    range: Math.abs(w.toPrice - w.fromPrice),
+  };
+}
+
+function classifyZone(mw, currentPrice) {
+  const w = mw.wave || mw;
+  if (!w || currentPrice == null) return "other";
+  const span = Math.abs(w.fromPrice - w.toPrice);
+  const tol = span * 0.05;
+
+  if (Math.abs(currentPrice - fibPrice(w, 0.618)) <= tol) return "hot618";
+  if (Math.abs(currentPrice - fibPrice(w, 0.382)) <= tol) return "near382";
+
+  const tip = fibPrice(w, 0);
+  const ret = fibPrice(w, 0.236);
+  const trapHigh = Math.max(tip, ret);
+  const trapLow = Math.min(tip, ret);
+  if (currentPrice >= trapLow && currentPrice <= trapHigh) return "trap";
+
+  return "other";
+}
+
+module.exports = {
+  detectMotherWaveForAPI,   // ← THE one function everything uses
+  fibPrice,
+  calcTrapZone,
+  classifyZone,
+  computeSegments,
+};
