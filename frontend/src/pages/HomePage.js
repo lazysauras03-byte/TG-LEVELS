@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMarketStatus } from "../hooks/useMarketStatus";
+import { BACKEND } from "../config";
 import { useTheme } from "../App";
 import "./HomePage.css";
 
@@ -70,12 +70,21 @@ const NAV_ITEMS = [
 export default function HomePage() {
   const navigate = useNavigate();
   const cardRefs = useRef([]);
-  const marketStatus = useMarketStatus(); // "live" | "closed" | "connecting"
-  const isLive = marketStatus === "live";
-  const isConnecting = marketStatus === "connecting";
-  // dot class: green = live, grey = connecting, red = closed
-  const dotClass = isLive ? "green" : isConnecting ? "grey" : "red";
-  const statusLabel = isLive ? "Market Live" : isConnecting ? "Connecting…" : "Market Closed";
+  // Connection status — is the backend reachable? No market hours involved.
+  const [connState, setConnState] = useState("connecting"); // "connecting" | "connected" | "offline"
+  useEffect(() => {
+    let cancelled = false;
+    function check() {
+      fetch(`${BACKEND}/health`)
+        .then(r => { if (!cancelled) setConnState(r.ok ? "connected" : "offline"); })
+        .catch(() => { if (!cancelled) setConnState("offline"); });
+    }
+    check();
+    const t = setInterval(check, 30_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  const dotClass = connState === "connected" ? "green" : connState === "connecting" ? "grey" : "red";
+  const statusLabel = connState === "connected" ? "Connected" : connState === "connecting" ? "Connecting…" : "Offline";
   const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {

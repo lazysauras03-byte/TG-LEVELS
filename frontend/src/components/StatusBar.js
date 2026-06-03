@@ -30,7 +30,7 @@ const TIMEFRAMES = [
 //   todayMode, onTodayToggle                     — today filter
 //   crosshairBar                                 — OHLC display
 //   onSidebarToggle                              — sidebar toggle
-//   tickStreamActive                             — live tick indicator
+//   tickStreamActive                             — (unused, kept for back-compat)
 //   layoutId, onLayoutChange                     — layout picker (primary panel only)
 //   indicators, onIndicatorChange                — indicator panel
 //   dualMode, onDualToggle                       — KEPT as dead props
@@ -62,31 +62,21 @@ function StatusBar({
       ? { open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close }
       : null;
 
-  // ── Market status derivation — source of truth is ticks, not the clock ──────
-  // ticksFlowing=null  → server hasn't confirmed yet (initial connect)
-  // ticksFlowing=true  → ticks arriving within watchdog window → Market Open
-  // ticksFlowing=false → no ticks in window → Market Closed (or pre-open)
-  //
-  // Four display states:
-  //   "connecting"  — socket not yet connected OR ticksFlowing still null
-  //   "open"        — ticksFlowing true
-  //   "closed"      — ticksFlowing false, socket connected
-  //   "offline"     — socket.io disconnected entirely
-  const marketState = !connected
-    ? "offline"
-    : ticksFlowing === null
-      ? "connecting"
-      : ticksFlowing
-        ? "open"
-        : "closed";
+  // ── Connection status — is this browser connected to the backend? ─────────────────
+  // Three states only — no market hours, no tick state:
+  //   "connecting" — socket not yet established (initial page load)
+  //   "connected"  — socket.io live connection to backend
+  //   "offline"    — socket.io disconnected / backend unreachable
+  const connState = !connected
+    ? (ticksFlowing === null ? "connecting" : "offline")
+    : "connected";
 
   const STATUS_CONFIG = {
     offline: { color: "var(--red)", label: "Offline", pulse: false },
     connecting: { color: "var(--text2)", label: "Connecting…", pulse: false },
-    open: { color: "var(--green)", label: "Market Open", pulse: true },
-    closed: { color: "var(--amber, #f59e0b)", label: "Market Closed", pulse: false },
+    connected: { color: "var(--green)", label: "Connected", pulse: false },
   };
-  const sc = STATUS_CONFIG[marketState];
+  const sc = STATUS_CONFIG[connState];
 
   return (
     <header style={S.bar}>
@@ -160,18 +150,17 @@ function StatusBar({
 
       <div style={S.sep} />
 
-      {/* Market status — driven by ticksFlowing, not the clock */}
+      {/* Connection status — backend reachable or not */}
       <div style={S.statusGroup}>
         <div style={{
           ...S.dot,
           background: sc.color,
-          animation: sc.pulse ? "pulse 2s infinite" : "none",
-          opacity: marketState === "connecting" ? 0.5 : 1,
+          opacity: connState === "connecting" ? 0.5 : 1,
         }} />
         <span style={{
           color: sc.color,
           fontSize: 10, fontWeight: 700, whiteSpace: "nowrap",
-          opacity: marketState === "connecting" ? 0.7 : 1,
+          opacity: connState === "connecting" ? 0.7 : 1,
         }}>
           {sc.label}
         </span>
