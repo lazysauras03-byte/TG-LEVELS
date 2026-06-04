@@ -65,6 +65,20 @@ const NAV_ITEMS = [
     tagColor: "purple",
     stats: ["Motherwave detection", "TrapZone 0.236", "S1/S2/S3 entry"],
   },
+  {
+    id: "backtest",
+    path: "/backtest",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+        <polyline points="17 6 23 6 23 12" />
+      </svg>
+    ),
+    label: "Backtest",
+    description: "Scan 350 symbols for MW zone red candle setups after the Mother Wave tip",
+    tagColor: "orange",
+    stats: ["HOT zone 0.618", "NEAR zone 0.382", "EMA9L confirmation"],
+  },
 ];
 
 export default function HomePage() {

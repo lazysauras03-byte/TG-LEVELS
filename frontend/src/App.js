@@ -7,6 +7,7 @@ import ReportsPage from "./pages/ReportsPage";
 import FibDashboardPage from "./pages/FibDashboardPage";
 import ScannerPage from "./pages/ScannerPage";
 import StrategiesPage from "./pages/StrategiesPage";
+import BacktestPage from "./pages/BacktestPage";
 import "./App.css";
 
 // ─── Theme context shared across all pages ────────────────────────
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/scanner" element={<ScannerPage />} />
           <Route path="/strategies" element={<StrategiesPage />} />
           <Route path="/strategies/:id" element={<StrategiesPage />} />
+          <Route path="/backtest" element={<BacktestPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

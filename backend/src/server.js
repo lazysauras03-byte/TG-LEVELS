@@ -13,6 +13,8 @@ const { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, is
 const symbolsRouter = require("./symbolsRouter");
 const scannerRouter = require("./scannerRouter");
 const { scanner } = require("./scannerRunner");
+const backtestRouter = require("./backtestRouter");
+const { backtestRunner } = require("./backtestRunner");
 const { detectMotherWaveForAPI } = require("./motherwave");
 
 const app = express();
@@ -467,6 +469,7 @@ app.get("/api/signals", async (req, res) => {
 
 app.use("/api/symbols", symbolsRouter);
 app.use("/api/scanner", scannerRouter);
+app.use("/api/backtest", backtestRouter);
 
 /**
  * GET /api/motherwave?symbol=X&resolution=Y
@@ -759,6 +762,7 @@ server.listen(PORT, async () => {
     const allSymbols = loadScanSymbols();
     console.log(`[Scanner] Loaded ${allSymbols.length} symbols for scanning`);
     scanner.setSymbols(allSymbols);
+    backtestRunner.setSymbols(allSymbols);
 
     // Forward scanner events to all connected clients via Socket.IO
     scanner.on("scan_start", (data) => io.emit("scanner_start", data));
@@ -766,6 +770,13 @@ server.listen(PORT, async () => {
     scanner.on("scan_complete", (data) => io.emit("scanner_complete", data));
     scanner.on("signal_found", (data) => io.emit("scanner_signal", data));
     scanner.on("signal_partial", (data) => io.emit("scanner_partial", data));
+
+    // Forward backtest events
+    backtestRunner.on("backtest_start", (data) => io.emit("backtest_start", data));
+    backtestRunner.on("backtest_progress", (data) => io.emit("backtest_progress", data));
+    backtestRunner.on("backtest_complete", (data) => io.emit("backtest_complete", data));
+    backtestRunner.on("backtest_hit", (data) => io.emit("backtest_hit", data));
+
 
     // No auto-start — scan is triggered manually from the UI or POST /api/scanner/trigger
   });

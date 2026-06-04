@@ -1,0 +1,243 @@
+/**
+ * backtestRunner.js
+ * ─────────────────────────────────────────────────────────────────
+ * Scans all 350 symbols for candles that hit the Mother Wave
+ * 0.618 (HOT) or 0.382 (NEAR) zone AFTER the MW tip, are red,
+ * and close below EMA9 low.
+ *
+ * Zone definition (same as classifyZone in motherwave.js):
+ *   tol = span * 0.05
+ *   HOT  zone: fib_0.618 ± tol
+ *   NEAR zone: fib_0.382 ± tol
+ *
+ * Candle touches zone when:
+ *   candle.low  <= zoneHigh  AND
+ *   candle.high >= zoneLow
+ *
+ * Red candle: close < open
+ * EMA9 low:   close < ema9L at that bar index
+ * ─────────────────────────────────────────────────────────────────
+ */
+
+"use strict";
+
+const EventEmitter = require("events");
+const { fetchCandles } = require("./fyers");
+const { detectMotherWaveForAPI } = require("./motherwave");
+
+const CONCURRENCY = parseInt(process.env.SCANNER_CONCURRENCY || "3");
+const BATCH_DELAY_MS = parseInt(process.env.SCANNER_BATCH_DELAY_MS || "1000");
+const DEFAULT_RESOLUTION = parseInt(process.env.SCANNER_RESOLUTION || "15");
+const RETRY_LIMIT = 3;
+
+// ── EMA helper (same as motherwave.js) ───────────────────────────────────────
+function calcEMA(prices, period) {
+  const k = 2 / (period + 1);
+  const out = new Array(prices.length).fill(null);
+  let ema = null;
+  for (let i = 0; i < prices.length; i++) {
+    const p = prices[i];
+    if (p == null || isNaN(p)) continue;
+    ema = ema === null ? p : p * k + ema * (1 - k);
+    out[i] = ema;
+  }
+  return out;
+}
+
+function isValidSymbol(symbol) {
+  if (!symbol) return false;
+  const s = String(symbol).trim().toUpperCase();
+  if (s.startsWith("MCX:") && /-I$/.test(s.split(":")[1] || "")) return false;
+  return true;
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+class BacktestRunner extends EventEmitter {
+  constructor() {
+    super();
+    this._results = [];        // all hits across all symbols
+    this._errors = new Map();
+    this._retryQueue = [];
+    this._running = false;
+    this._aborted = false;
+    this._symbolList = [];
+    this._progress = { total: 0, done: 0, hits: 0 };
+    this._resolution = DEFAULT_RESOLUTION;
+    this._lastRunAt = null;
+    this._lastDurationMs = null;
+  }
+
+  setSymbols(symbols) {
+    this._symbolList = [...new Set(symbols.filter(Boolean))].filter(isValidSymbol);
+  }
+
+  getSymbols() { return [...this._symbolList]; }
+
+  async triggerNow(resolution) {
+    if (this._running) return { status: "already_running", progress: this._progress };
+    if (resolution != null) this._resolution = parseInt(resolution) || DEFAULT_RESOLUTION;
+    this._aborted = false;
+    this._results = [];
+    await this._run();
+    return { status: "triggered", symbols: this._symbolList.length, resolution: this._resolution };
+  }
+
+  stop() {
+    if (this._running) { this._aborted = true; console.log("[Backtest] Stop requested."); }
+  }
+
+  getStatus() {
+    return {
+      running: this._running,
+      symbolCount: this._symbolList.length,
+      resolution: this._resolution,
+      lastRunAt: this._lastRunAt,
+      lastDurationMs: this._lastDurationMs,
+      progress: this._progress,
+    };
+  }
+
+  getResults() { return [...this._results]; }
+
+  // ── Core loop ───────────────────────────────────────────────────────────────
+  async _run() {
+    if (this._running) return;
+    if (!this._symbolList.length) return;
+
+    this._running = true;
+    this._aborted = false;
+    this._results = [];
+    this._errors = new Map();
+    const startMs = Date.now();
+    const res = this._resolution;
+
+    const toScan = [...new Set([...this._retryQueue, ...this._symbolList])];
+    this._retryQueue = [];
+    this._progress = { total: toScan.length, done: 0, hits: 0 };
+
+    console.log(`[Backtest] ${toScan.length} symbols @ res=${res}m`);
+    this.emit("backtest_start", { total: toScan.length, resolution: res });
+
+    for (let i = 0; i < toScan.length; i += CONCURRENCY) {
+      if (this._aborted) { console.log(`[Backtest] Aborted after ${i} symbols.`); break; }
+      const batch = toScan.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(batch.map(sym => this._processSymbol(sym, false, res)));
+      this._progress.done = Math.min(i + CONCURRENCY, toScan.length);
+      this.emit("backtest_progress", { ...this._progress });
+      if (i + CONCURRENCY < toScan.length) await delay(BATCH_DELAY_MS);
+    }
+
+    // Retry pass
+    if (!this._aborted && this._retryQueue.length > 0) {
+      const retries = [...this._retryQueue];
+      this._retryQueue = [];
+      for (const sym of retries) {
+        if (this._aborted) break;
+        await this._processSymbol(sym, true, res);
+        await delay(600);
+      }
+    }
+
+    const durationMs = Date.now() - startMs;
+    this._lastRunAt = new Date().toISOString();
+    this._lastDurationMs = durationMs;
+    this._running = false;
+    this._aborted = false;
+
+    console.log(`[Backtest] Done in ${(durationMs / 1000).toFixed(1)}s — ${this._results.length} hits`);
+    this.emit("backtest_complete", {
+      total: toScan.length,
+      hits: this._results.length,
+      durationMs,
+      finishedAt: this._lastRunAt,
+      resolution: res,
+    });
+  }
+
+  // ── Per-symbol processing ───────────────────────────────────────────────────
+  async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION) {
+    try {
+      const candles = await fetchCandles(symbol, resolution, 5000);
+      if (!candles || candles.length < 10) return;
+
+      this._errors.delete(symbol);
+
+      const mwResult = detectMotherWaveForAPI(candles);
+      if (!mwResult || !mwResult.chain || !mwResult.chain.length) return;
+
+      // EMA9 of lows — shared across all MW checks
+      const ema9L = calcEMA(candles.map(c => c.low), 9);
+
+      // Scan every MW in the chain (current mwNo=0, previous -1, -2, ...)
+      for (const mwEntry of mwResult.chain) {
+        const { mwNo, wave, fibLevels } = mwEntry;
+        const span = wave.delta;
+        const tol = span * 0.05;
+
+        const hot618High = fibLevels["0.618"] + tol;
+        const hot618Low = fibLevels["0.618"] - tol;
+        const near382High = fibLevels["0.382"] + tol;
+        const near382Low = fibLevels["0.382"] - tol;
+
+        for (let idx = 0; idx < candles.length; idx++) {
+          const c = candles[idx];
+          if (c.time <= wave.toTime) continue;
+
+          const ema = ema9L[idx];
+          if (ema == null) continue;
+
+          const isRed = c.close < c.open;
+          const belowEma9L = c.close < ema;
+          if (!isRed || !belowEma9L) continue;
+
+          const touchesHot = c.low <= hot618High && c.high >= hot618Low;
+          const touchesNear = c.low <= near382High && c.high >= near382Low;
+          if (!touchesHot && !touchesNear) continue;
+
+          const zone = touchesHot ? "HOT" : "NEAR";
+          const hit = {
+            symbol,
+            mwNo,
+            mwFromTime: wave.fromTime,
+            mwTimestamp: wave.toTime,
+            mwFromPrice: wave.fromPrice,
+            mwToPrice: wave.toPrice,
+            mwDelta: wave.delta,
+            mwDir: wave.dir,
+            zone,
+            candleTime: c.time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            ema9L: +ema.toFixed(2),
+            fib618: +fibLevels["0.618"].toFixed(2),
+            fib382: +fibLevels["0.382"].toFixed(2),
+          };
+
+          this._results.push(hit);
+          this._progress.hits++;
+          this.emit("backtest_hit", hit);
+        }
+      }
+
+    } catch (err) {
+      const prev = this._errors.get(symbol) || { count: 0 };
+      prev.count++;
+      prev.lastError = err.message;
+      this._errors.set(symbol, prev);
+      if (!isRetry && prev.count <= RETRY_LIMIT) {
+        this._retryQueue.push(symbol);
+        console.warn(`[Backtest] ⚠ ${symbol} failed (retry): ${err.message}`);
+      } else {
+        console.error(`[Backtest] ✗ ${symbol} permanently failed: ${err.message}`);
+      }
+    }
+  }
+}
+
+// ── Singleton ─────────────────────────────────────────────────────────────────
+const backtestRunner = new BacktestRunner();
+module.exports = { backtestRunner, BacktestRunner };

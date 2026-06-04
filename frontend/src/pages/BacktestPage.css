@@ -1,0 +1,602 @@
+/* BacktestPage.css */
+
+.bt-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+/* ── Topbar ──────────────────────────────────────────────────────────────── */
+.bt-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  height: 52px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.bt-back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.bt-back-btn:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+.bt-back-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.bt-logo-img {
+  height: 28px;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.bt-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.bt-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+.bt-subtitle {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+/* ── Timeframe buttons ──────────────────────────────────────────────────── */
+.bt-tf-group {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.bt-tf-btn {
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+
+.bt-tf-btn:hover:not(:disabled) {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+.bt-tf-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.bt-tf-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Run / Stop button ──────────────────────────────────────────────────── */
+.bt-run-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.bt-run-btn--run {
+  background: var(--accent);
+  color: #fff;
+}
+
+.bt-run-btn--run:hover {
+  opacity: 0.88;
+}
+
+.bt-run-btn--stop {
+  background: #E24B4A;
+  color: #fff;
+}
+
+.bt-run-btn--stop:hover {
+  opacity: 0.88;
+}
+
+.bt-run-icon {
+  font-size: 10px;
+}
+
+.bt-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: bt-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes bt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.bt-theme-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bt-theme-btn:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+.bt-progress-wrap {
+  height: 3px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.bt-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+.bt-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Idle state ──────────────────────────────────────────────────────────── */
+.bt-idle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 24px;
+  text-align: center;
+}
+
+.bt-idle-icon {
+  font-size: 40px;
+  opacity: 0.6;
+}
+
+.bt-idle-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.bt-idle-desc {
+  font-size: 13px;
+  color: var(--text3);
+  line-height: 1.7;
+  max-width: 480px;
+}
+
+.bt-idle-btn {
+  margin-top: 8px;
+  padding: 10px 28px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.bt-idle-btn:hover {
+  opacity: 0.88;
+}
+
+/* ── Scanning state ──────────────────────────────────────────────────────── */
+.bt-scanning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px 24px;
+}
+
+.bt-scan-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: bt-spin 0.8s linear infinite;
+}
+
+.bt-scan-text {
+  font-size: 13px;
+  color: var(--text3);
+}
+
+/* ── Stats row ───────────────────────────────────────────────────────────── */
+.bt-stat-row {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.bt-stat {
+  padding: 12px 20px;
+  border-right: 1px solid var(--border);
+  min-width: 100px;
+}
+
+.bt-stat-lbl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+
+.bt-stat-val {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.bt-hot {
+  color: #e3a020;
+}
+
+.bt-near {
+  color: #639922;
+}
+
+.bt-bull {
+  color: #639922;
+}
+
+.bt-bear {
+  color: #E24B4A;
+}
+
+/* ── Filters ─────────────────────────────────────────────────────────────── */
+.bt-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.bt-select {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  height: 28px;
+}
+
+.bt-sym-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.bt-sym-search {
+  padding: 5px 28px 5px 10px;
+  font-size: 11px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  color: var(--text);
+  width: 140px;
+  height: 28px;
+}
+
+.bt-sym-search::placeholder {
+  color: var(--text3);
+}
+
+.bt-sym-clear {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+}
+
+.bt-row-count {
+  font-size: 11px;
+  color: var(--text3);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────── */
+.bt-table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.bt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bt-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg2);
+}
+
+.bt-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.bt-row {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.bt-row td {
+  padding: 7px 12px;
+  vertical-align: middle;
+}
+
+.bt-row-clickable {
+  cursor: pointer;
+}
+
+.bt-row-hot {
+  border-left: 3px solid #e3a020;
+}
+
+.bt-row-near {
+  border-left: 3px solid #639922;
+}
+
+.bt-row-hot:hover {
+  background: rgba(227, 160, 32, 0.06);
+}
+
+.bt-row-near:hover {
+  background: rgba(99, 153, 34, 0.06);
+}
+
+/* ── Cell types ──────────────────────────────────────────────────────────── */
+.bt-sym {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bt-sym-ticker {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.bt-sym-exch {
+  font-size: 9px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.bt-time {
+  font-size: 11px;
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.bt-delta {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+.bt-price {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+.bt-close-red {
+  color: #E24B4A;
+  font-weight: 600;
+}
+
+.bt-ema {
+  color: var(--text3);
+}
+
+.bt-fib {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Badges ──────────────────────────────────────────────────────────────── */
+.bt-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.bt-badge-bull {
+  background: rgba(99, 153, 34, 0.15);
+  color: #639922;
+}
+
+.bt-badge-bear {
+  background: rgba(226, 75, 74, 0.15);
+  color: #E24B4A;
+}
+
+.bt-badge-hot {
+  background: rgba(227, 160, 32, 0.15);
+  color: #e3a020;
+}
+
+.bt-badge-near {
+  background: rgba(99, 153, 34, 0.15);
+  color: #639922;
+}
+
+/* ── No data ─────────────────────────────────────────────────────────────── */
+.bt-no-data {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text3);
+  font-size: 13px;
+}
+
+/* ── MW No. column ───────────────────────────────────────────────────────── */
+.bt-mwno {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.bt-mwno-current {
+  background: rgba(61, 132, 255, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(61, 132, 255, 0.3);
+}
+
+.bt-mwno-prev {
+  background: rgba(226, 75, 74, 0.12);
+  color: #E24B4A;
+  border: 1px solid rgba(226, 75, 74, 0.25);
+}
+
+/* ── MW Timestamp Start → End ────────────────────────────────────────────── */
+.bt-mw-ts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.bt-mw-ts-start {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
+}
+
+.bt-mw-ts-arrow {
+  font-size: 9px;
+  color: var(--text3);
+  line-height: 1;
+}
+
+.bt-mw-ts-end {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}

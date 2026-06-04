@@ -200,6 +200,9 @@ function detectMotherWaveForAPI(candles) {
   }
   let i = largestIdx;
 
+  // ── Collect full chain: previousWaves (invalidated) + current ────────────
+  const previousWaves = [];  // invalidated candidates, oldest first
+
   while (i < waves.length) {
     const candidate = waves[i];
     const nextWave = waves[i + 1];
@@ -211,66 +214,100 @@ function detectMotherWaveForAPI(candles) {
     const inv = invLevel(candidate);
     const breakingWave = waves.slice(i + 1).find(w => breachesFib(candidate, inv, w));
     if (!breakingWave) break;
+
+    // This candidate passed ratio + fib but got breached → previous MW
+    previousWaves.push({ seg: candidate, inv });
     i = waves.indexOf(breakingWave);
   }
 
   const cand = waves[i];
   if (!cand) return null;
 
+  // ── Build wave object from a segment ─────────────────────────────────────
+  function buildWave(seg) {
+    const iB = bull(seg);
+    const sp2 = Math.abs(seg.toPrice - seg.fromPrice);
+    return {
+      dir: iB ? "bull" : "bear",
+      col1Time: seg.fromTime,
+      col1Price: seg.fromPrice,
+      col2Time: seg.toTime,
+      col2Price: seg.toPrice,
+      delta: +sp2.toFixed(2),
+      waveNum: seg._waveNum,
+      label: (seg.prevWaveType && seg.currWaveType)
+        ? `${seg.prevWaveType}\u2192${seg.currWaveType}`
+        : "—",
+      toSide: seg.toSide,
+      fromPrice: seg.fromPrice,
+      toPrice: seg.toPrice,
+      fromTime: seg.fromTime,
+      toTime: seg.toTime,
+      startIndex: seg.fromBarIndex,
+      endIndex: seg.toBarIndex,
+    };
+  }
+
+  // ── Build fib levels from a segment ──────────────────────────────────────
+  function buildFibs(seg) {
+    const iB = bull(seg);
+    const sp2 = Math.abs(seg.toPrice - seg.fromPrice);
+    const o = seg.fromPrice;
+    const e = seg.toPrice;
+    return iB
+      ? {
+        "-0.618": e + 0.618 * sp2,
+        "0.0": e,
+        "0.236": e - 0.236 * sp2,
+        "0.382": e - 0.382 * sp2,
+        "0.5": e - 0.5 * sp2,
+        "0.618": e - 0.618 * sp2,
+        "0.786": e - 0.786 * sp2,
+        "1.0": o,
+      }
+      : {
+        "1.0": o,
+        "0.786": o - 0.214 * sp2,
+        "0.618": o - 0.382 * sp2,
+        "0.5": o - 0.5 * sp2,
+        "0.382": o - 0.618 * sp2,
+        "0.236": o - 0.764 * sp2,
+        "0.0": e,
+        "-0.618": e - 0.618 * sp2,
+      };
+  }
+
+  // ── Current MW ────────────────────────────────────────────────────────────
   const isBull = bull(cand);
   const span = sp(cand);
   const origin = cand.fromPrice;
   const end = cand.toPrice;
 
-  // ── Wave row (matches ReportsPage buildTableRows shape) ─────────────────
-  const wave = {
-    dir: isBull ? "bull" : "bear",
-    col1Time: cand.fromTime,
-    col1Price: cand.fromPrice,
-    col2Time: cand.toTime,
-    col2Price: cand.toPrice,
-    delta: +span.toFixed(2),
-    waveNum: cand._waveNum,
-    label: (cand.prevWaveType && cand.currWaveType)
-      ? `${cand.prevWaveType}\u2192${cand.currWaveType}`
-      : "—",
-    toSide: cand.toSide,
-    // Flat fields for fib math (same as old detectMotherWave shape)
-    fromPrice: cand.fromPrice,
-    toPrice: cand.toPrice,
-    fromTime: cand.fromTime,
-    toTime: cand.toTime,
-    startIndex: cand.fromBarIndex,
-    endIndex: cand.toBarIndex,   // ← used by scannerS1.S2.S3 for S1 search start
-  };
+  const wave = buildWave(cand);
+  const fibLevels = buildFibs(cand);
 
-  // ── Fib levels ──────────────────────────────────────────────────────────
-  const fibLevels = isBull
-    ? {
-      "-0.618": end + 0.618 * span,
-      "0.0": end,
-      "0.236": end - 0.236 * span,
-      "0.382": end - 0.382 * span,
-      "0.5": end - 0.5 * span,
-      "0.618": end - 0.618 * span,
-      "0.786": end - 0.786 * span,
-      "1.0": origin,
-    }
-    : {
-      "1.0": origin,
-      "0.786": origin - 0.214 * span,
-      "0.618": origin - 0.382 * span,
-      "0.5": origin - 0.5 * span,
-      "0.382": origin - 0.618 * span,
-      "0.236": origin - 0.764 * span,
-      "0.0": end,
-      "-0.618": end - 0.618 * span,
+  // ── Previous MWs — numbered -1, -2, -3 ... from most recent to oldest ────
+  // previousWaves is oldest-first, so reverse for -1 = most recent previous
+  const prevChain = previousWaves.slice().reverse().map((item, idx) => {
+    const pw = buildWave(item.seg);
+    const pFib = buildFibs(item.seg);
+    return {
+      mwNo: -(idx + 1),          // -1, -2, -3 ...
+      wave: pw,
+      fibLevels: pFib,
+      invalidation: pFib["-0.618"],
     };
+  });
 
   return {
     wave,
     fibLevels,
     invalidation: fibLevels["-0.618"],
+    // Full chain — current is mwNo 0, previous are -1, -2, ...
+    chain: [
+      { mwNo: 0, wave, fibLevels, invalidation: fibLevels["-0.618"] },
+      ...prevChain,
+    ],
   };
 }
 
