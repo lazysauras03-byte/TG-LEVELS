@@ -600,3 +600,65 @@
   color: var(--text3);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Excel Download Button ───────────────────────────────────────────────── */
+.bt-stat-download {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 16px;
+  border-right: none;
+  margin-left: auto;
+}
+
+.bt-excel-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  background: rgba(33, 155, 93, 0.12);
+  border: 1px solid rgba(33, 155, 93, 0.35);
+  border-radius: 7px;
+  color: #27ae6e;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.bt-excel-btn:hover {
+  background: rgba(33, 155, 93, 0.22);
+  border-color: rgba(33, 155, 93, 0.6);
+  transform: translateY(-1px);
+}
+
+.bt-excel-btn:active {
+  transform: translateY(0);
+}
+
+.bt-excel-icon {
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.bt-excel-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+}
+
+.bt-excel-main {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.bt-excel-sub {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  opacity: 0.75;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}

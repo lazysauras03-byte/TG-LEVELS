@@ -147,134 +147,164 @@ function SymbolSearch({ symbol, onSelect }) {
   );
 }
 
-// ── Mother Wave Card ──────────────────────────────────────────────────────────
+// ── Mother Wave Chain Section ─────────────────────────────────────────────────
+// Shows the full MW chain: current (mwNo=0) + all previous invalidated MWs.
+// chain comes from motherWave.chain: [{ mwNo, wave, fibLevels, invalidation }]
 function MotherWaveSection({ motherWave, onWaveClick }) {
   if (!motherWave) return null;
 
-  const { wave, fibLevels, invalidation } = motherWave;
-  const isBull = wave.dir === "bull";
+  // Build chain: current first, then previous sorted by mwNo (-1, -2, ...)
+  const chain = motherWave.chain
+    ? [...motherWave.chain].sort((a, b) => b.mwNo - a.mwNo)  // 0 first, then -1, -2...
+    : [{ mwNo: 0, wave: motherWave.wave, fibLevels: motherWave.fibLevels, invalidation: motherWave.invalidation }];
 
-  // BULL display: -0.618 (top/highest) → 0 → 0.236...1.0 (bottom/lowest)
-  // BEAR display: 1.0 (top/highest) → 0.786...0 → -0.618 (bottom/lowest)
-  const fibOrder = isBull
+  // Current MW fib section — only shown for current (mwNo=0)
+  const current = chain.find(c => c.mwNo === 0);
+  const { wave: curWave, fibLevels: curFibs, invalidation: curInv } = current || {};
+  const isCurBull = curWave?.dir === "bull";
+
+  const fibOrder = isCurBull
     ? ["-0.618", "0.0", "0.236", "0.382", "0.5", "0.618", "0.786", "1.0"]
     : ["1.0", "0.786", "0.618", "0.5", "0.382", "0.236", "0.0", "-0.618"];
 
-  // Bar width: proportional to how far each price is from the bottom of the
-  // full range (including -0.618 extension). Widest bar = highest price in bull,
-  // widest bar = highest price in bear (which is -0.618 for bear).
-  const allPrices = Object.values(fibLevels);
-  const minP = Math.min(...allPrices);
-  const maxP = Math.max(...allPrices);
+  const allFibPrices = curFibs ? Object.values(curFibs) : [];
+  const minP = allFibPrices.length ? Math.min(...allFibPrices) : 0;
+  const maxP = allFibPrices.length ? Math.max(...allFibPrices) : 1;
   const priceRange = maxP - minP || 1;
-
   function barWidth(level) {
-    const price = fibLevels[level];
-    // Proportional distance from min price → 8% minimum so bars are visible
+    const price = curFibs[level];
     return Math.max(8, Math.round(((price - minP) / priceRange) * 100));
   }
 
   return (
     <div className="mw-section">
       <div className="mw-header-row">
-        <span className="mw-title">Mother Wave</span>
+        <span className="mw-title">Mother Wave Chain</span>
         <span className="mw-subtitle">
-          Dominant wave driving current structure · Fib invalidation at{" "}
-          <span className="mw-inv-price-inline">
-            {fmt(invalidation)}
-          </span>{" "}
-          (−0.618)
+          {chain.length === 1
+            ? "Current confirmed Mother Wave"
+            : `Current MW + ${chain.length - 1} previously invalidated wave${chain.length > 2 ? "s" : ""}`}
+          {curInv != null && (
+            <> · Current invalidation at{" "}
+              <span className="mw-inv-price-inline">{fmt(curInv)}</span>{" "}(−0.618)
+            </>
+          )}
         </span>
       </div>
 
-      {/* Mother wave row — same columns as main table */}
+      {/* Full chain table */}
       <div className="mw-table-wrap">
-        <table className="cr-table mw-table">
+        <table className="cr-table mw-table mw-chain-table">
           <thead>
             <tr>
+              <th className="mw-th-no">MW No.</th>
               <th className="cr-th-wave">Wave</th>
-              <th className="cr-th-wave cr-th-label">Wave</th>
+              <th className="cr-th-wave cr-th-label">Pattern</th>
               <th className="cr-th-dir">Direction</th>
-              <th className="cr-th">Time / Price</th>
-              <th className="cr-th">Time / Price</th>
-              <th className="cr-th">Wave Δ (abs)</th>
-              <th className="cr-th">Strength Bar</th>
-              <th className="cr-th">Size</th>
+              <th className="cr-th">Start</th>
+              <th className="cr-th">End</th>
+              <th className="cr-th">Δ</th>
+              <th className="cr-th">Status</th>
             </tr>
           </thead>
           <tbody>
-            <tr
-              className="cr-row cr-row-clickable mw-row-highlight"
-              onClick={() => onWaveClick(wave)}
-              title="Click to open this wave on the chart"
-            >
-              <td><span className="cr-w-num">{wave.waveNum}</span></td>
-              <td><span className="cr-w-label cr-w-label-standalone">{wave.label}</span></td>
-              <td>
-                {isBull
-                  ? <span className="cr-badge cr-badge-bull">▲ Bullish</span>
-                  : <span className="cr-badge cr-badge-bear">▼ Bearish</span>}
-              </td>
-              <td>
-                <span className="cr-time">{toISTStr(wave.col1Time)}</span>
-                <span className="cr-price">{fmt(wave.col1Price)}</span>
-              </td>
-              <td>
-                <span className="cr-time">{toISTStr(wave.col2Time)}</span>
-                <span className="cr-price">{fmt(wave.col2Price)}</span>
-              </td>
-              <td>
-                <span className={`cr-delta ${isBull ? "cr-bull" : "cr-bear"}`}>
-                  {isBull ? "+" : "−"}{wave.delta.toFixed(2)}
-                </span>
-              </td>
-              <td>
-                <div className="cr-bar-wrap">
-                  <div className="cr-bar-bg">
-                    <div className="cr-bar-fill"
-                      style={{ width: "100%", background: isBull ? "#639922" : "#E24B4A" }} />
-                  </div>
-                  <span className="cr-bar-pct">100%</span>
-                </div>
-              </td>
-              <td><SizeBadge delta={wave.delta} /></td>
-            </tr>
+            {chain.map(({ mwNo, wave, invalidation: inv }) => {
+              const isBull = wave.dir === "bull";
+              const isCurrent = mwNo === 0;
+              return (
+                <tr
+                  key={mwNo}
+                  className={`cr-row cr-row-clickable ${isCurrent ? "mw-row-highlight" : "mw-row-prev"}`}
+                  onClick={() => onWaveClick(wave)}
+                  title={isCurrent ? "Current Mother Wave — click to open on chart" : "Invalidated MW — click to open on chart"}
+                >
+                  {/* MW No. */}
+                  <td>
+                    <span className={`mw-chain-no ${isCurrent ? "mw-chain-no-current" : "mw-chain-no-prev"}`}>
+                      {mwNo === 0 ? "0" : mwNo}
+                    </span>
+                  </td>
+
+                  {/* Wave No. */}
+                  <td><span className="cr-w-num">{wave.waveNum}</span></td>
+
+                  {/* Pattern label */}
+                  <td>
+                    <span className="cr-w-label cr-w-label-standalone">{wave.label}</span>
+                  </td>
+
+                  {/* Direction */}
+                  <td>
+                    {isBull
+                      ? <span className="cr-badge cr-badge-bull">▲ Bullish</span>
+                      : <span className="cr-badge cr-badge-bear">▼ Bearish</span>}
+                  </td>
+
+                  {/* Start */}
+                  <td>
+                    <span className="cr-time">{toISTStr(wave.col1Time ?? wave.fromTime)}</span>
+                    <span className="cr-price">{fmt(wave.col1Price ?? wave.fromPrice)}</span>
+                  </td>
+
+                  {/* End */}
+                  <td>
+                    <span className="cr-time">{toISTStr(wave.col2Time ?? wave.toTime)}</span>
+                    <span className="cr-price">{fmt(wave.col2Price ?? wave.toPrice)}</span>
+                  </td>
+
+                  {/* Delta */}
+                  <td>
+                    <span className={`cr-delta ${isBull ? "cr-bull" : "cr-bear"}`}>
+                      {isBull ? "+" : "−"}{wave.delta.toFixed(2)}
+                    </span>
+                  </td>
+
+                  {/* Status */}
+                  <td>
+                    {isCurrent
+                      ? <span className="mw-status-badge mw-status-current">✓ Current MW</span>
+                      : <span className="mw-status-badge mw-status-invalidated">✗ Invalidated</span>}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      {/* Fibonacci levels */}
-      <div className="mw-fib-wrap">
-        <div className="mw-fib-title">Fibonacci Retracement Levels</div>
-        <div className="mw-fib-grid">
-          {fibOrder.map((level) => {
-            const price = fibLevels[level];
-            const isInv = level === "-0.618";
-            const isAnchor = level === "0.0" || level === "1.0";
-            const bw = barWidth(level);
-
-            return (
-              <div key={level}
-                className={`mw-fib-row${isInv ? " mw-fib-inv" : ""}${isAnchor ? " mw-fib-anchor" : ""}`}
-              >
-                <span className="mw-fib-level">{level}</span>
-                <div className="mw-fib-bar-track">
-                  <div className="mw-fib-bar-fill"
-                    style={{
-                      width: `${bw}%`,
-                      background: isInv ? "#3d84ff" : isBull ? "#639922" : "#E24B4A",
-                    }}
-                  />
+      {/* Fibonacci levels for current MW only */}
+      {curFibs && (
+        <div className="mw-fib-wrap">
+          <div className="mw-fib-title">Fibonacci Retracement Levels — Current MW (0)</div>
+          <div className="mw-fib-grid">
+            {fibOrder.map((level) => {
+              const price = curFibs[level];
+              const isInv = level === "-0.618";
+              const isAnchor = level === "0.0" || level === "1.0";
+              const bw = barWidth(level);
+              return (
+                <div key={level}
+                  className={`mw-fib-row${isInv ? " mw-fib-inv" : ""}${isAnchor ? " mw-fib-anchor" : ""}`}
+                >
+                  <span className="mw-fib-level">{level}</span>
+                  <div className="mw-fib-bar-track">
+                    <div className="mw-fib-bar-fill"
+                      style={{
+                        width: `${bw}%`,
+                        background: isInv ? "#3d84ff" : isCurBull ? "#639922" : "#E24B4A",
+                      }}
+                    />
+                  </div>
+                  <span className={`mw-fib-price${isInv ? " mw-fib-inv-price" : ""}`}>
+                    {fmt(price)}
+                  </span>
+                  {isInv && <span className="mw-fib-tag">Invalidation</span>}
                 </div>
-                <span className={`mw-fib-price${isInv ? " mw-fib-inv-price" : ""}`}>
-                  {fmt(price)}
-                </span>
-                {isInv && <span className="mw-fib-tag">Invalidation</span>}
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

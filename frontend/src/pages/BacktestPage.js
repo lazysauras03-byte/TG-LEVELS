@@ -13,6 +13,7 @@ import { io } from "socket.io-client";
 import { BACKEND } from "../config";
 import { useTheme } from "../App";
 import "./BacktestPage.css";
+import * as XLSX from "xlsx";
 
 const TIMEFRAMES = [
   { value: 1, label: "1m" },
@@ -144,6 +145,51 @@ export default function BacktestPage() {
   const pct = progress ? Math.round((progress.done / Math.max(1, progress.total)) * 100) : 0;
   const tfLabel = TIMEFRAMES.find(t => t.value === resolution)?.label || String(resolution);
 
+  // ── Download Excel ─────────────────────────────────────────────────────────
+  function handleDownloadExcel() {
+    if (!hits.length) return;
+    const tfLabel = TIMEFRAMES.find(t => t.value === resolution)?.label || String(resolution);
+    const rows = hits.map(h => ({
+      "MW No.": h.mwNo,
+      "Symbol": tickerOf(h.symbol),
+      "Exchange": h.symbol.split(":")[0],
+      "MW Start": toIST(h.mwFromTime),
+      "MW End": toIST(h.mwTimestamp),
+      "MW Δ": h.mwDir === "bull" ? `+${h.mwDelta}` : `-${h.mwDelta}`,
+      "MW Dir": h.mwDir === "bull" ? "Bull" : "Bear",
+      "Zone": h.zone,
+      "Candle Time": toIST(h.candleTime),
+      "Open": h.open,
+      "High": h.high,
+      "Low": h.low,
+      "Close": h.close,
+      "EMA9L": h.ema9L,
+      "Fib Lvl": h.zone === "HOT" ? h.fib618 : h.fib382,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // Column widths
+    ws["!cols"] = [
+      { wch: 8 },  // MW No.
+      { wch: 18 }, // Symbol
+      { wch: 8 },  // Exchange
+      { wch: 16 }, // MW Start
+      { wch: 16 }, // MW End
+      { wch: 10 }, // MW Δ
+      { wch: 6 },  // MW Dir
+      { wch: 10 }, // Zone
+      { wch: 16 }, // Candle Time
+      { wch: 10 }, // Open
+      { wch: 10 }, // High
+      { wch: 10 }, // Low
+      { wch: 10 }, // Close
+      { wch: 10 }, // EMA9L
+      { wch: 10 }, // Fib Lvl
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Backtest");
+    XLSX.writeFile(wb, `backtest_${tfLabel}.xlsx`);
+  }
+
   // ── Stats ──────────────────────────────────────────────────────────────────
   const hotCount = hits.filter(h => h.zone === "HOT").length;
   const nearCount = hits.filter(h => h.zone === "NEAR").length;
@@ -266,6 +312,18 @@ export default function BacktestPage() {
                 <div className="bt-stat">
                   <div className="bt-stat-lbl">Scan Time</div>
                   <div className="bt-stat-val">{(status.lastDurationMs / 1000).toFixed(1)}s</div>
+                </div>
+              )}
+              <div style={{ flex: 1 }} />
+              {hits.length > 0 && phase !== "running" && (
+                <div className="bt-stat bt-stat-download">
+                  <button className="bt-excel-btn" onClick={handleDownloadExcel} title={`Download all ${hits.length} rows as Excel`}>
+                    <span className="bt-excel-icon">⬇</span>
+                    <span className="bt-excel-label">
+                      <span className="bt-excel-main">Download Excel</span>
+                      <span className="bt-excel-sub">{hits.length} rows · {TIMEFRAMES.find(t => t.value === resolution)?.label || resolution}</span>
+                    </span>
+                  </button>
                 </div>
               )}
             </div>

@@ -1005,3 +1005,70 @@
     display: none;
   }
 }
+
+/* ── MW Chain Table ──────────────────────────────────────────────────────── */
+.mw-chain-table .mw-th-no {
+  width: 68px;
+  text-align: center;
+}
+
+/* MW No. badge in chain table */
+.mw-chain-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.mw-chain-no-current {
+  background: rgba(61, 132, 255, 0.15);
+  color: var(--accent, #3d84ff);
+  border: 1px solid rgba(61, 132, 255, 0.3);
+}
+
+.mw-chain-no-prev {
+  background: rgba(226, 75, 74, 0.12);
+  color: #E24B4A;
+  border: 1px solid rgba(226, 75, 74, 0.25);
+}
+
+/* Previous (invalidated) MW row — slightly dimmed */
+.mw-row-prev {
+  opacity: 0.78;
+}
+
+.mw-row-prev:hover {
+  opacity: 1;
+  background: rgba(226, 75, 74, 0.04);
+}
+
+/* Status badges */
+.mw-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.mw-status-current {
+  background: rgba(61, 132, 255, 0.13);
+  color: var(--accent, #3d84ff);
+  border: 1px solid rgba(61, 132, 255, 0.25);
+}
+
+.mw-status-invalidated {
+  background: rgba(226, 75, 74, 0.12);
+  color: #E24B4A;
+  border: 1px solid rgba(226, 75, 74, 0.22);
+}
