@@ -65,6 +65,7 @@ class BacktestRunner extends EventEmitter {
     this._symbolList = [];
     this._progress = { total: 0, done: 0, hits: 0 };
     this._resolution = DEFAULT_RESOLUTION;
+    this._lookbackDays = null;
     this._lastRunAt = null;
     this._lastDurationMs = null;
   }
@@ -75,9 +76,11 @@ class BacktestRunner extends EventEmitter {
 
   getSymbols() { return [...this._symbolList]; }
 
-  async triggerNow(resolution) {
+  async triggerNow(resolution, lookbackDays = null) {
     if (this._running) return { status: "already_running", progress: this._progress };
     if (resolution != null) this._resolution = parseInt(resolution) || DEFAULT_RESOLUTION;
+    if (lookbackDays != null) this._lookbackDays = parseInt(lookbackDays);
+    else this._lookbackDays = null;
     this._aborted = false;
     this._results = [];
     await this._run();
@@ -123,7 +126,7 @@ class BacktestRunner extends EventEmitter {
     for (let i = 0; i < toScan.length; i += CONCURRENCY) {
       if (this._aborted) { console.log(`[Backtest] Aborted after ${i} symbols.`); break; }
       const batch = toScan.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(batch.map(sym => this._processSymbol(sym, false, res)));
+      await Promise.allSettled(batch.map(sym => this._processSymbol(sym, false, res, this._lookbackDays)));
       this._progress.done = Math.min(i + CONCURRENCY, toScan.length);
       this.emit("backtest_progress", { ...this._progress });
       if (i + CONCURRENCY < toScan.length) await delay(BATCH_DELAY_MS);
@@ -135,7 +138,7 @@ class BacktestRunner extends EventEmitter {
       this._retryQueue = [];
       for (const sym of retries) {
         if (this._aborted) break;
-        await this._processSymbol(sym, true, res);
+        await this._processSymbol(sym, true, res, this._lookbackDays);
         await delay(600);
       }
     }
@@ -157,9 +160,9 @@ class BacktestRunner extends EventEmitter {
   }
 
   // ── Per-symbol processing ───────────────────────────────────────────────────
-  async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION) {
+  async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION, lookbackDays = null) {
     try {
-      const candles = await fetchCandles(symbol, resolution, 5000);
+      const candles = await fetchCandles(symbol, resolution, 5000, lookbackDays);
       if (!candles || candles.length < 10) return;
 
       this._errors.delete(symbol);

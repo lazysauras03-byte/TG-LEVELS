@@ -1,13 +1,19 @@
 /**
- * BacktestPage.js
- * Scans 350 symbols for candles that:
- *   1. Occur AFTER the Mother Wave tip
- *   2. Touch the HOT (0.618) or NEAR (0.382) zone  [tol = span * 0.05]
- *   3. Are red (close < open)
- *   4. Close below EMA9 low
+ * BacktestPage.js  –  Chartink-style Backtest History
+ *
+ * Logic: MW Zone · Red Candle · Close < EMA9L · within Fib 0.618 / 0.382 zone
+ *
+ * Views:
+ *   STOCKS  – grid (stock × time-slot) with HOT/NEAR badge per cell
+ *   BARS    – bar chart (time-slot → count), coloured per stock
+ *
+ * Date ranges: Last 7 / 15 / 30 / 60 / 90 days + Custom
+ * On cell click → opens /charts in new tab with fibDrawing params
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, {
+  useState, useEffect, useRef, useCallback, useMemo,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import { BACKEND } from "../config";
@@ -15,6 +21,7 @@ import { useTheme } from "../App";
 import "./BacktestPage.css";
 import * as XLSX from "xlsx";
 
+// ── Timeframes ────────────────────────────────────────────────────────────────
 const TIMEFRAMES = [
   { value: 1, label: "1m" },
   { value: 3, label: "3m" },
@@ -25,10 +32,24 @@ const TIMEFRAMES = [
   { value: 10080, label: "1W" },
 ];
 
-// ── Formatters ────────────────────────────────────────────────────────────────
-const numFmt = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-function fmt(n) { return n == null ? "—" : numFmt.format(Number(n)); }
+// ── Date range presets ────────────────────────────────────────────────────────
+const DATE_PRESETS = [
+  { label: "Last 7 days", days: 7 },
+  { label: "Last 15 days", days: 15 },
+  { label: "Last 30 days", days: 30 },
+  { label: "Last 60 days", days: 60 },
+  { label: "Last 90 days", days: 90 },
+];
 
+// ── Palette for bar chart ─────────────────────────────────────────────────────
+const STOCK_COLORS = [
+  "#4CAF50", "#2196F3", "#FF9800", "#E91E63", "#9C27B0",
+  "#00BCD4", "#F44336", "#FFEB3B", "#8BC34A", "#FF5722",
+  "#3F51B5", "#009688", "#FFC107", "#607D8B", "#795548",
+  "#FF4081", "#00E5FF", "#76FF03", "#FF6D00", "#AA00FF",
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function toIST(tsMs) {
   if (!tsMs) return "—";
   const d = new Date(tsMs + 5.5 * 60 * 60 * 1000);
@@ -36,7 +57,17 @@ function toIST(tsMs) {
   const mon = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${dd}/${mon} ${hh}:${mm}`;
+  return `${dd}-${mon} ${hh}:${mm}`;
+}
+
+function slotKey(tsMs) {
+  if (!tsMs) return "";
+  const d = new Date(tsMs + 5.5 * 60 * 60 * 1000);
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mon = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${dd}-${mon}\n${hh}:${mm}`;
 }
 
 function tickerOf(sym) {
@@ -44,40 +75,74 @@ function tickerOf(sym) {
   return idx >= 0 ? sym.slice(idx + 1) : sym;
 }
 
+function openChart(hit, resolution) {
+  const fibDrawing = encodeURIComponent(JSON.stringify({
+    p1Price: hit.mwToPrice,
+    p1Time: Math.round(hit.mwTimestamp / 1000),
+    p2Price: hit.mwFromPrice,
+    p2Time: Math.round(hit.mwFromTime / 1000),
+  }));
+  const params = new URLSearchParams({
+    symbol: hit.symbol,
+    resolution: String(resolution),
+    waveFrom: String(hit.mwFromTime),
+    waveTo: String(hit.mwTimestamp),
+    fibDrawing,
+  });
+  window.open(`/charts?${params.toString()}`, "_blank");
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function BacktestPage() {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const socketRef = useRef(null);
+  const gridScrollRef = useRef(null);
 
   const [resolution, setResolution] = useState(15);
-  const [status, setStatus] = useState(null);   // from /api/backtest/status
-  const [progress, setProgress] = useState(null);   // { total, done, hits }
+  const [status, setStatus] = useState(null);
+  const [progress, setProgress] = useState(null);
   const [hits, setHits] = useState([]);
-  const [phase, setPhase] = useState("idle"); // idle | running | done
+  const [phase, setPhase] = useState("idle");
 
-  // Filters
-  const [fZone, setFZone] = useState("all");  // all | HOT | NEAR
-  const [fDir, setFDir] = useState("all");  // all | bull | bear
-  const [fSym, setFSym] = useState("");
+  // date-range
+  const [selectedPreset, setSelectedPreset] = useState(15); // days
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [showCustom, setShowCustom] = useState(false);
 
-  // ── Fetch initial status ───────────────────────────────────────────────────
+  // view
+  const [view, setView] = useState("stocks"); // "stocks" | "bars"
+  const [stockSearch, setStockSearch] = useState("");
+
+  // ── computed lookbackDays ─────────────────────────────────────────────────
+  const lookbackDays = useMemo(() => {
+    if (showCustom && customFrom && customTo) {
+      const from = new Date(customFrom);
+      const to = new Date(customTo);
+      const diff = Math.ceil((to - from) / 86400000) + 1;
+      return Math.max(1, Math.min(90, diff));
+    }
+    return selectedPreset;
+  }, [showCustom, customFrom, customTo, selectedPreset]);
+
+  // ── Fetch initial status / results ───────────────────────────────────────
   const fetchStatus = useCallback(async () => {
     try {
       const s = await fetch(`${BACKEND}/api/backtest/status`).then(r => r.json());
       setStatus(s);
       if (s.running) setPhase("running");
-    } catch { /* backend not up yet */ }
+    } catch { }
   }, []);
 
   const fetchResults = useCallback(async () => {
     try {
       const r = await fetch(`${BACKEND}/api/backtest/results`).then(r => r.json());
       if (r.results?.length) { setHits(r.results); setPhase("done"); }
-    } catch { /* ignore */ }
+    } catch { }
   }, []);
 
-  // ── Socket setup ───────────────────────────────────────────────────────────
+  // ── Socket ────────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchStatus();
     fetchResults();
@@ -85,122 +150,111 @@ export default function BacktestPage() {
     const sock = io(BACKEND, { transports: ["websocket"] });
     socketRef.current = sock;
 
-    sock.on("backtest_start", (d) => {
-      setPhase("running");
-      setHits([]);
-      setProgress({ total: d.total, done: 0, hits: 0 });
-    });
-
-    sock.on("backtest_progress", (d) => {
-      setProgress({ total: d.total, done: d.done, hits: d.hits });
-    });
-
-    sock.on("backtest_hit", (hit) => {
-      setHits(prev => [...prev, hit]);
-    });
-
-    sock.on("backtest_complete", () => {
-      setPhase("done");
-      setProgress(null);
-      fetchStatus();
-    });
+    sock.on("backtest_start", (d) => { setPhase("running"); setHits([]); setProgress({ total: d.total, done: 0, hits: 0 }); });
+    sock.on("backtest_progress", (d) => { setProgress({ total: d.total, done: d.done, hits: d.hits }); });
+    sock.on("backtest_hit", (h) => { setHits(prev => [...prev, h]); });
+    sock.on("backtest_complete", () => { setPhase("done"); setProgress(null); fetchStatus(); });
 
     return () => { sock.disconnect(); };
   }, [fetchStatus, fetchResults]);
 
-  // ── Run / Stop ─────────────────────────────────────────────────────────────
+  // ── Run / Stop ────────────────────────────────────────────────────────────
   async function handleRun() {
     if (phase === "running") {
       await fetch(`${BACKEND}/api/backtest/stop`, { method: "POST" });
-      setPhase("idle");
-      setProgress(null);
+      setPhase("idle"); setProgress(null);
       return;
     }
-    setHits([]);
-    setPhase("running");
-    setProgress(null);
+    setHits([]); setPhase("running"); setProgress(null);
     try {
       await fetch(`${BACKEND}/api/backtest/trigger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resolution }),
+        body: JSON.stringify({ resolution, lookbackDays }),
       });
     } catch (e) {
-      console.error("[Backtest] Trigger failed:", e);
+      console.error("[Backtest] trigger failed:", e);
       setPhase("idle");
     }
   }
 
-  // ── Filtered results ───────────────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    return hits.filter(h => {
-      if (fZone !== "all" && h.zone !== fZone) return false;
-      if (fDir !== "all" && h.mwDir !== fDir) return false;
-      if (fSym.trim() && !tickerOf(h.symbol).toLowerCase().includes(fSym.trim().toLowerCase())) return false;
-      return true;
-    });
-  }, [hits, fZone, fDir, fSym]);
+  // ── Build time-slot index ─────────────────────────────────────────────────
+  const { slots, stockRows, slotCountMap } = useMemo(() => {
+    // filter by search
+    const filtered = hits.filter(h =>
+      !stockSearch.trim() ||
+      tickerOf(h.symbol).toLowerCase().includes(stockSearch.trim().toLowerCase())
+    );
 
+    // Unique time slots sorted newest → oldest
+    const slotSet = new Set(filtered.map(h => h.candleTime));
+    const slots = [...slotSet].sort((a, b) => b - a);
+
+    // Per-stock: { ticker, symbol, count, cells: { slotKey → [hits] } }
+    const stockMap = new Map();
+    for (const h of filtered) {
+      const t = tickerOf(h.symbol);
+      if (!stockMap.has(t)) stockMap.set(t, { ticker: t, symbol: h.symbol, count: 0, cells: new Map() });
+      const entry = stockMap.get(t);
+      entry.count++;
+      if (!entry.cells.has(h.candleTime)) entry.cells.set(h.candleTime, []);
+      entry.cells.get(h.candleTime).push(h);
+    }
+
+    // Sort stocks by most recent hit time (newest first), then alphabetically for ties
+    const stockRows = [...stockMap.values()].sort((a, b) => {
+      const aLatest = Math.max(...[...a.cells.keys()]);
+      const bLatest = Math.max(...[...b.cells.keys()]);
+      if (bLatest !== aLatest) return bLatest - aLatest;
+      return a.ticker.localeCompare(b.ticker);
+    });
+
+    // Slot → count (for bar chart)
+    const slotCountMap = new Map();
+    const slotStockMap = new Map();
+    for (const h of filtered) {
+      const k = h.candleTime;
+      slotCountMap.set(k, (slotCountMap.get(k) || 0) + 1);
+      if (!slotStockMap.has(k)) slotStockMap.set(k, new Map());
+      const t = tickerOf(h.symbol);
+      slotStockMap.get(k).set(t, (slotStockMap.get(k).get(t) || 0) + 1);
+    }
+
+    return { slots, stockRows, slotCountMap, slotStockMap };
+  }, [hits, stockSearch]);
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const hotCount = hits.filter(h => h.zone === "HOT").length;
+  const nearCount = hits.filter(h => h.zone === "NEAR").length;
+  const symCount = new Set(hits.map(h => h.symbol)).size;
   const isRunning = phase === "running";
   const pct = progress ? Math.round((progress.done / Math.max(1, progress.total)) * 100) : 0;
   const tfLabel = TIMEFRAMES.find(t => t.value === resolution)?.label || String(resolution);
 
-  // ── Download Excel ─────────────────────────────────────────────────────────
-  function handleDownloadExcel() {
+  // ── Download ──────────────────────────────────────────────────────────────
+  function handleDownload() {
     if (!hits.length) return;
-    const tfLabel = TIMEFRAMES.find(t => t.value === resolution)?.label || String(resolution);
     const rows = hits.map(h => ({
-      "MW No.": h.mwNo,
       "Symbol": tickerOf(h.symbol),
-      "Exchange": h.symbol.split(":")[0],
-      "MW Start": toIST(h.mwFromTime),
-      "MW End": toIST(h.mwTimestamp),
-      "MW Δ": h.mwDir === "bull" ? `+${h.mwDelta}` : `-${h.mwDelta}`,
-      "MW Dir": h.mwDir === "bull" ? "Bull" : "Bear",
-      "Zone": h.zone,
       "Candle Time": toIST(h.candleTime),
-      "Open": h.open,
-      "High": h.high,
-      "Low": h.low,
-      "Close": h.close,
-      "EMA9L": h.ema9L,
-      "Fib Lvl": h.zone === "HOT" ? h.fib618 : h.fib382,
+      "Zone": h.zone,
+      "MW Dir": h.mwDir === "bull" ? "Bull" : "Bear",
+      "Open": h.open, "High": h.high, "Low": h.low, "Close": h.close,
+      "EMA9L": h.ema9L, "Fib Lvl": h.zone === "HOT" ? h.fib618 : h.fib382,
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    // Column widths
-    ws["!cols"] = [
-      { wch: 8 },  // MW No.
-      { wch: 18 }, // Symbol
-      { wch: 8 },  // Exchange
-      { wch: 16 }, // MW Start
-      { wch: 16 }, // MW End
-      { wch: 10 }, // MW Δ
-      { wch: 6 },  // MW Dir
-      { wch: 10 }, // Zone
-      { wch: 16 }, // Candle Time
-      { wch: 10 }, // Open
-      { wch: 10 }, // High
-      { wch: 10 }, // Low
-      { wch: 10 }, // Close
-      { wch: 10 }, // EMA9L
-      { wch: 10 }, // Fib Lvl
-    ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Backtest");
-    XLSX.writeFile(wb, `backtest_${tfLabel}.xlsx`);
+    XLSX.writeFile(wb, `backtest_${tfLabel}_${lookbackDays}d.xlsx`);
   }
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
-  const hotCount = hits.filter(h => h.zone === "HOT").length;
-  const nearCount = hits.filter(h => h.zone === "NEAR").length;
-  const symCount = new Set(hits.map(h => h.symbol)).size;
-
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="bt-page">
 
-      {/* ── Topbar ──────────────────────────────────────────────────────────── */}
+      {/* ── Topbar ── */}
       <div className="bt-topbar">
-        <button className="bt-back-btn" onClick={() => navigate("/")} title="Back to Home">
+        <button className="bt-back-btn" onClick={() => navigate("/")} title="Back">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 12H5M12 5l-7 7 7 7" />
           </svg>
@@ -247,31 +301,177 @@ export default function BacktestPage() {
         </button>
       </div>
 
-      {/* ── Progress bar ────────────────────────────────────────────────────── */}
+      {/* ── Progress bar ── */}
       <div className="bt-progress-wrap">
-        <div className="bt-progress-bar" style={{ width: isRunning ? `${pct}%` : phase === "done" ? "100%" : "0%" }} />
+        <div className="bt-progress-bar"
+          style={{ width: isRunning ? `${pct}%` : phase === "done" ? "100%" : "0%" }} />
       </div>
 
-      {/* ── Body ────────────────────────────────────────────────────────────── */}
+      {/* ── BACKTEST HISTORY HEADER (below topbar, always visible after run) ── */}
+      {(hits.length > 0 || isRunning) && (
+        <div className="bth-header">
+          {/* date preset row */}
+          <div className="bth-preset-row">
+            <span className="bth-label">BACKTEST HISTORY</span>
+            <div className="bth-presets">
+              {DATE_PRESETS.map(p => (
+                <button
+                  key={p.days}
+                  className={`bth-preset-btn ${!showCustom && selectedPreset === p.days ? "active" : ""}`}
+                  onClick={() => { setSelectedPreset(p.days); setShowCustom(false); }}
+                  disabled={isRunning}
+                >
+                  {p.label}
+                </button>
+              ))}
+              <button
+                className={`bth-preset-btn ${showCustom ? "active" : ""}`}
+                onClick={() => setShowCustom(v => !v)}
+                disabled={isRunning}
+              >
+                Custom
+              </button>
+            </div>
+
+            <div style={{ flex: 1 }} />
+
+            {/* stock search */}
+            <div className="bth-stock-search-wrap">
+              <svg className="bth-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={stockSearch}
+                onChange={e => setStockSearch(e.target.value)}
+                placeholder="Search stock…"
+                className="bth-stock-search"
+              />
+              {stockSearch && (
+                <button className="bth-search-clear" onClick={() => setStockSearch("")}>✕</button>
+              )}
+            </div>
+
+            {/* Bars / Stocks toggle */}
+            <div className="bth-view-toggle">
+              <button className={`bth-vt-btn ${view === "bars" ? "active" : ""}`}
+                onClick={() => setView("bars")}>Bars</button>
+              <button className={`bth-vt-btn ${view === "stocks" ? "active" : ""}`}
+                onClick={() => setView("stocks")}>Stocks</button>
+            </div>
+
+            {/* Download */}
+            <button className="bth-download-btn" onClick={handleDownload} disabled={!hits.length}>
+              ⬇ Download
+            </button>
+          </div>
+
+          {/* Custom date row */}
+          {showCustom && (
+            <div className="bth-custom-row">
+              <label className="bth-custom-label">From</label>
+              <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                className="bth-date-input" max={customTo || undefined} />
+              <label className="bth-custom-label">To</label>
+              <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+                className="bth-date-input" min={customFrom || undefined} />
+              <span className="bth-custom-note">Max 90 days</span>
+            </div>
+          )}
+
+          {/* Matched stats bar */}
+          <div className="bth-stats-bar">
+            <span className="bth-dot" />
+            <span className="bth-stat-item">
+              <span className="bth-stat-val">{symCount}</span>
+              <span className="bth-stat-lbl"> stocks</span>
+            </span>
+            <span className="bth-stat-sep">·</span>
+            <span className="bth-stat-item">
+              <span className="bth-stat-val">{hits.length}</span>
+              <span className="bth-stat-lbl"> bars</span>
+            </span>
+            <span className="bth-stat-sep">·</span>
+            <span className="bth-stat-item bth-hot">
+              <span className="bth-stat-val">{hotCount}</span>
+              <span className="bth-stat-lbl"> HOT</span>
+            </span>
+            <span className="bth-stat-sep">·</span>
+            <span className="bth-stat-item bth-near">
+              <span className="bth-stat-val">{nearCount}</span>
+              <span className="bth-stat-lbl"> NEAR</span>
+            </span>
+            {status?.lastDurationMs && (
+              <>
+                <span className="bth-stat-sep">·</span>
+                <span className="bth-stat-item">
+                  <span className="bth-stat-val">{(status.lastDurationMs / 1000).toFixed(1)}s</span>
+                </span>
+              </>
+            )}
+            <span className="bth-stat-sep">·</span>
+            <span className="bth-dot" />
+            <span className="bth-stat-item bth-hot">
+              <span className="bth-stat-val">0.382</span>
+              <span className="bth-stat-lbl">HOT</span>
+            </span>
+            <span className="bth-stat-sep">·</span>
+            <span className="bth-dot" />
+            <span className="bth-stat-item bth-hot">
+              <span className="bth-stat-val">0.618</span>
+              <span className="bth-stat-lbl">NEAR</span>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Body ── */}
       <div className="bt-body">
 
-        {/* Idle state */}
-        {phase === "idle" && (
+        {/* Idle */}
+        {phase === "idle" && hits.length === 0 && (
           <div className="bt-idle">
             <div className="bt-idle-icon">⚡</div>
             <div className="bt-idle-title">Ready to scan</div>
             <div className="bt-idle-desc">
-              Scans all 350 symbols for red candles closing below EMA9 Low<br />
+              Scans all symbols for red candles closing below EMA9 Low<br />
               inside the Mother Wave 0.618 (HOT) or 0.382 (NEAR) zone,<br />
               only on candles <strong>after</strong> the MW tip.
             </div>
+            {/* preset buttons in idle too */}
+            <div className="bt-idle-presets">
+              {DATE_PRESETS.map(p => (
+                <button
+                  key={p.days}
+                  className={`bth-preset-btn ${!showCustom && selectedPreset === p.days ? "active" : ""}`}
+                  onClick={() => { setSelectedPreset(p.days); setShowCustom(false); }}
+                >
+                  {p.label}
+                </button>
+              ))}
+              <button
+                className={`bth-preset-btn ${showCustom ? "active" : ""}`}
+                onClick={() => setShowCustom(v => !v)}
+              >
+                Custom
+              </button>
+            </div>
+            {showCustom && (
+              <div className="bth-custom-row">
+                <label className="bth-custom-label">From</label>
+                <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="bth-date-input" />
+                <label className="bth-custom-label">To</label>
+                <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="bth-date-input" />
+                <span className="bth-custom-note">Max 90 days</span>
+              </div>
+            )}
             <button className="bt-idle-btn" onClick={handleRun}>
-              ▶ Run Backtest ({tfLabel})
+              ▶ Run Backtest ({tfLabel}) · {lookbackDays}d
             </button>
           </div>
         )}
 
-        {/* Running + no hits yet */}
+        {/* Scanning + no hits yet */}
         {isRunning && hits.length === 0 && (
           <div className="bt-scanning">
             <div className="bt-scan-spinner" />
@@ -281,203 +481,161 @@ export default function BacktestPage() {
           </div>
         )}
 
-        {/* Results — show as soon as hits arrive */}
-        {(hits.length > 0 || phase === "done") && (
-          <>
-            {/* Stats bar */}
-            <div className="bt-stat-row">
-              <div className="bt-stat">
-                <div className="bt-stat-lbl">Total Hits</div>
-                <div className="bt-stat-val">{hits.length}</div>
-              </div>
-              <div className="bt-stat">
-                <div className="bt-stat-lbl">HOT (0.618)</div>
-                <div className="bt-stat-val bt-hot">{hotCount}</div>
-              </div>
-              <div className="bt-stat">
-                <div className="bt-stat-lbl">NEAR (0.382)</div>
-                <div className="bt-stat-val bt-near">{nearCount}</div>
-              </div>
-              <div className="bt-stat">
-                <div className="bt-stat-lbl">Symbols Hit</div>
-                <div className="bt-stat-val">{symCount}</div>
-              </div>
-              {isRunning && progress && (
-                <div className="bt-stat bt-stat-progress">
-                  <div className="bt-stat-lbl">Progress</div>
-                  <div className="bt-stat-val">{progress.done} / {progress.total}</div>
-                </div>
-              )}
-              {phase === "done" && status?.lastDurationMs && (
-                <div className="bt-stat">
-                  <div className="bt-stat-lbl">Scan Time</div>
-                  <div className="bt-stat-val">{(status.lastDurationMs / 1000).toFixed(1)}s</div>
-                </div>
-              )}
-              <div style={{ flex: 1 }} />
-              {hits.length > 0 && phase !== "running" && (
-                <div className="bt-stat bt-stat-download">
-                  <button className="bt-excel-btn" onClick={handleDownloadExcel} title={`Download all ${hits.length} rows as Excel`}>
-                    <span className="bt-excel-icon">⬇</span>
-                    <span className="bt-excel-label">
-                      <span className="bt-excel-main">Download Excel</span>
-                      <span className="bt-excel-sub">{hits.length} rows · {TIMEFRAMES.find(t => t.value === resolution)?.label || resolution}</span>
-                    </span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Filters */}
-            <div className="bt-filters">
-              <select value={fZone} onChange={e => setFZone(e.target.value)} className="bt-select">
-                <option value="all">All zones</option>
-                <option value="HOT">HOT (0.618)</option>
-                <option value="NEAR">NEAR (0.382)</option>
-              </select>
-
-              <select value={fDir} onChange={e => setFDir(e.target.value)} className="bt-select">
-                <option value="all">All MW directions</option>
-                <option value="bull">Bull MW ▲</option>
-                <option value="bear">Bear MW ▼</option>
-              </select>
-
-              <div className="bt-sym-search-wrap">
-                <input
-                  type="text"
-                  value={fSym}
-                  onChange={e => setFSym(e.target.value)}
-                  placeholder="Symbol filter…"
-                  className="bt-sym-search"
-                />
-                {fSym && <button className="bt-sym-clear" onClick={() => setFSym("")}>✕</button>}
-              </div>
-
-              <span className="bt-row-count">{filtered.length} rows</span>
-            </div>
-
-            {/* Table */}
-            <div className="bt-table-wrap">
-              <table className="bt-table">
-                <thead>
-                  <tr>
-                    <th>MW No.</th>
-                    <th>Symbol</th>
-                    <th>MW Timestamp</th>
-                    <th>MW Δ</th>
-                    <th>MW Dir</th>
-                    <th>Zone</th>
-                    <th>Candle Time</th>
-                    <th>Open</th>
-                    <th>High</th>
-                    <th>Low</th>
-                    <th>Close</th>
-                    <th>EMA9L</th>
-                    <th>Fib Lvl</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.length === 0 ? (
-                    <tr>
-                      <td colSpan={13} className="bt-no-data">
-                        No hits match the current filters.
-                      </td>
-                    </tr>
-                  ) : (
-                    filtered.map((h, i) => {
-                      const isBull = h.mwDir === "bull";
-                      const isHot = h.zone === "HOT";
-                      const fibLvl = isHot ? h.fib618 : h.fib382;
-                      return (
-                        <tr
-                          key={i}
-                          className={`bt-row bt-row-clickable ${isHot ? "bt-row-hot" : "bt-row-near"}`}
-                          onClick={() => {
-                            const fibDrawing = encodeURIComponent(JSON.stringify({
-                              p1Price: h.mwToPrice,
-                              p1Time: Math.round(h.mwTimestamp / 1000),
-                              p2Price: h.mwFromPrice,
-                              p2Time: Math.round(h.mwFromTime / 1000),
-                            }));
-                            const params = new URLSearchParams({
-                              symbol: h.symbol,
-                              resolution: String(resolution),
-                              waveFrom: String(h.mwFromTime),
-                              waveTo: String(h.mwTimestamp),
-                              fibDrawing,
-                            });
-                            window.open(`/charts?${params.toString()}`, "_blank");
-                          }}
-                          title="Click to open on chart"
-                        >
-                          {/* MW No. */}
-                          <td>
-                            <span className={`bt-mwno ${h.mwNo === 0 ? "bt-mwno-current" : "bt-mwno-prev"}`}>
-                              {h.mwNo === 0 ? "0" : h.mwNo}
-                            </span>
-                          </td>
-
-                          {/* Symbol */}
-                          <td>
-                            <div className="bt-sym">
-                              <span className="bt-sym-ticker">{tickerOf(h.symbol)}</span>
-                              <span className="bt-sym-exch">{h.symbol.split(":")[0]}</span>
-                            </div>
-                          </td>
-
-                          {/* MW Timestamp — Start → End */}
-                          <td>
-                            <div className="bt-mw-ts">
-                              <span className="bt-mw-ts-start">{toIST(h.mwFromTime)}</span>
-                              <span className="bt-mw-ts-arrow">→</span>
-                              <span className="bt-mw-ts-end">{toIST(h.mwTimestamp)}</span>
-                            </div>
-                          </td>
-
-                          {/* MW Delta */}
-                          <td>
-                            <span className={`bt-delta ${isBull ? "bt-bull" : "bt-bear"}`}>
-                              {isBull ? "+" : "−"}{fmt(h.mwDelta)}
-                            </span>
-                          </td>
-
-                          {/* MW Direction */}
-                          <td>
-                            {isBull
-                              ? <span className="bt-badge bt-badge-bull">▲ Bull</span>
-                              : <span className="bt-badge bt-badge-bear">▼ Bear</span>}
-                          </td>
-
-                          {/* Zone */}
-                          <td>
-                            {isHot
-                              ? <span className="bt-badge bt-badge-hot">HOT 0.618</span>
-                              : <span className="bt-badge bt-badge-near">NEAR 0.382</span>}
-                          </td>
-
-                          {/* Candle Time */}
-                          <td className="bt-time">{toIST(h.candleTime)}</td>
-
-                          {/* OHLC */}
-                          <td className="bt-price">{fmt(h.open)}</td>
-                          <td className="bt-price">{fmt(h.high)}</td>
-                          <td className="bt-price">{fmt(h.low)}</td>
-                          <td className="bt-price bt-close-red">{fmt(h.close)}</td>
-
-                          {/* EMA9L */}
-                          <td className="bt-price bt-ema">{fmt(h.ema9L)}</td>
-
-                          {/* Fib level hit */}
-                          <td className="bt-price bt-fib">{fmt(fibLvl)}</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </>
+        {/* Results */}
+        {hits.length > 0 && (
+          view === "stocks"
+            ? <StocksGrid stockRows={stockRows} slots={slots} resolution={resolution} />
+            : <BarsChart hits={hits} stockRows={stockRows} slots={slots} resolution={resolution} />
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── STOCKS GRID ───────────────────────────────────────────────────────────────
+function StocksGrid({ stockRows, slots, resolution }) {
+  const wrapRef = useRef(null);
+  const tableWrapRef = useRef(null);
+
+  if (!stockRows.length) return <div className="bt-no-data">No matching hits.</div>;
+
+  return (
+    <div className="bth-grid-outer" ref={wrapRef}>
+      <div className="bth-grid-wrap" ref={tableWrapRef}>
+        <table className="bth-grid-table">
+          <thead>
+            <tr>
+              <th className="bth-col-stock">STOCK</th>
+              {slots.map(s => {
+                const parts = slotKey(s).split("\n");
+                return (
+                  <th key={s} className="bth-col-slot">
+                    <div className="bth-slot-date">{parts[0]}</div>
+                    <div className="bth-slot-time">{parts[1]}</div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {stockRows.map(row => (
+              <tr key={row.ticker} className="bth-grid-row">
+                <td className="bth-stock-cell">
+                  <span className="bth-stock-name">{row.ticker}</span>
+                  <span className="bth-stock-count">{row.count}</span>
+                </td>
+                {slots.map(s => {
+                  const cellHits = row.cells.get(s);
+                  if (!cellHits?.length) return <td key={s} className="bth-empty-cell" />;
+                  const mainZone = cellHits.some(h => h.zone === "HOT") ? "HOT" : "NEAR";
+                  return (
+                    <td key={s} className="bth-hit-cell-wrap">
+                      <button
+                        className={`bth-hit-badge ${mainZone === "HOT" ? "bth-badge-hot" : "bth-badge-near"}`}
+                        onClick={() => openChart(cellHits[0], resolution)}
+                        title={`${row.ticker} @ ${toIST(s)} — click to open chart`}
+                      >
+                        {mainZone}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── BARS CHART ────────────────────────────────────────────────────────────────
+function BarsChart({ hits, stockRows, slots, resolution }) {
+  if (!slots.length) return <div className="bt-no-data">No matching hits.</div>;
+
+  // Map stock ticker → colour index
+  const colorMap = new Map();
+  stockRows.forEach((r, i) => colorMap.set(r.ticker, STOCK_COLORS[i % STOCK_COLORS.length]));
+
+  // Per-slot stacked data
+  const maxCount = Math.max(...slots.map(s => hits.filter(h => h.candleTime === s).length), 1);
+  const chartHeight = 280;
+
+  return (
+    <div className="bth-bars-outer">
+      <div className="bth-bars-hint">Click on bars to view stock details filtered at the given time</div>
+      <div className="bth-bars-chart-wrap">
+        {/* Y axis */}
+        <div className="bth-bars-yaxis">
+          {[maxCount, Math.round(maxCount / 2), 0].map(v => (
+            <div key={v} className="bth-bars-ylabel">{v}</div>
+          ))}
+        </div>
+
+        {/* Chart area */}
+        <div className="bth-bars-area">
+          {/* Grid lines */}
+          <div className="bth-bars-grid">
+            {[0, 1, 2].map(i => <div key={i} className="bth-bars-gridline" />)}
+          </div>
+
+          {/* Bars */}
+          <div className="bth-bars-inner">
+            {slots.map(s => {
+              const slotHits = hits.filter(h => h.candleTime === s);
+              const total = slotHits.length;
+              const barH = Math.round((total / maxCount) * chartHeight);
+
+              // Group by stock for stacking
+              const byStock = new Map();
+              for (const h of slotHits) {
+                const t = tickerOf(h.symbol);
+                if (!byStock.has(t)) byStock.set(t, []);
+                byStock.get(t).push(h);
+              }
+
+              const parts = slotKey(s).split("\n");
+
+              return (
+                <div key={s} className="bth-bar-col">
+                  <div
+                    className="bth-bar-stack"
+                    style={{ height: `${barH}px` }}
+                    title={`${parts[0]} ${parts[1]} — ${total} hits`}
+                  >
+                    {[...byStock.entries()].map(([ticker, hs]) => {
+                      const segH = Math.max(2, Math.round((hs.length / total) * barH));
+                      return (
+                        <div
+                          key={ticker}
+                          className="bth-bar-seg"
+                          style={{ height: `${segH}px`, background: colorMap.get(ticker) || "#888" }}
+                          onClick={() => openChart(hs[0], resolution)}
+                          title={`${ticker}: ${hs.length} hit(s)`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="bth-bar-label">
+                    <span className="bth-bar-date">{parts[0]}</span>
+                    <span className="bth-bar-time">{parts[1]}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div className="bth-legend">
+        {stockRows.slice(0, 30).map(r => (
+          <div key={r.ticker} className="bth-legend-item">
+            <span className="bth-legend-dot" style={{ background: colorMap.get(r.ticker) }} />
+            <span className="bth-legend-name">{r.ticker}</span>
+            <span className="bth-legend-count">{r.count}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

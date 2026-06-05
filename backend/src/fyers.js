@@ -247,12 +247,12 @@ function aggregateDailyToWeekly(dailyCandles) {
 }
 
 // ── Fetch historical candles ──────────────────────────────────────────────────
-async function fetchCandles(symbol, resolution, count = 10000) {
+async function fetchCandles(symbol, resolution, count = 10000, lookbackDaysOverride = null) {
   const fyers = getFyersClient();
   const now = Math.floor(Date.now() / 1000);
   const isWeekly = resolution === 10080 || String(resolution).toUpperCase() === "W";
   const isDaily = resolution === 1440 || String(resolution).toUpperCase() === "D";
-  const lookbackDays = calcLookbackDays(resolution);
+  const lookbackDays = lookbackDaysOverride != null ? lookbackDaysOverride : calcLookbackDays(resolution);
 
   // ── WEEKLY ────────────────────────────────────────────────────────────────
   if (isWeekly) {

@@ -11,13 +11,14 @@
 "use strict";
 
 const express = require("express");
-const router  = express.Router();
+const router = express.Router();
 const { backtestRunner } = require("./backtestRunner");
 
 router.post("/trigger", async (req, res) => {
   try {
     const resolution = req.body?.resolution;
-    const out = await backtestRunner.triggerNow(resolution);
+    const lookbackDays = req.body?.lookbackDays ? parseInt(req.body.lookbackDays) : null;
+    const out = await backtestRunner.triggerNow(resolution, lookbackDays);
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err.message });
