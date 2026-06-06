@@ -97,7 +97,6 @@
 .cp-statusbar {
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-  /* Width follows the panel width naturally */
 }
 
 /* Panel body: chart + sidebar (toolbar is now global, not inside cp-body) */
@@ -106,15 +105,15 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  margin-left: 52px;
 }
 
-/* ─── Chart area — no left padding (toolbar is now global fixed, not per-panel) */
+/* ─── Chart area — clipped to its container, never bleeds under toolbar ─── */
 .chart-area {
   position: relative;
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  /* No padding-left: the global toolbar is position:fixed and overlays the viewport */
 }
 
 /* ─── Floating Indicator Panel ──────────────────────────────────── */
