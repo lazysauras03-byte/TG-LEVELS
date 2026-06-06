@@ -58,6 +58,7 @@ class BacktestRunner extends EventEmitter {
   constructor() {
     super();
     this._results = [];        // all hits across all symbols
+    this._chainIndex = new Map(); // mwNo → { mwNo, hitCount, stockCount, _hitSymbols }
     this._errors = new Map();
     this._retryQueue = [];
     this._running = false;
@@ -77,10 +78,11 @@ class BacktestRunner extends EventEmitter {
   getSymbols() { return [...this._symbolList]; }
 
   async triggerNow(resolution, lookbackDays = null) {
+    // lookbackDays is accepted for API compatibility but ignored —
+    // backend always scans full 90d; date filtering is client-side.
     if (this._running) return { status: "already_running", progress: this._progress };
     if (resolution != null) this._resolution = parseInt(resolution) || DEFAULT_RESOLUTION;
-    if (lookbackDays != null) this._lookbackDays = parseInt(lookbackDays);
-    else this._lookbackDays = null;
+    this._lookbackDays = null;
     this._aborted = false;
     this._results = [];
     await this._run();
@@ -104,6 +106,14 @@ class BacktestRunner extends EventEmitter {
 
   getResults() { return [...this._results]; }
 
+  getChainIndex() {
+    // Returns sorted array: mwNo 0 first, then -1, -2, -3 ...
+    // Strip internal _hitSymbols set before sending to frontend
+    return [...this._chainIndex.values()]
+      .sort((a, b) => b.mwNo - a.mwNo)
+      .map(({ mwNo, hitCount, stockCount }) => ({ mwNo, hitCount, stockCount }));
+  }
+
   // ── Core loop ───────────────────────────────────────────────────────────────
   async _run() {
     if (this._running) return;
@@ -112,6 +122,7 @@ class BacktestRunner extends EventEmitter {
     this._running = true;
     this._aborted = false;
     this._results = [];
+    this._chainIndex = new Map();
     this._errors = new Map();
     const startMs = Date.now();
     const res = this._resolution;
@@ -162,7 +173,10 @@ class BacktestRunner extends EventEmitter {
   // ── Per-symbol processing ───────────────────────────────────────────────────
   async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION, lookbackDays = null) {
     try {
-      const candles = await fetchCandles(symbol, resolution, 5000, lookbackDays);
+      // Always fetch full 90-day history so MW detection captures all waves
+      // including deep previous MWs (-2, -3 ...). The date filter is applied
+      // client-side on the frontend — no server-side hit window restriction.
+      const candles = await fetchCandles(symbol, resolution, 5000, 90);
       if (!candles || candles.length < 10) return;
 
       this._errors.delete(symbol);
@@ -176,6 +190,20 @@ class BacktestRunner extends EventEmitter {
       // Scan every MW in the chain (current mwNo=0, previous -1, -2, ...)
       for (const mwEntry of mwResult.chain) {
         const { mwNo, wave, fibLevels } = mwEntry;
+
+        // ── Register this MW ordinal in the chain index ───────────────────────
+        // mwNo is universal: 0=current, -1=most recent prev, -2=one before, etc.
+        // Each stock has its own dates for the same mwNo — we only track the
+        // ordinal + aggregate counts (not per-stock time ranges).
+        if (!this._chainIndex.has(mwNo)) {
+          this._chainIndex.set(mwNo, {
+            mwNo,
+            hitCount: 0,
+            stockCount: 0,   // stocks that have ≥1 hit for this mwNo
+            _hitSymbols: new Set(),
+          });
+        }
+
         const span = wave.delta;
         const tol = span * 0.05;
 
@@ -222,6 +250,15 @@ class BacktestRunner extends EventEmitter {
 
           this._results.push(hit);
           this._progress.hits++;
+
+          // ── Update chain index hit count + stock count ────────────────────
+          const ci = this._chainIndex.get(mwNo);
+          ci.hitCount++;
+          if (!ci._hitSymbols.has(symbol)) {
+            ci._hitSymbols.add(symbol);
+            ci.stockCount++;   // only stocks that actually produced hits
+          }
+
           this.emit("backtest_hit", hit);
         }
       }

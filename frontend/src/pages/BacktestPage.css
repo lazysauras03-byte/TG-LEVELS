@@ -902,3 +902,35 @@
   color: var(--text3);
   font-size: 13px;
 }
+
+/* ── MW Filter ───────────────────────────────────────────────────────────── */
+.bth-mw-filter-wrap {
+  display: flex;
+  align-items: center;
+  margin-right: 10px;
+}
+
+.bth-mw-filter-select {
+  background: var(--bg-secondary, #1e2a3a);
+  color: var(--text-primary, #e0e6f0);
+  border: 1px solid var(--border, #2d3f55);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  min-width: 140px;
+  max-width: 280px;
+  transition: border-color 0.15s;
+}
+
+.bth-mw-filter-select:hover,
+.bth-mw-filter-select:focus {
+  border-color: var(--accent, #7b61ff);
+}
+
+.bth-mw-filter-select option {
+  background: var(--bg-secondary, #1e2a3a);
+  color: var(--text-primary, #e0e6f0);
+}

@@ -35,7 +35,13 @@ router.get("/status", (req, res) => {
 });
 
 router.get("/results", (req, res) => {
-  res.json({ results: backtestRunner.getResults(), count: backtestRunner.getResults().length });
+  const results = backtestRunner.getResults();
+  res.json({ results, count: results.length, chainIndex: backtestRunner.getChainIndex() });
+});
+
+// Returns the full list of MW numbers scanned (even if 0 hits) — used by frontend dropdown
+router.get("/chain-index", (req, res) => {
+  res.json({ chainIndex: backtestRunner.getChainIndex() });
 });
 
 module.exports = router;

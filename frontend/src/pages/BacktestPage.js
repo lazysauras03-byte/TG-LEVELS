@@ -115,15 +115,23 @@ export default function BacktestPage() {
   const [view, setView] = useState("stocks"); // "stocks" | "bars"
   const [stockSearch, setStockSearch] = useState("");
 
-  // ── computed lookbackDays ─────────────────────────────────────────────────
-  const lookbackDays = useMemo(() => {
+  // MW filter: null = all, 0 = current MW, -1 / -2 / ... = previous
+  const [mwFilter, setMwFilter] = useState(null);
+  // Full chain index from backend — all scanned MWs, even those with 0 hits
+  const [chainIndex, setChainIndex] = useState([]);
+
+  // ── computed lookbackDays — CLIENT-SIDE VIEW FILTER only ─────────────────
+  // Not sent to backend. Backend always scans full 90d history.
+  // This just controls which hits are shown in the grid.
+  const viewCutoffMs = useMemo(() => {
     if (showCustom && customFrom && customTo) {
-      const from = new Date(customFrom);
+      const from = new Date(customFrom).getTime();
       const to = new Date(customTo);
-      const diff = Math.ceil((to - from) / 86400000) + 1;
-      return Math.max(1, Math.min(90, diff));
+      to.setHours(23, 59, 59, 999);
+      return { from, to: to.getTime() };
     }
-    return selectedPreset;
+    const cutoff = Date.now() - selectedPreset * 86400 * 1000;
+    return { from: cutoff, to: Date.now() };
   }, [showCustom, customFrom, customTo, selectedPreset]);
 
   // ── Fetch initial status / results ───────────────────────────────────────
@@ -139,6 +147,7 @@ export default function BacktestPage() {
     try {
       const r = await fetch(`${BACKEND}/api/backtest/results`).then(r => r.json());
       if (r.results?.length) { setHits(r.results); setPhase("done"); }
+      if (r.chainIndex?.length) setChainIndex(r.chainIndex);
     } catch { }
   }, []);
 
@@ -153,7 +162,9 @@ export default function BacktestPage() {
     sock.on("backtest_start", (d) => { setPhase("running"); setHits([]); setProgress({ total: d.total, done: 0, hits: 0 }); });
     sock.on("backtest_progress", (d) => { setProgress({ total: d.total, done: d.done, hits: d.hits }); });
     sock.on("backtest_hit", (h) => { setHits(prev => [...prev, h]); });
-    sock.on("backtest_complete", () => { setPhase("done"); setProgress(null); fetchStatus(); });
+    sock.on("backtest_complete", () => {
+      setPhase("done"); setProgress(null); fetchStatus(); fetchResults();
+    });
 
     return () => { sock.disconnect(); };
   }, [fetchStatus, fetchResults]);
@@ -165,12 +176,12 @@ export default function BacktestPage() {
       setPhase("idle"); setProgress(null);
       return;
     }
-    setHits([]); setPhase("running"); setProgress(null);
+    setHits([]); setPhase("running"); setProgress(null); setMwFilter(null); setChainIndex([]);
     try {
       await fetch(`${BACKEND}/api/backtest/trigger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resolution, lookbackDays }),
+        body: JSON.stringify({ resolution }),  // no lookbackDays — backend always scans 90d
       });
     } catch (e) {
       console.error("[Backtest] trigger failed:", e);
@@ -178,10 +189,42 @@ export default function BacktestPage() {
     }
   }
 
-  // ── Build time-slot index ─────────────────────────────────────────────────
+  // ── Available MW numbers — sourced from backend chainIndex (full scan list) ─
+  // chainIndex has every MW that was scanned, even those with 0 hits.
+  // Fall back to deriving from hits if chainIndex not yet loaded.
+  const availableMWs = useMemo(() => {
+    if (chainIndex.length > 0) {
+      // Backend provided the authoritative list — already sorted 0, -1, -2 ...
+      return chainIndex; // shape: { mwNo, hitCount, stockCount }
+    }
+    // Fallback: derive from hits (before chainIndex arrives, e.g. mid-run)
+    const map = new Map();
+    for (const h of hits) {
+      if (!map.has(h.mwNo)) {
+        map.set(h.mwNo, { mwNo: h.mwNo, hitCount: 0, stockCount: 0, _stocks: new Set() });
+      }
+      const e = map.get(h.mwNo);
+      e.hitCount++;
+      e._stocks.add(h.symbol);
+      e.stockCount = e._stocks.size;
+    }
+    return [...map.values()]
+      .sort((a, b) => b.mwNo - a.mwNo)
+      .map(({ mwNo, hitCount, stockCount }) => ({ mwNo, hitCount, stockCount }));
+  }, [chainIndex, hits]);
+
+  // ── Hits filtered by MW + client-side date window ────────────────────────
+  const filteredHits = useMemo(() => {
+    let result = mwFilter === null ? hits : hits.filter(h => h.mwNo === mwFilter);
+    // Apply client-side date window (instant, no re-scan needed)
+    result = result.filter(h => h.candleTime >= viewCutoffMs.from && h.candleTime <= viewCutoffMs.to);
+    return result;
+  }, [hits, mwFilter, viewCutoffMs]);
+
+
   const { slots, stockRows, slotCountMap } = useMemo(() => {
     // filter by search
-    const filtered = hits.filter(h =>
+    const filtered = filteredHits.filter(h =>
       !stockSearch.trim() ||
       tickerOf(h.symbol).toLowerCase().includes(stockSearch.trim().toLowerCase())
     );
@@ -221,20 +264,20 @@ export default function BacktestPage() {
     }
 
     return { slots, stockRows, slotCountMap, slotStockMap };
-  }, [hits, stockSearch]);
+  }, [filteredHits, stockSearch]);
 
   // ── Stats ─────────────────────────────────────────────────────────────────
-  const hotCount = hits.filter(h => h.zone === "HOT").length;
-  const nearCount = hits.filter(h => h.zone === "NEAR").length;
-  const symCount = new Set(hits.map(h => h.symbol)).size;
+  const hotCount = filteredHits.filter(h => h.zone === "HOT").length;
+  const nearCount = filteredHits.filter(h => h.zone === "NEAR").length;
+  const symCount = new Set(filteredHits.map(h => h.symbol)).size;
   const isRunning = phase === "running";
   const pct = progress ? Math.round((progress.done / Math.max(1, progress.total)) * 100) : 0;
   const tfLabel = TIMEFRAMES.find(t => t.value === resolution)?.label || String(resolution);
 
   // ── Download ──────────────────────────────────────────────────────────────
   function handleDownload() {
-    if (!hits.length) return;
-    const rows = hits.map(h => ({
+    if (!filteredHits.length) return;
+    const rows = filteredHits.map(h => ({
       "Symbol": tickerOf(h.symbol),
       "Candle Time": toIST(h.candleTime),
       "Zone": h.zone,
@@ -245,7 +288,7 @@ export default function BacktestPage() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Backtest");
-    XLSX.writeFile(wb, `backtest_${tfLabel}_${lookbackDays}d.xlsx`);
+    XLSX.writeFile(wb, `backtest_${tfLabel}_${selectedPreset}d.xlsx`);
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -319,7 +362,6 @@ export default function BacktestPage() {
                   key={p.days}
                   className={`bth-preset-btn ${!showCustom && selectedPreset === p.days ? "active" : ""}`}
                   onClick={() => { setSelectedPreset(p.days); setShowCustom(false); }}
-                  disabled={isRunning}
                 >
                   {p.label}
                 </button>
@@ -327,13 +369,40 @@ export default function BacktestPage() {
               <button
                 className={`bth-preset-btn ${showCustom ? "active" : ""}`}
                 onClick={() => setShowCustom(v => !v)}
-                disabled={isRunning}
               >
                 Custom
               </button>
             </div>
 
             <div style={{ flex: 1 }} />
+
+            {/* MW filter */}
+            {availableMWs.length > 1 && (
+              <div className="bth-mw-filter-wrap">
+                <select
+                  className="bth-mw-filter-select"
+                  value={mwFilter === null ? "" : String(mwFilter)}
+                  onChange={e => setMwFilter(e.target.value === "" ? null : parseInt(e.target.value))}
+                >
+                  <option value="">All MWs ({filteredHits.length} hits)</option>
+                  {availableMWs.map(mw => {
+                    const label = mw.mwNo === 0
+                      ? `MW 0 · Current`
+                      : mw.mwNo === -1
+                        ? `MW -1 · Previous`
+                        : `MW ${mw.mwNo}`;
+                    const hitInfo = mw.hitCount > 0
+                      ? `${mw.hitCount} hits · ${mw.stockCount} stocks`
+                      : `0 hits · ${mw.stockCount} stocks`;
+                    return (
+                      <option key={mw.mwNo} value={String(mw.mwNo)}>
+                        {label} ({hitInfo})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
 
             {/* stock search */}
             <div className="bth-stock-search-wrap">
@@ -361,7 +430,7 @@ export default function BacktestPage() {
             </div>
 
             {/* Download */}
-            <button className="bth-download-btn" onClick={handleDownload} disabled={!hits.length}>
+            <button className="bth-download-btn" onClick={handleDownload} disabled={!filteredHits.length}>
               ⬇ Download
             </button>
           </div>
@@ -388,7 +457,7 @@ export default function BacktestPage() {
             </span>
             <span className="bth-stat-sep">·</span>
             <span className="bth-stat-item">
-              <span className="bth-stat-val">{hits.length}</span>
+              <span className="bth-stat-val">{filteredHits.length}</span>
               <span className="bth-stat-lbl"> bars</span>
             </span>
             <span className="bth-stat-sep">·</span>
@@ -466,7 +535,7 @@ export default function BacktestPage() {
               </div>
             )}
             <button className="bt-idle-btn" onClick={handleRun}>
-              ▶ Run Backtest ({tfLabel}) · {lookbackDays}d
+              ▶ Run Backtest ({tfLabel}) · 90d full scan
             </button>
           </div>
         )}
@@ -485,7 +554,7 @@ export default function BacktestPage() {
         {hits.length > 0 && (
           view === "stocks"
             ? <StocksGrid stockRows={stockRows} slots={slots} resolution={resolution} />
-            : <BarsChart hits={hits} stockRows={stockRows} slots={slots} resolution={resolution} />
+            : <BarsChart hits={filteredHits} stockRows={stockRows} slots={slots} resolution={resolution} />
         )}
       </div>
     </div>
