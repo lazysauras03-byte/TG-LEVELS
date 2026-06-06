@@ -21,6 +21,10 @@ import {
   updateSRZonesIndicator,
   removeSRZonesIndicator,
 } from "../indicators/SRZonesIndicator";
+import {
+  buildBubbleMarkers,
+  setMarkersIfChanged,
+} from "../indicators/BubbleIndicator";
 import DrawingOverlay from "./DrawingOverlay";
 import { useTheme } from "../App";
 
@@ -28,48 +32,6 @@ import { useTheme } from "../App";
 
 function toISTDate(tsMs) {
   return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
-
-function buildMarkers(signals, candles, todayModeOn) {
-  let src = signals || [];
-  if (todayModeOn && candles.length > 0) {
-    const latestIST = toISTDate(candles.at(-1).time);
-    src = src.filter((s) => toISTDate(s.time) === latestIST);
-  }
-  const seen = new Set();
-  const markers = [];
-  src.forEach((sig) => {
-    const t = Math.floor(sig.time / 1000);
-    const key = `${sig.type}-${t}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    switch (sig.type) {
-      case "NH":
-        markers.push({ time: t, position: "aboveBar", color: "#00d97e", shape: "arrowDown", text: "NH", size: 1 });
-        break;
-      case "NL":
-        markers.push({ time: t, position: "belowBar", color: "#ff4560", shape: "arrowUp", text: "NL", size: 1 });
-        break;
-      case "BC_HIGH":
-        markers.push({ time: t, position: "aboveBar", color: "#ffc135", shape: "arrowDown", text: "BC", size: 1 });
-        break;
-      case "BC_LOW":
-        markers.push({ time: t, position: "belowBar", color: "#ffc135", shape: "arrowUp", text: "BC", size: 1 });
-        break;
-      default: break;
-    }
-  });
-  markers.sort((a, b) => a.time - b.time);
-  return markers;
-}
-
-// Deduplicated setMarkers — only calls the expensive lw-charts API when the
-// marker set actually changed. Compares a cheap fingerprint string.
-function setMarkersIfChanged(series, markers, keyRef) {
-  const key = markers.map((m) => `${m.time}:${m.text}`).join("|");
-  if (key === keyRef.current) return;
-  keyRef.current = key;
-  series.setMarkers(markers);
 }
 
 // ─── Ruler overlay ────────────────────────────────────────────────────────────
@@ -486,7 +448,7 @@ export default function CandleChart({
   const refreshMarkers = useCallback(() => {
     if (!candleRef.current || !candlesRef.current?.length) return;
     const markers = showBubbleRef.current
-      ? buildMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
+      ? buildBubbleMarkers(signalsRef.current, candlesRef.current, todayModeRef.current)
       : [];
     setMarkersIfChanged(candleRef.current, markers, prevMarkerKeyRef);
   }, []); // no deps — reads everything from refs
