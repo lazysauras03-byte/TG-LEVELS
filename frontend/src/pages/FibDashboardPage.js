@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { BACKEND } from "../config";
 import { useTheme } from "../App";
 import SYMBOLS from "../symbols.json";
-import "./FibDashboardPage.css";
+import "../styles/FibDashboardPage.css";
 
 // ── Timeframe definitions ────────────────────────────────────────────────────
 

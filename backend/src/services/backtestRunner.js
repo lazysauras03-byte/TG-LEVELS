@@ -22,7 +22,7 @@
 "use strict";
 
 const EventEmitter = require("events");
-const { fetchCandles } = require("./fyers");
+const { fetchCandles } = require("../fyers/client");
 const { detectMotherWaveForAPI } = require("./motherwave");
 
 const CONCURRENCY = parseInt(process.env.SCANNER_CONCURRENCY || "3");

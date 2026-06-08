@@ -1,6 +1,6 @@
 // EmaFloatPanel.js
 import React, { useMemo } from "react";
-import "./EmaFloatPanel.css";
+import "../styles/EmaFloatPanel.css";
 
 export default function EmaFloatPanel({ emaHighs, emaLows, candles, crosshairBar }) {
   const crosshairIndex = useMemo(() => {

@@ -3,20 +3,20 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
-const cors = require("cors");
-const rateLimit = require("express-rate-limit");
 
-const { runSignalEngine } = require("./signalEngine");
-const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = require("./fyers");
-const { CandleBuilder, deriveTimeframe } = require("./candleBuilder");
-const { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, isTradingDay } = require("./tickStream");
-const symbolsRouter = require("./symbolsRouter");
-const scannerRouter = require("./scannerRouter");
-const { scanner } = require("./scannerRunner");
-const backtestRouter = require("./backtestRouter");
-const { backtestRunner } = require("./backtestRunner");
-const { detectMotherWaveForAPI } = require("./motherwave");
-const createChartRouter = require("./chartRouter");
+const { runSignalEngine } = require("./services/signalEngine");
+const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = require("./fyers/client");
+const { CandleBuilder, deriveTimeframe } = require("./services/candleBuilder");
+const { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, isTradingDay } = require("./fyers/tickStream");
+const symbolsRouter = require("./routes/symbolsRouter");
+const scannerRouter = require("./routes/scannerRouter");
+const { scanner } = require("./services/scannerRunner");
+const backtestRouter = require("./routes/backtestRouter");
+const { backtestRunner } = require("./services/backtestRunner");
+const { detectMotherWaveForAPI } = require("./services/motherwave");
+const createChartRouter = require("./routes/chartRouter");
+const corsMiddleware = require("./middleware/cors");
+const rateLimiter = require("./middleware/rateLimiter");
 
 const app = express();
 const server = http.createServer(app);
@@ -29,32 +29,9 @@ const io = new Server(server, {
 });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(cors({ origin: "*", methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] }));
+app.use(corsMiddleware);
 app.use(express.json()); // parse JSON body — needed for req.body.socketId in /refresh
-app.use((req, res, next) => {
-  res.setHeader("ngrok-skip-browser-warning", "true");
-  next();
-});
-app.use(
-  rateLimit({
-    windowMs: 60 * 1000,
-    max: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => {
-      const ip = req.ip || "";
-      return (
-        ip === "127.0.0.1" ||
-        ip === "::1" ||
-        ip.startsWith("::ffff:127.") ||
-        ip.startsWith("::ffff:192.168.") ||
-        ip.startsWith("192.168.") ||
-        ip.startsWith("10.") ||
-        ip.startsWith("172.")
-      );
-    },
-  })
-);
+app.use(rateLimiter);
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
@@ -63,7 +40,7 @@ const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
 // fetchCandles() currently ignores it — Fyers data is fetched by date-range
 // windows (calcLookbackDays) not by count. This env var is kept for future use
 // if a count-based slice is added. The actual depth is controlled by
-// calcLookbackDays() in fyers.js (30d for 3m, 60d for 15m, 150d for 1h).
+// calcLookbackDays() in fyers/client.js (30d for 3m, 60d for 15m, 150d for 1h).
 const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
 const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "5000");
 const TICK_WATCHDOG_MS = parseInt(process.env.TICK_WATCHDOG_MS || "10000");
@@ -531,17 +508,8 @@ server.listen(PORT, async () => {
   startTickWatchdog();
   await initialRestFetch();
 
-  // ─── Scanner ────────────────────────────────────────────────────────────────
-  // Load ALL symbols from the symbol router's merged list and start periodic scan.
-  // This runs on its own timer and NEVER touches WebSocket or chart state.
+  // ─── Scanner + Backtest symbol loading ──────────────────────────────────────
   setImmediate(() => {
-    try {
-      const { buildSymbolList } = require("./symbolsRouter");
-      // symbolsRouter doesn't export buildSymbolList — use the REST endpoint data
-      // instead we just defer and call the internal getSymbols via dynamic require
-    } catch { }
-
-    // Load symbols from all sources the same way symbolsRouter does
     const path = require("path");
     const fs = require("fs");
     const FRONTEND_SRC = path.resolve(__dirname, "../../frontend/src");
@@ -592,9 +560,9 @@ server.listen(PORT, async () => {
     backtestRunner.on("backtest_complete", (data) => io.emit("backtest_complete", data));
     backtestRunner.on("backtest_hit", (data) => io.emit("backtest_hit", data));
 
-
     // No auto-start — scan is triggered manually from the UI or POST /api/scanner/trigger
   });
+
   if (isAnyMarketLive(getActiveTickSymbols())) { console.log("[INIT] Market is live — starting tick stream for real-time candles."); await maybeStartTickStream(); }
   else if (isTradingDay()) { console.log("[INIT] Weekday outside market hours — REST data ready. Tick stream inactive."); }
   else { console.log("[INIT] Weekend/holiday — REST data loaded from last session. No tick stream."); }

@@ -26,8 +26,8 @@
 "use strict";
 
 const EventEmitter = require("events");
-const { fetchCandles } = require("./fyers");
-const strategies = require("./strategies/strategyRegistry");
+const { fetchCandles } = require("../fyers/client");
+const strategies = require("../strategies/strategyRegistry");
 const { detectMotherWaveForAPI, calcTrapZone, classifyZone } = require("./motherwave");
 
 // ─── Config ───────────────────────────────────────────────────────────────────

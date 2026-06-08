@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { BACKEND } from "../config";
 import { useTheme } from "../App";
-import "./HomePage.css";
+import "../styles/HomePage.css";
 
 const NAV_ITEMS = [
   {

@@ -37,7 +37,7 @@ import { formatResolution } from "../utils/formatResolution";
 import { LAYOUTS } from "../components/layout/LayoutPicker";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { ChartPanelPropTypes } from "./ChartPanelPropTypes";
-import "./ChartsPage.css";
+import "../styles/ChartsPage.css";
 
 // ─── SidebarSection — defined OUTSIDE so it never remounts ────────────────────
 const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onTabChange, children }) {

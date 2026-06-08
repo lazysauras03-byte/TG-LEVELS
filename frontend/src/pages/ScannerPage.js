@@ -17,7 +17,7 @@ import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import { BACKEND } from "../config";
 import { useTheme } from "../App";
-import "./ScannerPage.css";
+import "../styles/ScannerPage.css";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TIMEFRAMES = [

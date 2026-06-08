@@ -21,7 +21,7 @@
 
 const express = require("express");
 const router = express.Router();
-const { scanner } = require("./scannerRunner");
+const { scanner } = require("../services/scannerRunner");
 
 // GET /api/scanner/status
 router.get("/status", (req, res) => {

@@ -21,7 +21,7 @@ import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import { BACKEND } from "../config";
 import { useTheme } from "../App";
-import "./StrategiesPage.css";
+import "../styles/StrategiesPage.css";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(n, d = 2) {

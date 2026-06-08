@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const { fyersModel } = require("fyers-api-v3");
 
-const ROOT = path.resolve(__dirname, "..");
+const ROOT = path.resolve(__dirname, "../..");
 const TOKEN_FILE = path.join(ROOT, "fyers_access_token.txt");
 const REFRESH_FILE = path.join(ROOT, "fyers_refresh_token.txt");
 

@@ -12,7 +12,7 @@
 
 const express = require("express");
 const router = express.Router();
-const { backtestRunner } = require("./backtestRunner");
+const { backtestRunner } = require("../services/backtestRunner");
 
 router.post("/trigger", async (req, res) => {
   try {

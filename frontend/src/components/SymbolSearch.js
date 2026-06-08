@@ -5,7 +5,7 @@
 // ───────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useRef } from "react";
-import "./SymbolSearch.css";
+import "../styles/SymbolSearch.css";
 import { BACKEND } from "../config";
 
 // ── Module-level cache shared across all instances ─────────────────────────

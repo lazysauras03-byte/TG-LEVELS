@@ -8,7 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { updateWavesIndicatorPure } from "../indicators/WavesIndicator";
 import { useTheme } from "../App";
 import SYMBOLS from "../symbols.json";
-import "./ReportsPage.css";
+import "../styles/ReportsPage.css";
 
 import { BACKEND } from "../config";
 

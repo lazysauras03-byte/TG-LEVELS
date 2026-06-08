@@ -26,7 +26,7 @@
 
 const EventEmitter = require("events");
 const { fyersDataSocket } = require("fyers-api-v3");
-const { loadToken } = require("./fyers");
+const { loadToken } = require("./client");
 
 // Market hours IST
 const NSE_OPEN_MIN = 9 * 60 + 15;   // 555  — NSE/BSE open

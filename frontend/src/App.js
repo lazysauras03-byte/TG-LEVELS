@@ -9,7 +9,7 @@ import ScannerPage from "./pages/ScannerPage";
 import StrategiesPage from "./pages/StrategiesPage";
 import BacktestPage from "./pages/BacktestPage";
 import ErrorBoundary from "./components/ErrorBoundary";
-import "./App.css";
+import "./styles/App.css";
 
 // ─── Theme context shared across all pages ────────────────────────
 export const ThemeContext = createContext({ theme: "dark", toggleTheme: () => { } });

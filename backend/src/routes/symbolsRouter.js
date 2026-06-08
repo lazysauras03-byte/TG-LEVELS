@@ -32,7 +32,7 @@ const fs = require("fs");
 
 const router = express.Router();
 
-const FRONTEND_SRC = path.resolve(__dirname, "../../frontend/src");
+const FRONTEND_SRC = path.resolve(__dirname, "../../../frontend/src");
 const SYMBOLS_JSON = path.join(FRONTEND_SRC, "symbols.json");
 const MCX_JSON = path.join(FRONTEND_SRC, "mcx.json");
 const STOCKS_XLSX = path.join(FRONTEND_SRC, "stocks.xlsx");
