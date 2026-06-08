@@ -12,12 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { io } from "socket.io-client";
 import axios from "axios";
-
-// Auto-detects hostname so it works on localhost AND LAN (192.168.x.x:3000).
-// Override by setting REACT_APP_BACKEND_URL=http://localhost:9004 in frontend/.env
-const BACKEND =
-  process.env.REACT_APP_BACKEND_URL ||
-  `${window.location.protocol}//${window.location.hostname}:9004`;
+import { BACKEND } from "../config";
 
 // ── IST live-market check (frontend guard for REST poll fallback only) ─────────
 // NOTE: This is used ONLY to gate the REST poll fallback timer — not for routing
@@ -110,7 +105,9 @@ export function useSocket() {
         setLoading(false);
       }
     }
-  }, []); // eslint-disable-line
+    // Mount-only: socket and poll setup runs once. All state setters are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── REST poll fallback (live market hours only) ───────────────────────────
   const POLL_INTERVAL_MS = 70_000;
@@ -267,7 +264,9 @@ export function useSocket() {
       socket.disconnect();
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
-  }, []); // eslint-disable-line
+    // Mount-only: socket and poll setup runs once. All state setters are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── refresh — user clicks Refresh, changes symbol, or changes timeframe ───
   const refresh = useCallback(async (symbol, resolution) => {
@@ -329,7 +328,9 @@ export function useSocket() {
         setLoading(false);
       }
     }
-  }, []); // eslint-disable-line
+    // Mount-only: socket and poll setup runs once. All state setters are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing };
 }

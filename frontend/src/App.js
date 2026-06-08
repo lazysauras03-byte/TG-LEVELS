@@ -8,6 +8,7 @@ import FibDashboardPage from "./pages/FibDashboardPage";
 import ScannerPage from "./pages/ScannerPage";
 import StrategiesPage from "./pages/StrategiesPage";
 import BacktestPage from "./pages/BacktestPage";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./App.css";
 
 // ─── Theme context shared across all pages ────────────────────────
@@ -32,14 +33,14 @@ export default function App() {
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/charts" element={<ChartsPage />} />
-          <Route path="/reports" element={<ReportsPage />} />
-          <Route path="/fib-dashboard" element={<FibDashboardPage />} />
-          <Route path="/scanner" element={<ScannerPage />} />
-          <Route path="/strategies" element={<StrategiesPage />} />
-          <Route path="/strategies/:id" element={<StrategiesPage />} />
-          <Route path="/backtest" element={<BacktestPage />} />
+          <Route path="/" element={<ErrorBoundary label="Home"><HomePage /></ErrorBoundary>} />
+          <Route path="/charts" element={<ErrorBoundary label="Charts"><ChartsPage /></ErrorBoundary>} />
+          <Route path="/reports" element={<ErrorBoundary label="Reports"><ReportsPage /></ErrorBoundary>} />
+          <Route path="/fib-dashboard" element={<ErrorBoundary label="Fib Dashboard"><FibDashboardPage /></ErrorBoundary>} />
+          <Route path="/scanner" element={<ErrorBoundary label="Scanner"><ScannerPage /></ErrorBoundary>} />
+          <Route path="/strategies" element={<ErrorBoundary label="Strategies"><StrategiesPage /></ErrorBoundary>} />
+          <Route path="/strategies/:id" element={<ErrorBoundary label="Strategies"><StrategiesPage /></ErrorBoundary>} />
+          <Route path="/backtest" element={<ErrorBoundary label="Backtest"><BacktestPage /></ErrorBoundary>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

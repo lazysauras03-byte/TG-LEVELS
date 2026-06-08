@@ -4,11 +4,12 @@
  * No signals, just zones with: #, status, top price, bottom price, time.
  */
 import React, { useMemo } from "react";
+import { toISTDate, getTodayIST } from "../utils/istUtils";
 
 const STATUS_CONFIG = {
-  active : { color: "#3d84ff", bg: "rgba(61,132,255,0.08)",  icon: "◈",  label: "ACTIVE" },
-  up     : { color: "#00d97e", bg: "rgba(0,217,126,0.08)",   icon: "▲",  label: "BROKE UP" },
-  down   : { color: "#ff4560", bg: "rgba(255,69,96,0.08)",   icon: "▼",  label: "BROKE DN" },
+  active: { color: "#3d84ff", bg: "rgba(61,132,255,0.08)", icon: "◈", label: "ACTIVE" },
+  up: { color: "#00d97e", bg: "rgba(0,217,126,0.08)", icon: "▲", label: "BROKE UP" },
+  down: { color: "#ff4560", bg: "rgba(255,69,96,0.08)", icon: "▼", label: "BROKE DN" },
 };
 
 function fmtPrice(p) {
@@ -23,13 +24,8 @@ function fmtTime(tsMs) {
   });
 }
 
-function toISTDate(tsMs) {
-  if (!tsMs) return "";
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
-
 export default function ConsolidationZoneTable({ zones = [], todayMode }) {
-  const todayIST = useMemo(() => new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }), []);
+  const todayIST = useMemo(() => getTodayIST(), []);
 
   const displayed = useMemo(() => {
     const sorted = [...zones].reverse(); // latest first
@@ -62,8 +58,8 @@ export default function ConsolidationZoneTable({ zones = [], todayMode }) {
 
       {/* Rows */}
       {displayed.map((z, idx) => {
-        const cfg   = STATUS_CONFIG[z.status] ?? STATUS_CONFIG.active;
-        const num   = -(idx); // negative index latest-first
+        const cfg = STATUS_CONFIG[z.status] ?? STATUS_CONFIG.active;
+        const num = -(idx); // negative index latest-first
         return (
           <div
             key={`${z.startBarIndex}-${z.status}`}

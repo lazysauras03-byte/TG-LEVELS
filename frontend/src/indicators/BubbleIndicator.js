@@ -19,11 +19,7 @@
  *  - todayMode filters markers to the same IST calendar date as the latest candle.
  */
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function toISTDate(tsMs) {
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
+import { toISTDate } from "../utils/istUtils";
 
 // ─── Core marker builder ───────────────────────────────────────────────────────
 

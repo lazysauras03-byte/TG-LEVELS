@@ -25,14 +25,11 @@ import {
   buildBubbleMarkers,
   setMarkersIfChanged,
 } from "../indicators/BubbleIndicator";
+import { toISTDate } from "../utils/istUtils";
 import DrawingOverlay from "./DrawingOverlay";
 import { useTheme } from "../App";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function toISTDate(tsMs) {
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
 
 // ─── Ruler overlay ────────────────────────────────────────────────────────────
 class RulerOverlay {
@@ -653,7 +650,9 @@ export default function CandleChart({
       candleRef.current = null;
       setTimeout(() => { try { chart.remove(); } catch { } }, 0);
     };
-  }, []); // eslint-disable-line
+  }, []); // Mount-only: chart is created once and torn down on unmount.
+  // All data updates flow through refs (candlesRef, emaHighsRef, etc.)
+  // to avoid re-running this expensive setup on every prop change.
 
   // ── Update chart colors when theme changes ──────────────────────────────
   useEffect(() => {
@@ -888,8 +887,8 @@ export default function CandleChart({
         resetView();
       }
     }
-  }, [candles]); // eslint-disable-line
-  // ^ depends ONLY on candles. emaHighs/emaLows/signals read from refs — never trigger this effect.
+  }, [candles]); // emaHighs/emaLows/signals are read from refs — they intentionally
+  // do NOT trigger this effect. Only new candle data resets the view.
 
   // ── Cursor/Tool mode: toggle chart pan vs drawing mode ───────────────────
   // When selectedTool is "cursor" → normal pan/scroll (handleScroll: true)
@@ -953,14 +952,18 @@ export default function CandleChart({
 
     srPriceLinesRef.current = handles;
     if (onSRLinesDrawn) onSRLinesDrawn(handles.length > 0);
-  }, [srLines, onSRLinesDrawn]); // eslint-disable-line
+    // candleRef/chartRef are stable refs — not needed in deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srLines, onSRLinesDrawn]);
 
   // ── Markers: refresh when signals, todayMode, or showBubble changes ────────
   // These three are the ONLY things that should cause setMarkers to fire.
   // Price ticks do NOT touch this effect because candles is not in the dep array here.
   useEffect(() => {
     refreshMarkers();
-  }, [signals, todayMode, showBubble, refreshMarkers]); // eslint-disable-line
+    // candleRef/candlesRef are stable refs — deliberately excluded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signals, todayMode, showBubble, refreshMarkers]);
 
   // ── Waves toggle ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -973,7 +976,9 @@ export default function CandleChart({
     }
     // Waves toggle can shift marker positions — refresh
     refreshMarkers();
-  }, [showWaves, refreshMarkers]); // eslint-disable-line
+    // candlesRef/emaHighsRef/emaLowsRef/chartRef are stable refs — not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showWaves, refreshMarkers]);
 
   // ── Consolidation toggle + bubbleGap change ────────────────────────────────
   useEffect(() => {
@@ -984,7 +989,9 @@ export default function CandleChart({
     } else {
       removeConsolidationIndicator(false, chartRef.current);
     }
-  }, [showConsolidation, bubbleGap]); // eslint-disable-line
+    // candlesRef/emaHighsRef/emaLowsRef/chartRef are stable refs — not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showConsolidation, bubbleGap]);
 
   // ── SR Zones toggle ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -998,7 +1005,9 @@ export default function CandleChart({
     } else {
       removeSRZonesIndicator(false, chartRef.current);
     }
-  }, [showSRZones, srStrongTouches, srLookbackBars]); // eslint-disable-line
+    // candlesRef/emaHighsRef/emaLowsRef/chartRef are stable refs — not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSRZones, srStrongTouches, srLookbackBars]);
 
   // ── Candle countdown timer — pixel-tracked to last price ──────────────────
   // timerInfo: { price, secsLeft, isBull, yPx }
@@ -1079,7 +1088,9 @@ export default function CandleChart({
       clearInterval(intervalId);
       if (timerRafRef.current) cancelAnimationFrame(timerRafRef.current);
     };
-  }, [candles, activeResolution]); // eslint-disable-line
+    // chartRef/candleRef/containerRef are stable refs — not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles, activeResolution]);
 
   // Keep isActivePanel in a ref so the mousedown handler never triggers re-renders
   // when the panel is already active (avoids choppy chart during panning)

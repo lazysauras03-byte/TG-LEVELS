@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { toISTDate, getTodayIST } from "../utils/istUtils";
 
 const STATE_LABELS = {
   0: { label: "WAIT", color: "#7a8099" },
@@ -7,15 +8,6 @@ const STATE_LABELS = {
   2: { label: "TRAIL LOW (post NH)", color: "#ffc135" },
   "-2": { label: "TRAIL HIGH (post NL)", color: "#3d84ff" },
 };
-
-function toISTDate(tsMs) {
-  if (!tsMs) return "";
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
-
-function getTodayIST() {
-  return new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
 
 export default function StatsPanel({ signals = [], candles = [], currentState, bestPrice, todayMode = false }) {
   // Filter signals to today if todayMode — same logic as SignalTable

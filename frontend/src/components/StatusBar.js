@@ -2,24 +2,15 @@
 import React, { memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "../App";
-import { LayoutPicker } from "../pages/ChartsPage";
+import { LayoutPicker } from "./layout/LayoutPicker";
 import IndicatorPanel from "./IndicatorPanel";
+import { TIMEFRAMES } from "../utils/formatResolution";
 
 const numFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 function fmt(n) {
   if (n == null) return "—";
   return numFmt.format(Number(n));
 }
-
-const TIMEFRAMES = [
-  { label: "1m", value: 1 },
-  { label: "3m", value: 3 },
-  { label: "5m", value: 5 },
-  { label: "15m", value: 15 },
-  { label: "1h", value: 60 },
-  { label: "1D", value: 1440 },
-  { label: "1W", value: 10080 },
-];
 
 // ─── StatusBar ─────────────────────────────────────────────────────────────────
 // Props:
@@ -33,7 +24,6 @@ const TIMEFRAMES = [
 //   tickStreamActive                             — (unused, kept for back-compat)
 //   layoutId, onLayoutChange                     — layout picker (primary panel only)
 //   indicators, onIndicatorChange                — indicator panel
-//   dualMode, onDualToggle                       — KEPT as dead props
 // ─────────────────────────────────────────────────────────────────────────────
 function StatusBar({
   connected, loading, chartData,
@@ -45,8 +35,6 @@ function StatusBar({
   onSidebarToggle,
   tickStreamActive,
   ticksFlowing,
-  dualMode,       // eslint-disable-line no-unused-vars
-  onDualToggle,   // eslint-disable-line no-unused-vars
   layoutId,
   onLayoutChange,
   indicators,

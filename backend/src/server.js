@@ -16,6 +16,7 @@ const { scanner } = require("./scannerRunner");
 const backtestRouter = require("./backtestRouter");
 const { backtestRunner } = require("./backtestRunner");
 const { detectMotherWaveForAPI } = require("./motherwave");
+const createChartRouter = require("./chartRouter");
 
 const app = express();
 const server = http.createServer(app);
@@ -58,6 +59,11 @@ app.use(
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
 const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
+// CANDLES_TO_FETCH: passed to fetchCandles() as the `count` parameter but
+// fetchCandles() currently ignores it — Fyers data is fetched by date-range
+// windows (calcLookbackDays) not by count. This env var is kept for future use
+// if a count-based slice is added. The actual depth is controlled by
+// calcLookbackDays() in fyers.js (30d for 3m, 60d for 15m, 150d for 1h).
 const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
 const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "5000");
 const TICK_WATCHDOG_MS = parseInt(process.env.TICK_WATCHDOG_MS || "10000");
@@ -325,211 +331,20 @@ async function fetchAndBroadcast(symbol, resolution, isAutoRefresh = true) {
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => {
-  const activeSyms = getActiveTickSymbols();
-  res.json({
-    status: "ok",
-    time: new Date().toISOString(),
-    tickStreamActive: tickStream.isConnected(),
-    // ticksFlowing is the SOURCE OF TRUTH for market open/closed on the frontend.
-    // Derived from actual tick timestamps, not the clock.
-    ticksFlowing: ticksFlowing(),
-    // Clock-based helpers — used for cache TTL decisions, not for UI status.
-    liveMarket: isAnyMarketLive(activeSyms),
-    tradingDay: isTradingDay(),
-    tickSymbols: activeSyms,
-    watchdogWindowMs: TICK_WATCHDOG_MS,
-  });
-});
-
-app.get("/api/auth/status", async (req, res) => {
-  try { const valid = await validateToken(); res.json({ authenticated: valid, authUrl: valid ? null : getAuthURL() }); }
-  catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get("/api/auth/url", (req, res) => {
-  try { res.json({ url: getAuthURL() }); } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post("/api/auth/token", async (req, res) => {
-  const { code } = req.body;
-  if (!code) return res.status(400).json({ error: "auth_code required" });
-  try { await generateToken(code); await maybeStartTickStream(); res.json({ success: true, message: "Token saved successfully" }); }
-  catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-/**
- * GET /api/chart?symbol=X&resolution=Y
- *
- * Single endpoint for all chart data — no more POST/GET split on the frontend.
- * The backend decides whether to serve from cache or re-fetch from Fyers based on:
- *   - isLiveMarket(symbol): symbol-aware (MCX stays live until 23:30 / 14:00 Sat)
- *   - isTradingDay(symbol): MCX is a trading day on Saturdays too
- *
- * Cache TTL (symbol-aware):
- *   Live market  : 60s  (auto-refreshes from Fyers when stale)
- *   Weekday/off  : 5min
- *   Weekend/off  : 24hr (MCX Sat treated as weekday for MCX symbols)
- */
-app.get("/api/chart", async (req, res) => {
-  const symbol = req.query.symbol || SYMBOL;
-  const resolution = parseInt(req.query.resolution || RESOLUTION);
-  const cache = getCache(symbol, resolution);
-
-  // Symbol-aware TTL — MCX gets live treatment until 23:30 (or 14:00 Sat)
-  const live = isLiveMarket(symbol);
-  const tradingDay = isTradingDay(symbol);
-  const cacheTTL = live ? 60_000 : tradingDay ? 5 * 60_000 : 24 * 60 * 60_000;
-
-  if (cache.result && cache.candles.length > 0 && Date.now() - cache.lastFetch < cacheTTL) {
-    return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
-  }
-  try {
-    const { candles, result } = await fetchAndProcess(symbol, resolution);
-    // After a fresh fetch, also sync tick subscription for this symbol
-    if (live) setImmediate(() => updateTickSubscription().catch(console.error));
-    res.json(buildPayload(candles, result, symbol, resolution));
-  } catch (err) {
-    if (cache.result && cache.candles.length > 0) {
-      console.warn(`[/api/chart] Fetch failed (${err.message}), serving stale cache`);
-      return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
-    }
-    console.error("[/api/chart] Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /api/chart/refresh?symbol=X&resolution=Y
- *
- * DUAL-PANEL FIX: emits chart_update only to the requesting socket (via socketId
- * in body) so the other panel's chart is never overwritten.
- *
- * TICK-STREAM FIX: after a successful fetch for any symbol, calls
- * updateTickSubscription() which adds that symbol to the Fyers WebSocket
- * subscription. This is the key fix for "only NIFTY gets tick-by-tick" —
- * previously the subscription was hardcoded to [SYMBOL] at startup and never
- * expanded when users searched for other stocks.
- */
-app.post("/api/chart/refresh", async (req, res) => {
-  const symbol = req.query.symbol || SYMBOL;
-  const resolution = parseInt(req.query.resolution || RESOLUTION);
-  const requestingSocketId = req.body?.socketId || null;
-
-  console.log(`[REFRESH] symbol=${symbol} res=${resolution}m socket=${requestingSocketId || "broadcast"} liveMarket=${isLiveMarket(symbol)}`);
-
-  // Pre-register the requesting socket's symbol so tick filtering is accurate
-  // even before the socket emits set_symbol (which may arrive slightly later).
-  if (requestingSocketId) socketSymbols.set(requestingSocketId, symbol);
-
-  try {
-    const { candles, result } = await fetchAndProcess(symbol, resolution);
-    const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
-
-    if (requestingSocketId) {
-      // Only the requesting panel — other panel stays untouched
-      io.to(requestingSocketId).emit("chart_update", { ...payload, isAutoRefresh: false });
-    } else {
-      // Legacy path — broadcast to room, symbol-filtered
-      const room = `res:${resolution}`;
-      const roomSockets = io.sockets.adapter.rooms.get(room);
-      if (roomSockets?.size) {
-        for (const sid of roomSockets) {
-          const sock = io.sockets.sockets.get(sid);
-          if (!sock) continue;
-          if ((socketSymbols.get(sid) || SYMBOL) === symbol) sock.emit("chart_update", { ...payload, isAutoRefresh: true });
-        }
-      } else {
-        io.to(room).emit("chart_update", { ...payload, isAutoRefresh: true });
-      }
-    }
-
-    res.json(payload);
-
-    // KEY TICK-STREAM FIX: sync Fyers WebSocket to include this symbol.
-    // setImmediate so the HTTP response is sent first, then we do async work.
-    setImmediate(() => updateTickSubscription().catch(console.error));
-  } catch (err) {
-    const cache = getCache(symbol, resolution);
-    if (cache.result && cache.candles.length > 0) {
-      console.warn(`[REFRESH] Fetch failed (${err.message}), serving stale cache`);
-      return res.json({ ...buildPayload(cache.candles, cache.result, symbol, resolution, false), success: true });
-    }
-    console.error("[REFRESH] Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get("/api/signals", async (req, res) => {
-  const resolution = parseInt(req.query.resolution || RESOLUTION);
-  const cache = getCache(SYMBOL, resolution);
-  if (!cache.result) return res.status(404).json({ error: "No data yet. Call /api/chart first." });
-  res.json({ signals: cache.result.signals, currentState: cache.result.currentState, lastUpdate: new Date(cache.lastFetch).toISOString() });
-});
+// Chart, auth, health, signals, motherwave → chartRouter (extracted)
+app.use(createChartRouter({
+  io, socketSymbols, socketResolutions,
+  SYMBOL, RESOLUTION, TICK_WATCHDOG_MS,
+  getCache, buildPayload, fetchAndProcess, fetchAndBroadcast,
+  isLiveMarket, isTradingDay, isAnyMarketLive,
+  tickStream, ticksFlowing, getActiveTickSymbols, updateTickSubscription, maybeStartTickStream,
+  getAuthURL, generateToken, validateToken,
+  detectMotherWaveForAPI,
+}));
 
 app.use("/api/symbols", symbolsRouter);
 app.use("/api/scanner", scannerRouter);
 app.use("/api/backtest", backtestRouter);
-
-/**
- * GET /api/motherwave?symbol=X&resolution=Y
- *
- * Returns the Mother Wave result for the requested symbol + resolution.
- * Single source of truth — ReportsPage and FibDashboardPage call this
- * instead of running their own local MW detection.
- *
- * Caching: mirrors /api/chart TTL logic —
- *   60s  during live market
- *   5min on weekdays outside market hours
- *   24hr on weekends / holidays
- *
- * Response: { wave, fibLevels, invalidation } | { motherwave: null }
- */
-app.get("/api/motherwave", async (req, res) => {
-  const symbol = req.query.symbol || SYMBOL;
-  const resolution = parseInt(req.query.resolution || RESOLUTION);
-
-  // ── Same TTL logic as /api/chart ──────────────────────────────────────────
-  // Symbol-aware TTL — same logic as /api/chart
-  const live = isLiveMarket(symbol);
-  const cacheTTL = live ? 60_000 : isTradingDay(symbol) ? 5 * 60_000 : 24 * 60 * 60_000;
-  const cache = getCache(symbol, resolution);
-
-  // Serve cached MW result if still fresh
-  if (cache.motherwaveResult !== null && Date.now() - cache.motherwaveAt < cacheTTL) {
-    return res.json(cache.motherwaveResult);
-  }
-
-  try {
-    // Use in-memory candle cache (populated by /api/chart or auto-refresh).
-    // Fall back to a live fetch only if cache is cold.
-    let candles = null;
-    if (cache.candles && cache.candles.length > 0) {
-      candles = cache.candles;
-    } else {
-      const { candles: fetched } = await fetchAndProcess(symbol, resolution);
-      candles = fetched;
-    }
-
-    if (!candles || !candles.length) {
-      cache.motherwaveResult = { motherwave: null };
-      cache.motherwaveAt = Date.now();
-      return res.json({ motherwave: null });
-    }
-
-    const result = detectMotherWaveForAPI(candles);
-    const payload = result || { motherwave: null };
-
-    // Store in cache alongside candles
-    cache.motherwaveResult = payload;
-    cache.motherwaveAt = Date.now();
-
-    res.json(payload);
-  } catch (err) {
-    console.error("[/api/motherwave] Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ─── Tick Watchdog ────────────────────────────────────────────────────────────
 function startTickWatchdog() {

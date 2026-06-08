@@ -3,6 +3,7 @@
  * Stats panel for the Waves indicator — mirrors StatsPanel architecture.
  */
 import React, { useMemo } from "react";
+import { toISTDate, getTodayIST } from "../utils/istUtils";
 
 const WAVE_COLORS = {
   HH: "#00d97e",
@@ -18,14 +19,6 @@ function getBias(counts) {
   if (bullish > bearish) return { label: "BULLISH", color: "#00d97e" };
   if (bearish > bullish) return { label: "BEARISH", color: "#ff4560" };
   return { label: "NEUTRAL", color: "#7a8099" };
-}
-
-function toISTDate(tsMs) {
-  if (!tsMs) return "";
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
-function getTodayIST() {
-  return new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
 export default function WaveStatsPanel({ wavePivots = [], waveSegments = [], todayMode = false }) {
@@ -108,8 +101,8 @@ export default function WaveStatsPanel({ wavePivots = [], waveSegments = [], tod
       <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
         <div style={styles.sectionTitle}>WAVE TYPES</div>
         <LegendRow color={WAVE_COLORS.HH} icon="▲▲" label="HH — Higher High (bullish swing)" />
-        <LegendRow color={WAVE_COLORS.LH} icon="▲"  label="LH — Lower High (bearish turn)" />
-        <LegendRow color={WAVE_COLORS.HL} icon="▼"  label="HL — Higher Low (bullish hold)" />
+        <LegendRow color={WAVE_COLORS.LH} icon="▲" label="LH — Lower High (bearish turn)" />
+        <LegendRow color={WAVE_COLORS.HL} icon="▼" label="HL — Higher Low (bullish hold)" />
         <LegendRow color={WAVE_COLORS.LL} icon="▼▼" label="LL — Lower Low (bearish swing)" />
         <LegendRow color="rgba(245,166,35,0.85)" icon="—" label="Wave line segments" />
       </div>

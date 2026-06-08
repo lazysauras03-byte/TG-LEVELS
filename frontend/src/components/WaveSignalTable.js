@@ -4,12 +4,13 @@
  * Mirrors SignalTable architecture.
  */
 import React, { useMemo } from "react";
+import { toISTDate, getTodayIST } from "../utils/istUtils";
 
 const WAVE_TYPE_CONFIG = {
   HH: { color: "#00d97e", bg: "rgba(0,217,126,0.08)", icon: "▲▲" },
   LH: { color: "#3d84ff", bg: "rgba(61,132,255,0.08)", icon: "▲" },
   HL: { color: "#ffc135", bg: "rgba(255,193,53,0.08)", icon: "▼" },
-  LL: { color: "#ff4560", bg: "rgba(255,69,96,0.08)",  icon: "▼▼" },
+  LL: { color: "#ff4560", bg: "rgba(255,69,96,0.08)", icon: "▼▼" },
 };
 
 function formatTime(tsMs) {
@@ -22,15 +23,6 @@ function formatTime(tsMs) {
 function formatPrice(p) {
   if (p == null) return "—";
   return Number(p).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-}
-
-function toISTDate(tsMs) {
-  if (!tsMs) return "";
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
-
-function getTodayIST() {
-  return new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
 export default function WaveSignalTable({ wavePivots = [], todayMode = false }) {

@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { toISTDate, getTodayIST } from "../utils/istUtils";
 
 const TYPE_CONFIG = {
   NH: { label: "NH", bg: "var(--green-dim)", color: "var(--green)", icon: "▼" },
@@ -6,11 +7,6 @@ const TYPE_CONFIG = {
   BC_HIGH: { label: "BC ↑", bg: "var(--yellow-dim)", color: "var(--yellow)", icon: "⚡" },
   BC_LOW: { label: "BC ↓", bg: "var(--yellow-dim)", color: "var(--yellow)", icon: "⚡" },
 };
-
-function toISTDate(tsMs) {
-  if (!tsMs) return "";
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
 
 function formatTime(ts) {
   if (!ts) return "—";
@@ -22,11 +18,6 @@ function formatTime(ts) {
 function formatPrice(p) {
   if (p == null) return "—";
   return Number(p).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-}
-
-// Get today's IST date string from the latest candle that is actually from today
-function getTodayIST() {
-  return new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
 export default function SignalTable({ signals = [], candles = [], todayMode = false }) {

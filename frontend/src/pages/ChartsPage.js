@@ -25,159 +25,19 @@ import StatsPanel from "../components/StatsPanel";
 import WaveSignalTable from "../components/WaveSignalTable";
 import WaveStatsPanel from "../components/WaveStatsPanel";
 import ConsolidationZoneTable from "../components/ConsolidationZoneTable";
+import ConsolidationStatsPanel from "../components/ConsolidationStatsPanel";
 import EmaFloatPanel from "../components/EmaFloatPanel";
 import TradingToolbar from "../components/TradingToolbar";
 import { DrawingProvider, usePanelLink, setAllLinked } from "../components/DrawingContext";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
+import { toISTDate } from "../utils/istUtils";
+import { loadPref, savePref } from "../utils/prefs";
+import { formatResolution } from "../utils/formatResolution";
+import { LAYOUTS } from "../components/layout/LayoutPicker";
+import ErrorBoundary from "../components/ErrorBoundary";
+import { ChartPanelPropTypes } from "./ChartPanelPropTypes";
 import "./ChartsPage.css";
-
-// ─── localStorage helpers ──────────────────────────────────────────────────────
-function loadPref(key, fallback) {
-  try {
-    const v = localStorage.getItem("tgg_" + key);
-    return v !== null ? JSON.parse(v) : fallback;
-  } catch { return fallback; }
-}
-function savePref(key, value) {
-  try { localStorage.setItem("tgg_" + key, JSON.stringify(value)); } catch { }
-}
-
-function toISTDate(tsMs) {
-  return new Date(tsMs).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
-
-// ─── Layout definitions ────────────────────────────────────────────────────────
-export const LAYOUTS = [
-  { id: "1", label: "Single", cols: 1, rows: 1, panels: 1, icon: "1x1" },
-  { id: "2h", label: "2 Side-by-Side", cols: 2, rows: 1, panels: 2, icon: "2h" },
-  { id: "2v", label: "2 Stacked", cols: 1, rows: 2, panels: 2, icon: "2v" },
-  { id: "3", label: "3 Panels", cols: 2, rows: 2, panels: 3, icon: "3" },
-  { id: "4", label: "4 Panels", cols: 2, rows: 2, panels: 4, icon: "4" },
-];
-
-// ─── Layout Icon SVG ───────────────────────────────────────────────────────────
-function LayoutIcon({ icon, size = 18 }) {
-  const s = size, p = 2, gap = 2;
-  const inner = s - p * 2;
-  const half = (inner - gap) / 2;
-  switch (icon) {
-    case "1x1":
-      return <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`} fill="none"><rect x={p} y={p} width={inner} height={inner} rx={1.5} stroke="currentColor" strokeWidth={1.5} /></svg>;
-    case "2h":
-      return <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`} fill="none">
-        <rect x={p} y={p} width={half} height={inner} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-        <rect x={p + half + gap} y={p} width={half} height={inner} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-      </svg>;
-    case "2v":
-      return <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`} fill="none">
-        <rect x={p} y={p} width={inner} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-        <rect x={p} y={p + half + gap} width={inner} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-      </svg>;
-    case "3":
-      return <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`} fill="none">
-        <rect x={p} y={p} width={half} height={inner} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-        <rect x={p + half + gap} y={p} width={half} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-        <rect x={p + half + gap} y={p + half + gap} width={half} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-      </svg>;
-    case "4":
-      return <svg width={s} height={s} viewBox={`0 0 ${s} ${s}`} fill="none">
-        <rect x={p} y={p} width={half} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-        <rect x={p + half + gap} y={p} width={half} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-        <rect x={p} y={p + half + gap} width={half} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-        <rect x={p + half + gap} y={p + half + gap} width={half} height={half} rx={1.5} stroke="currentColor" strokeWidth={1.5} />
-      </svg>;
-    default: return null;
-  }
-}
-
-// ─── Layout Picker Dropdown (exported → used by StatusBar) ────────────────────
-export function LayoutPicker({ currentLayout, onSelect }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    function handler(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  const current = LAYOUTS.find((l) => l.id === currentLayout) || LAYOUTS[0];
-
-  return (
-    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title="Change layout"
-        style={{
-          display: "flex", alignItems: "center", gap: 5,
-          background: open ? "var(--accent-dim)" : "var(--bg3)",
-          border: `1px solid ${open ? "var(--accent)" : "var(--border2)"}`,
-          borderRadius: 5,
-          color: open ? "var(--accent)" : "var(--text2)",
-          fontFamily: "var(--font-mono)",
-          fontSize: 11, fontWeight: 700,
-          padding: "3px 10px",
-          cursor: "pointer",
-          letterSpacing: "0.04em",
-          flexShrink: 0,
-          transition: "background 0.15s, color 0.15s, border-color 0.15s",
-        }}
-      >
-        <LayoutIcon icon={current.icon} size={15} />
-      </button>
-
-      {open && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 6px)", right: 0,
-          background: "var(--bg3)", border: "1px solid var(--border2)",
-          borderRadius: 8, zIndex: 9999, padding: 10,
-          boxShadow: "0 8px 32px var(--shadow)", minWidth: 210,
-        }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text3)", textTransform: "uppercase", marginBottom: 8 }}>
-            Select Layout
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {LAYOUTS.map((layout) => {
-              const active = layout.id === currentLayout;
-              return (
-                <button
-                  key={layout.id}
-                  onClick={() => { onSelect(layout.id); setOpen(false); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10,
-                    background: active ? "var(--accent-dim)" : "transparent",
-                    border: `1px solid ${active ? "var(--accent)" : "transparent"}`,
-                    borderRadius: 5,
-                    color: active ? "var(--accent)" : "var(--text2)",
-                    padding: "6px 10px", cursor: "pointer", textAlign: "left",
-                    fontFamily: "var(--font-mono)", fontSize: 11, width: "100%",
-                    fontWeight: active ? 700 : 400,
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = "var(--bg2)"; e.currentTarget.style.color = "var(--text)"; } }}
-                  onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text2)"; } }}
-                >
-                  <span style={{ flexShrink: 0, color: active ? "var(--accent)" : "var(--text3)" }}>
-                    <LayoutIcon icon={layout.icon} size={17} />
-                  </span>
-                  <span>{layout.label}</span>
-                  {active && (
-                    <svg style={{ marginLeft: "auto", flexShrink: 0 }} width="10" height="10" viewBox="0 0 10 10" fill="none">
-                      <path d="M1.5 5l2.5 2.5L8.5 2" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
-                    </svg>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── SidebarSection — defined OUTSIDE so it never remounts ────────────────────
 const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onTabChange, children }) {
@@ -260,11 +120,19 @@ const ChartPanel = memo(function ChartPanel({
     symbol
   );
 
-  useEffect(() => { savePref(pfx + "symbol", symbol); }, [symbol]);           // eslint-disable-line
-  useEffect(() => { savePref(pfx + "resolution", resolution); }, [resolution]); // eslint-disable-line
-  useEffect(() => { savePref(pfx + "todayMode", todayMode); }, [todayMode]);    // eslint-disable-line
-  useEffect(() => { savePref(pfx + "sidebarOpen", sidebarOpen); }, [sidebarOpen]); // eslint-disable-line
-  useEffect(() => { savePref(pfx + "activeTabs", activeTabs); }, [activeTabs]); // eslint-disable-line
+  // Persist panel preferences whenever they change.
+  // pfx is stable for the panel's lifetime (it's a prop constant), so omitting
+  // it from deps is safe — savePref is also stable (module-level function).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { savePref(pfx + "symbol", symbol); }, [symbol]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { savePref(pfx + "resolution", resolution); }, [resolution]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { savePref(pfx + "todayMode", todayMode); }, [todayMode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { savePref(pfx + "sidebarOpen", sidebarOpen); }, [sidebarOpen]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { savePref(pfx + "activeTabs", activeTabs); }, [activeTabs]);
 
   // ── Drawings hidden — per panel ────────────────────────────────────────────
   const [drawingsHidden, setDrawingsHidden] = useState(false);
@@ -286,7 +154,11 @@ const ChartPanel = memo(function ChartPanel({
       panelLinkRef.current = { linked, setLinked };
     }
     if (setToolbarLinked) setToolbarLinked(linked);
-  }, [isActivePanel, drawingsHidden, linked, handleToggleHide, handleTrashAll, panelActionsRef, setActivePanelHidden, panelLinkRef, setToolbarLinked, setLinked]); // eslint-disable-line
+    // panelActionsRef / panelLinkRef are stable React refs — mutating .current
+    // does not need to trigger re-runs. Including them in deps would cause
+    // unnecessary re-registrations on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActivePanel, drawingsHidden, linked, handleToggleHide, handleTrashAll, setActivePanelHidden, setToolbarLinked, setLinked]);
 
   // ── SR Lines ───────────────────────────────────────────────────────────────
   const [srLinesToDraw, setSrLinesToDraw] = useState(() => urlSrLines || []);
@@ -297,7 +169,10 @@ const ChartPanel = memo(function ChartPanel({
     } else if (urlSrLines?.length) {
       setSrLinesToDraw(urlSrLines);
     }
-  }, [srLinesDrawn, urlSrLines]); // eslint-disable-line
+    // handleDrawSRLines reads srLinesDrawn and urlSrLines via closure — adding
+    // the callback itself would cause an infinite loop via setSrLinesToDraw.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srLinesDrawn, urlSrLines]);
 
   // ── Indicators — namespaced per panel ─────────────────────────────────────
   const [indicators, setIndicators] = useState(() => {
@@ -305,7 +180,8 @@ const ChartPanel = memo(function ChartPanel({
     if (urlWaveTarget) return { ...defaults, waves: true };
     return defaults;
   });
-  useEffect(() => { savePref(pfx + "indicators", indicators); }, [indicators]); // eslint-disable-line
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { savePref(pfx + "indicators", indicators); }, [indicators]);
 
   const handleIndicatorChange = useCallback((id, enabled) => {
     setIndicators((prev) => ({ ...prev, [id]: enabled }));
@@ -352,7 +228,9 @@ const ChartPanel = memo(function ChartPanel({
   const handleRefresh = useCallback((sym, res) => {
     triggerIntentionalReload();
     refresh(sym ?? symbol, res ?? resolution);
-  }, [refresh, symbol, resolution, triggerIntentionalReload]); // eslint-disable-line
+    // triggerIntentionalReload is stable (useCallback with []), so this is safe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh, symbol, resolution, triggerIntentionalReload]);
 
   const handleSymbolChange = useCallback((sym) => setSymbol(sym), []);
   const handleResolutionChange = useCallback((res) => {
@@ -368,9 +246,12 @@ const ChartPanel = memo(function ChartPanel({
       triggerIntentionalReload();
       refresh(symbol, resolution);
     }
-  }, []); // eslint-disable-line
-
-  // ── Fib injection ──────────────────────────────────────────────────────────
+    // Intentional mount-only effect — runs exactly once to trigger the initial
+    // data fetch. refresh/symbol/resolution are read at call time via closure;
+    // adding them would re-fetch on every symbol/resolution change (handled
+    // separately by handleRefresh / handleResolutionChange).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const fibInjectedRef = useRef(false);
   const candles = chartData?.candles || [];
   useEffect(() => {
@@ -387,7 +268,11 @@ const ChartPanel = memo(function ChartPanel({
         resolution: urlFibDrawing.resolution ?? resolution,
       });
     }, 800);
-  }, [candles.length, urlFibDrawing]); // eslint-disable-line
+    // fibInjectedRef guards against double-injection. urlFibDrawing and
+    // candles.length are the correct triggers — other url* values are stable
+    // object refs that don't change after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles.length, urlFibDrawing]);
 
   // ── Symbol search modal ────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
@@ -410,7 +295,11 @@ const ChartPanel = memo(function ChartPanel({
   const emaHighs = chartData?.emaHighs || [];
   const emaLows = chartData?.emaLows || [];
   const signalsRaw = chartData?.signals || [];
-  const signals = useMemo(() => signalsRaw, [signalsRaw.map((s) => `${s.type}:${s.time}`).join("|")]); // eslint-disable-line
+  // Custom dep: fingerprint the signals array by content so this memo only
+  // recomputes when signal type/time actually changes, not on every render
+  // where the array reference changes but contents are the same.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const signals = useMemo(() => signalsRaw, [signalsRaw.map((s) => `${s.type}:${s.time}`).join("|")]);
   const currentState = chartData?.currentState ?? 0;
   const bestPrice = chartData?.bestPrice;
   const chartDataResolution = chartData?.resolution ?? resolution;
@@ -463,8 +352,6 @@ const ChartPanel = memo(function ChartPanel({
           onSidebarToggle={handleSidebarToggle}
           tickStreamActive={tickStreamActive}
           ticksFlowing={ticksFlowing}
-          dualMode={false}
-          onDualToggle={undefined}
           layoutId={isPrimary ? layoutId : undefined}
           onLayoutChange={isPrimary ? onLayoutChange : undefined}
           indicators={indicators}
@@ -497,9 +384,7 @@ const ChartPanel = memo(function ChartPanel({
               {symbol ? symbol.split(":").pop() : "—"}
             </span>
             <span className="chart-symbol-overlay-res">
-              {resolution === 1 ? "1m" : resolution === 3 ? "3m" : resolution === 5 ? "5m" :
-                resolution === 15 ? "15m" : resolution === 60 ? "1h" :
-                  resolution === 1440 ? "1D" : resolution === 10080 ? "1W" : `${resolution}m`}
+              {formatResolution(resolution)}
             </span>
           </button>
 
@@ -625,7 +510,7 @@ const ChartPanel = memo(function ChartPanel({
                     {{
                       signalLabel: `Zones (${consolidationZones.length})`,
                       signals: <ConsolidationZoneTable zones={consolidationZones} todayMode={todayMode} />,
-                      stats: <ConsolidationZoneTable zones={consolidationZones} todayMode={todayMode} />,
+                      stats: <ConsolidationStatsPanel zones={consolidationZones} todayMode={todayMode} />,
                     }}
                   </SidebarSection>
                 </div>
@@ -638,6 +523,10 @@ const ChartPanel = memo(function ChartPanel({
     </div>
   );
 });
+
+// Attach PropTypes — dev-only runtime validation (stripped in production build).
+// Wrong prop type → console.error in the browser's DevTools console.
+ChartPanel.propTypes = ChartPanelPropTypes;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // useDraggableSplit — draggable divider returning [pct, ref, onMouseDown]
@@ -710,16 +599,18 @@ function Divider({ dir, onMouseDown }) {
 function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   return (
     <div className="layout-single">
-      <ChartPanel
-        key="p0" pfx="" panelIdx={0} panelCount={1} showSidebar={true}
-        layoutId={layoutId} onLayoutChange={onLayoutChange}
-        urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
-        urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
-        urlSrLines={urlParams.srLines}
-        isActivePanel={toolbarProps.activePanel === 0}
-        onPanelActivate={() => toolbarProps.setActivePanel(0)}
-        {...toolbarProps.shared}
-      />
+      <ErrorBoundary minimal label="Panel 1">
+        <ChartPanel
+          key="p0" pfx="" panelIdx={0} panelCount={1} showSidebar={true}
+          layoutId={layoutId} onLayoutChange={onLayoutChange}
+          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+          urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+          urlSrLines={urlParams.srLines}
+          isActivePanel={toolbarProps.activePanel === 0}
+          onPanelActivate={() => toolbarProps.setActivePanel(0)}
+          {...toolbarProps.shared}
+        />
+      </ErrorBoundary>
     </div>
   );
 }
@@ -729,26 +620,30 @@ function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   return (
     <div className="layout-2h" ref={containerRef}>
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
-        <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
-          layoutId={layoutId} onLayoutChange={onLayoutChange}
-          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
-          urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
-          urlSrLines={urlParams.srLines}
-          isActivePanel={toolbarProps.activePanel === 0}
-          onPanelActivate={() => toolbarProps.setActivePanel(0)}
-          {...toolbarProps.shared}
-        />
+        <ErrorBoundary minimal label="Panel 1">
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
+            layoutId={layoutId} onLayoutChange={onLayoutChange}
+            urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+            urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+            urlSrLines={urlParams.srLines}
+            isActivePanel={toolbarProps.activePanel === 0}
+            onPanelActivate={() => toolbarProps.setActivePanel(0)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
       </div>
       <Divider dir="col" onMouseDown={onDivMouseDown} />
       <div className="layout-cell" style={{ flex: 1 }}>
-        <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
-          layoutId={undefined} onLayoutChange={undefined}
-          urlSymbol={null} urlResolution={null}
-          urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
-          isActivePanel={toolbarProps.activePanel === 1}
-          onPanelActivate={() => toolbarProps.setActivePanel(1)}
-          {...toolbarProps.shared}
-        />
+        <ErrorBoundary minimal label="Panel 2">
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 1}
+            onPanelActivate={() => toolbarProps.setActivePanel(1)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
       </div>
     </div>
   );
@@ -759,26 +654,30 @@ function Layout2V({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   return (
     <div className="layout-2v" ref={containerRef}>
       <div className="layout-cell" style={{ height: `${rowPct}%` }}>
-        <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
-          layoutId={layoutId} onLayoutChange={onLayoutChange}
-          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
-          urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
-          urlSrLines={urlParams.srLines}
-          isActivePanel={toolbarProps.activePanel === 0}
-          onPanelActivate={() => toolbarProps.setActivePanel(0)}
-          {...toolbarProps.shared}
-        />
+        <ErrorBoundary minimal label="Panel 1">
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
+            layoutId={layoutId} onLayoutChange={onLayoutChange}
+            urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+            urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+            urlSrLines={urlParams.srLines}
+            isActivePanel={toolbarProps.activePanel === 0}
+            onPanelActivate={() => toolbarProps.setActivePanel(0)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
       </div>
       <Divider dir="row" onMouseDown={onDivMouseDown} />
       <div className="layout-cell" style={{ flex: 1 }}>
-        <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
-          layoutId={undefined} onLayoutChange={undefined}
-          urlSymbol={null} urlResolution={null}
-          urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
-          isActivePanel={toolbarProps.activePanel === 1}
-          onPanelActivate={() => toolbarProps.setActivePanel(1)}
-          {...toolbarProps.shared}
-        />
+        <ErrorBoundary minimal label="Panel 2">
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 1}
+            onPanelActivate={() => toolbarProps.setActivePanel(1)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
       </div>
     </div>
   );
@@ -790,38 +689,44 @@ function Layout3({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   return (
     <div className="layout-3" ref={containerRef}>
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
-        <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={3} showSidebar={true}
-          layoutId={layoutId} onLayoutChange={onLayoutChange}
-          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
-          urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
-          urlSrLines={urlParams.srLines}
-          isActivePanel={toolbarProps.activePanel === 0}
-          onPanelActivate={() => toolbarProps.setActivePanel(0)}
-          {...toolbarProps.shared}
-        />
+        <ErrorBoundary minimal label="Panel 1">
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={3} showSidebar={true}
+            layoutId={layoutId} onLayoutChange={onLayoutChange}
+            urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+            urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+            urlSrLines={urlParams.srLines}
+            isActivePanel={toolbarProps.activePanel === 0}
+            onPanelActivate={() => toolbarProps.setActivePanel(0)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
       </div>
       <Divider dir="col" onMouseDown={onColMouseDown} />
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPct}%` }}>
-          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={3} showSidebar={false}
-            layoutId={undefined} onLayoutChange={undefined}
-            urlSymbol={null} urlResolution={null}
-            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
-            isActivePanel={toolbarProps.activePanel === 1}
-            onPanelActivate={() => toolbarProps.setActivePanel(1)}
-            {...toolbarProps.shared}
-          />
+          <ErrorBoundary minimal label="Panel 2">
+            <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={3} showSidebar={false}
+              layoutId={undefined} onLayoutChange={undefined}
+              urlSymbol={null} urlResolution={null}
+              urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+              isActivePanel={toolbarProps.activePanel === 1}
+              onPanelActivate={() => toolbarProps.setActivePanel(1)}
+              {...toolbarProps.shared}
+            />
+          </ErrorBoundary>
         </div>
         <Divider dir="row" onMouseDown={onRowMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
-          <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={3} showSidebar={false}
-            layoutId={undefined} onLayoutChange={undefined}
-            urlSymbol={null} urlResolution={null}
-            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
-            isActivePanel={toolbarProps.activePanel === 2}
-            onPanelActivate={() => toolbarProps.setActivePanel(2)}
-            {...toolbarProps.shared}
-          />
+          <ErrorBoundary minimal label="Panel 3">
+            <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={3} showSidebar={false}
+              layoutId={undefined} onLayoutChange={undefined}
+              urlSymbol={null} urlResolution={null}
+              urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+              isActivePanel={toolbarProps.activePanel === 2}
+              onPanelActivate={() => toolbarProps.setActivePanel(2)}
+              {...toolbarProps.shared}
+            />
+          </ErrorBoundary>
         </div>
       </div>
     </div>
@@ -836,50 +741,58 @@ function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
     <div className="layout-4" ref={containerRef}>
       <div className="layout-col" style={{ width: `${colPct}%` }} ref={leftRef}>
         <div className="layout-cell" style={{ height: `${rowPctL}%` }}>
-          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={4} showSidebar={false}
-            layoutId={layoutId} onLayoutChange={onLayoutChange}
-            urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
-            urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
-            urlSrLines={urlParams.srLines}
-            isActivePanel={toolbarProps.activePanel === 0}
-            onPanelActivate={() => toolbarProps.setActivePanel(0)}
-            {...toolbarProps.shared}
-          />
+          <ErrorBoundary minimal label="Panel 1">
+            <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={4} showSidebar={false}
+              layoutId={layoutId} onLayoutChange={onLayoutChange}
+              urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+              urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+              urlSrLines={urlParams.srLines}
+              isActivePanel={toolbarProps.activePanel === 0}
+              onPanelActivate={() => toolbarProps.setActivePanel(0)}
+              {...toolbarProps.shared}
+            />
+          </ErrorBoundary>
         </div>
         <Divider dir="row" onMouseDown={onRowLMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
-          <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={4} showSidebar={false}
-            layoutId={undefined} onLayoutChange={undefined}
-            urlSymbol={null} urlResolution={null}
-            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
-            isActivePanel={toolbarProps.activePanel === 2}
-            onPanelActivate={() => toolbarProps.setActivePanel(2)}
-            {...toolbarProps.shared}
-          />
+          <ErrorBoundary minimal label="Panel 3">
+            <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={4} showSidebar={false}
+              layoutId={undefined} onLayoutChange={undefined}
+              urlSymbol={null} urlResolution={null}
+              urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+              isActivePanel={toolbarProps.activePanel === 2}
+              onPanelActivate={() => toolbarProps.setActivePanel(2)}
+              {...toolbarProps.shared}
+            />
+          </ErrorBoundary>
         </div>
       </div>
       <Divider dir="col" onMouseDown={onColMouseDown} />
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPctR}%` }}>
-          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={4} showSidebar={false}
-            layoutId={undefined} onLayoutChange={undefined}
-            urlSymbol={null} urlResolution={null}
-            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
-            isActivePanel={toolbarProps.activePanel === 1}
-            onPanelActivate={() => toolbarProps.setActivePanel(1)}
-            {...toolbarProps.shared}
-          />
+          <ErrorBoundary minimal label="Panel 2">
+            <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={4} showSidebar={false}
+              layoutId={undefined} onLayoutChange={undefined}
+              urlSymbol={null} urlResolution={null}
+              urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+              isActivePanel={toolbarProps.activePanel === 1}
+              onPanelActivate={() => toolbarProps.setActivePanel(1)}
+              {...toolbarProps.shared}
+            />
+          </ErrorBoundary>
         </div>
         <Divider dir="row" onMouseDown={onRowRMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
-          <ChartPanel key="p3" pfx="p4_" panelIdx={3} panelCount={4} showSidebar={false}
-            layoutId={undefined} onLayoutChange={undefined}
-            urlSymbol={null} urlResolution={null}
-            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
-            isActivePanel={toolbarProps.activePanel === 3}
-            onPanelActivate={() => toolbarProps.setActivePanel(3)}
-            {...toolbarProps.shared}
-          />
+          <ErrorBoundary minimal label="Panel 4">
+            <ChartPanel key="p3" pfx="p4_" panelIdx={3} panelCount={4} showSidebar={false}
+              layoutId={undefined} onLayoutChange={undefined}
+              urlSymbol={null} urlResolution={null}
+              urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+              isActivePanel={toolbarProps.activePanel === 3}
+              onPanelActivate={() => toolbarProps.setActivePanel(3)}
+              {...toolbarProps.shared}
+            />
+          </ErrorBoundary>
         </div>
       </div>
     </div>
@@ -900,9 +813,10 @@ export default function ChartsPage() {
     setActivePanel(0);
     setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
     setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
-  }, []); // eslint-disable-line
-
-  // ── Global toolbar state ───────────────────────────────────────────────────
+    // Intentional stable callback — savePref/setLayoutId/setActivePanel are all
+    // stable. setTimeout dispatches are fire-and-forget side effects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [selectedTool, setSelectedTool] = useState("cursor");
   const [drawColor, setDrawColor] = useState("white");
   const [activePanel, setActivePanel] = useState(0);
@@ -949,7 +863,10 @@ export default function ChartsPage() {
       syncedCrosshairSymbol,
       onSyncCrosshair: handleSyncCrosshair,
     },
-  }), [activePanel, selectedTool, drawColor, syncedCrosshairPrice, syncedCrosshairSymbol, handleSyncCrosshair]); // eslint-disable-line
+    // setSelectedTool / panelActionsRef / panelLinkRef / setActivePanelHidden /
+    // setToolbarLinked are stable refs/setters — omitting them is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [activePanel, selectedTool, drawColor, syncedCrosshairPrice, syncedCrosshairSymbol, handleSyncCrosshair]);
 
   // ── URL params — panel 0 only ──────────────────────────────────────────────
   const urlParams = useMemo(() => {
@@ -972,9 +889,10 @@ export default function ChartsPage() {
       if (raw) srLines = JSON.parse(decodeURIComponent(raw));
     } catch { }
     return { waveTarget, symbol, resolution, fibDrawing, srLines };
-  }, []); // eslint-disable-line
-
-  // ── Render the right layout ────────────────────────────────────────────────
+    // Mount-only: URL params are parsed once at load. The location object doesn't
+    // change during the component lifetime (panels don't navigate).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   function renderLayout() {
     const props = { urlParams, layoutId, onLayoutChange: handleLayoutChange, toolbarProps };
     switch (layoutId) {

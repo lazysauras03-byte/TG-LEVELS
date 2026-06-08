@@ -14,10 +14,7 @@
  * ─────────────────────────────────────────────────────────────────
  */
 import { useState, useEffect } from "react";
-
-const BACKEND =
-  process.env.REACT_APP_BACKEND_URL ||
-  `${window.location.protocol}//${window.location.hostname}:9004`;
+import { BACKEND } from "../config";
 
 export function useMarketStatus() {
   const [status, setStatus] = useState("connecting");
