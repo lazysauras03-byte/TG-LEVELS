@@ -486,13 +486,14 @@ io.on("connection", (socket) => {
   });
 });
 
+// ERROR
 // ─── Serve React Frontend ─────────────────────────────────────────────────────
-const FRONTEND_BUILD = path.join(__dirname, "../../frontend/build");
-app.use(express.static(FRONTEND_BUILD));
-app.get("*", (req, res, next) => {
-  if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) return next();
-  res.sendFile(path.join(FRONTEND_BUILD, "index.html"));
-});
+// const FRONTEND_BUILD = path.join(__dirname, "../../frontend/build");
+// app.use(express.static(FRONTEND_BUILD));
+// app.get("*", (req, res, next) => {
+//   if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) return next();
+//   res.sendFile(path.join(FRONTEND_BUILD, "index.html"));
+// });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "9004");
