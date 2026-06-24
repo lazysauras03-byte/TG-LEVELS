@@ -171,11 +171,8 @@ class BacktestRunner extends EventEmitter {
   }
 
   // ── Per-symbol processing ───────────────────────────────────────────────────
-  async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION, lookbackDays = null) {
+  async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION) {
     try {
-      // Always fetch full 90-day history so MW detection captures all waves
-      // including deep previous MWs (-2, -3 ...). The date filter is applied
-      // client-side on the frontend — no server-side hit window restriction.
       const candles = await fetchCandles(symbol, resolution, 5000, 90);
       if (!candles || candles.length < 10) return;
 
@@ -187,22 +184,17 @@ class BacktestRunner extends EventEmitter {
       // EMA9 of lows — shared across all MW checks
       const ema9L = calcEMA(candles.map(c => c.low), 9);
 
-      // Scan every MW in the chain (current mwNo=0, previous -1, -2, ...)
-      for (const mwEntry of mwResult.chain) {
+      // ── Sort chain: mwNo 0 first, -1 next, -2 after (most recent → oldest)
+      const sortedChain = [...mwResult.chain].sort((a, b) => b.mwNo - a.mwNo);
+
+      for (let mwIdx = 0; mwIdx < sortedChain.length; mwIdx++) {
+        const mwEntry = sortedChain[mwIdx];
         const { mwNo, wave, fibLevels } = mwEntry;
 
-        // ── Register this MW ordinal in the chain index ───────────────────────
-        // mwNo is universal: 0=current, -1=most recent prev, -2=one before, etc.
-        // Each stock has its own dates for the same mwNo — we only track the
-        // ordinal + aggregate counts (not per-stock time ranges).
-        if (!this._chainIndex.has(mwNo)) {
-          this._chainIndex.set(mwNo, {
-            mwNo,
-            hitCount: 0,
-            stockCount: 0,   // stocks that have ≥1 hit for this mwNo
-            _hitSymbols: new Set(),
-          });
-        }
+        // ── Upper boundary: the NEXT more-recent MW's tip time
+        // Candles after that tip belong to the newer MW, not this one
+        const newerMW = mwIdx > 0 ? sortedChain[mwIdx - 1] : null;
+        const upperTimeBound = newerMW ? newerMW.wave.toTime : Infinity;
 
         const span = wave.delta;
         const tol = span * 0.05;
@@ -214,7 +206,12 @@ class BacktestRunner extends EventEmitter {
 
         for (let idx = 0; idx < candles.length; idx++) {
           const c = candles[idx];
+
+          // ✅ Candle must be AFTER this MW's tip
           if (c.time <= wave.toTime) continue;
+
+          // ✅ NEW: Candle must be BEFORE the next (newer) MW's tip
+          if (c.time >= upperTimeBound) continue;
 
           const ema = ema9L[idx];
           if (ema == null) continue;
@@ -250,15 +247,6 @@ class BacktestRunner extends EventEmitter {
 
           this._results.push(hit);
           this._progress.hits++;
-
-          // ── Update chain index hit count + stock count ────────────────────
-          const ci = this._chainIndex.get(mwNo);
-          ci.hitCount++;
-          if (!ci._hitSymbols.has(symbol)) {
-            ci._hitSymbols.add(symbol);
-            ci.stockCount++;   // only stocks that actually produced hits
-          }
-
           this.emit("backtest_hit", hit);
         }
       }

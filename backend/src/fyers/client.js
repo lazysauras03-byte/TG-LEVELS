@@ -45,6 +45,7 @@ function getAuthURL() {
   const fyers = new fyersModel({ path: "", enableLogging: false });
   return fyers.generateAuthCode({
     client_id: appId,
+
     redirect_uri: "https://trade.fyers.in/api-login/redirect-uri/index.html",
     response_type: "code",
     state: "sample_state",

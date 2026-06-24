@@ -1,3 +1,39 @@
+/**
+ * motherwave.js
+ * ─────────────────────────────────────────────────────────────────
+ * Single source of truth for Mother Wave detection.
+ *
+ * ONE public function: detectMotherWaveForAPI
+ *   → Returns: { wave, fibLevels, invalidation, chain }
+ *
+ *   chain = [
+ *     { mwNo: 0,  wave, fibLevels, invalidation },   ← current MW
+ *     { mwNo: -1, wave, fibLevels, invalidation },   ← previous (invalidated)
+ *     { mwNo: -2, wave, fibLevels, invalidation },   ← older
+ *     ...
+ *   ]
+ *
+ * ── ALGORITHM ────────────────────────────────────────────────────
+ *
+ *   1. Take last 50 wave segments, sorted chronologically.
+ *   2. Find the LARGEST wave by delta → first MW candidate.
+ *   3. Check all waves AFTER it:
+ *        BULL MW invalidated when: any wave HIGH > -0.618 fib  OR  any wave LOW < 1.0 fib (origin)
+ *        BEAR MW invalidated when: any wave LOW  < -0.618 fib  OR  any wave HIGH > 1.0 fib (origin)
+ *        RULE 3 — Equal/Larger Wave Promotion:
+ *          If any subsequent wave size >= current MW size → promote as new MW
+ *        RULE 4 — Fibonacci Containment but Larger → Promote:
+ *          If a subsequent wave does NOT breach -0.618 / 1.0 fib levels but its
+ *          size > current MW size → still promote as new MW
+ *          (Rule 4 is implicitly covered by Rule 3; both are handled together)
+ *   4. If invalidated or promoted → record that MW in chain, find LARGEST wave
+ *      among waves from the invalidating/promoting wave onward → repeat.
+ *   5. If not invalidated/promoted → current MW (mwNo = 0).
+ *   6. Number the chain: 0 = current, -1 = previous, -2 = older ...
+ *
+ * ─────────────────────────────────────────────────────────────────
+ */
+
 "use strict";
 
 // ─── EMA helper ───────────────────────────────────────────────────────────────
@@ -88,30 +124,130 @@ function computeSegments(candles) {
   return segments;
 }
 
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+const sp = s => Math.abs(s.toPrice - s.fromPrice);
+const bull = s => s.toSide === "high";
+
+// Build fib levels object from a wave segment
+function buildFibLevels(seg) {
+  const isBull = bull(seg);
+  const span = sp(seg);
+  const origin = seg.fromPrice;
+  const end = seg.toPrice;
+
+  return isBull
+    ? {
+      "-0.618": end + 0.618 * span,   // invalidation — extension above tip
+      "0.0": end,
+      "0.236": end - 0.236 * span,
+      "0.382": end - 0.382 * span,
+      "0.5": end - 0.5 * span,
+      "0.618": end - 0.618 * span,
+      "0.786": end - 0.786 * span,
+      "1.0": origin,               // invalidation — origin / base
+    }
+    : {
+      "1.0": origin,               // invalidation — origin / base
+      "0.786": origin - 0.214 * span,
+      "0.618": origin - 0.382 * span,
+      "0.5": origin - 0.5 * span,
+      "0.382": origin - 0.618 * span,
+      "0.236": origin - 0.764 * span,
+      "0.0": end,
+      "-0.618": end - 0.618 * span,   // invalidation — extension below tip
+    };
+}
+
+// Build the wave object (public shape) from a segment + waveNum
+function buildWaveObj(seg, waveNum) {
+  return {
+    dir: bull(seg) ? "bull" : "bear",
+    col1Time: seg.fromTime,
+    col1Price: seg.fromPrice,
+    col2Time: seg.toTime,
+    col2Price: seg.toPrice,
+    delta: +sp(seg).toFixed(2),
+    waveNum,
+    label: (seg.prevWaveType && seg.currWaveType)
+      ? `${seg.prevWaveType}\u2192${seg.currWaveType}`
+      : "—",
+    toSide: seg.toSide,
+    fromPrice: seg.fromPrice,
+    toPrice: seg.toPrice,
+    fromTime: seg.fromTime,
+    toTime: seg.toTime,
+    startIndex: seg.fromBarIndex,
+    endIndex: seg.toBarIndex,
+  };
+}
+
+// ─── MW Displacement checker ──────────────────────────────────────────────────
+//
+// Scans waves that come after the current MW candidate and returns the FIRST
+// wave that either:
+//
+//   (A) INVALIDATES the MW via Fibonacci breach  [original rules 1 & 2]
+//         BULL MW: any wave HIGH > -0.618 fib  OR  any wave LOW  < 1.0 fib
+//         BEAR MW: any wave LOW  < -0.618 fib  OR  any wave HIGH > 1.0 fib
+//
+//   (B) PROMOTES itself as a new MW via size  [new rules 3 & 4]
+//         Rule 3 — Equal Wave Size:
+//           new wave size >= current MW size → promote (regardless of fib position)
+//         Rule 4 — Contained but Larger:
+//           wave does NOT breach -0.618 / 1.0 levels (contained within fibs)
+//           BUT its size > current MW size → still promote
+//         Both Rule 3 & 4 reduce to the same numeric test:
+//           sp(w) >= sp(mwSeg)
+//         Rule 3 covers the >= case outright.
+//         Rule 4 is the explicit callout for the contained sub-case, already
+//         captured by Rule 3 since containment ⊂ all waves.
+//
+// Returns: { wave, reason }
+//   reason = "fib_breach" | "size_promotion"
+//   or null if no displacement found
+//
+function findDisplacingWave(mwSeg, fibLevels, laterWaves) {
+  const isBull = bull(mwSeg);
+  const inv = fibLevels["-0.618"];   // extension invalidation level
+  const originLvl = fibLevels["1.0"];      // origin invalidation level
+  const mwSize = sp(mwSeg);             // current MW size (for Rules 3 & 4)
+
+  for (const w of laterWaves) {
+    if (w.fromTime <= mwSeg.toTime) continue; // must be strictly after MW tip
+
+    // ── Rule 3 & 4: Size promotion ─────────────────────────────────────────
+    // Check size FIRST so that a wave that is both a fib-breacher AND size-
+    // promoter gets labelled as a promotion (the dominant reason).
+    if (sp(w) >= mwSize) {
+      return { wave: w, reason: "size_promotion" };
+    }
+
+    // ── Original rules 1 & 2: Fibonacci breach invalidation ────────────────
+    if (isBull) {
+      if (bull(w) && w.toPrice > inv) return { wave: w, reason: "fib_breach" };
+      if (!bull(w) && w.toPrice < originLvl) return { wave: w, reason: "fib_breach" };
+    } else {
+      if (!bull(w) && w.toPrice < inv) return { wave: w, reason: "fib_breach" };
+      if (bull(w) && w.toPrice > originLvl) return { wave: w, reason: "fib_breach" };
+    }
+  }
+
+  return null;
+}
+
 // ─── API-ready MW detection — THE ONE PUBLIC FUNCTION ─────────────────────────
 //
-// Returns: { wave, fibLevels, invalidation }
+// Returns:
+// {
+//   wave, fibLevels, invalidation,   ← current MW (top-level, for backward compat)
+//   chain: [
+//     { mwNo: 0,  wave, fibLevels, invalidation, displacedBy },   current
+//     { mwNo: -1, wave, fibLevels, invalidation, displacedBy },   previous
+//     ...
+//   ]
+// }
 //
-// wave shape:
-//   wave.dir          : "bull" | "bear"
-//   wave.col1Time     : fromTime  (ms)  — wave origin time
-//   wave.col1Price    : fromPrice       — wave origin price
-//   wave.col2Time     : toTime    (ms)  — wave tip time
-//   wave.col2Price    : toPrice         — wave tip price
-//   wave.delta        : abs price span
-//   wave.waveNum      : counting label (-1 = latest, -N = oldest)
-//   wave.label        : "HH→LH" etc.
-//   wave.toSide       : "high" | "low"
-//   wave.fromPrice    : same as col1Price (for fib math)
-//   wave.toPrice      : same as col2Price (for fib math)
-//   wave.fromTime     : same as col1Time
-//   wave.toTime       : same as col2Time
-//   wave.endIndex     : bar index of wave tip — used by scannerS1.S2.S3 to know
-//                       which bar to start S1 search from
-//   wave.startIndex   : bar index of wave origin
-//
-// fibLevels: { "-0.618", "0.0", "0.236", "0.382", "0.5", "0.618", "0.786", "1.0" }
-// invalidation: same as fibLevels["-0.618"]
+// displacedBy: "fib_breach" | "size_promotion" | null
 //
 function detectMotherWaveForAPI(candles) {
   const segs = computeSegments(candles);
@@ -120,156 +256,90 @@ function detectMotherWaveForAPI(candles) {
   // Sort chronologically — oldest first
   const allWaves = [...segs].sort((a, b) => a.fromTime - b.fromTime);
 
-  // Cap to last MAX_WAVES=50 segments (matches WavesIndicator.js frontend)
+  // Cap to last MAX_WAVES=50 segments
   const MAX_WAVES = 50;
   const waves = allWaves.slice(-MAX_WAVES);
 
-  // Assign waveNum: -N for oldest, -1 for newest
+  // Assign waveNum labels: -N for oldest, -1 for newest
   const total = waves.length;
   waves.forEach((w, i) => { w._waveNum = -(total - i); });
 
-  const sp = s => Math.abs(s.toPrice - s.fromPrice);
-  const bull = s => s.toSide === "high";
+  // ── Iterative MW chain builder ───────────────────────────────────────────
+  // Each iteration:
+  //   1. Find largest wave in the current search window
+  //   2. Check if anything after it displaces it (fib breach OR size promotion)
+  //   3. If yes → record it, advance window to start from displacing wave
+  //   4. If no  → it's the current (live) MW → stop
 
-  const invLevel = s => bull(s)
-    ? s.toPrice + 0.618 * sp(s)
-    : s.toPrice - 0.618 * sp(s);
+  const rawChain = [];       // collected chronologically (oldest MW first)
+  let searchStart = 0;       // index into waves[] to search from
+  const MAX_ITER = 20;      // safety cap
+  let iter = 0;
 
-  const breachesFib = (candidate, inv, seg) => {
-    if (seg.fromTime <= candidate.toTime) return false;
-    if (bull(candidate)) {
-      if (bull(seg) && seg.toPrice > inv) return true;
-      if (!bull(seg) && seg.toPrice < candidate.fromPrice) return true;
-    } else {
-      if (!bull(seg) && seg.toPrice < inv) return true;
-      if (bull(seg) && seg.toPrice > candidate.fromPrice) return true;
+  while (searchStart < waves.length && iter++ < MAX_ITER) {
+    const pool = waves.slice(searchStart);
+    if (!pool.length) break;
+
+    // Find largest wave in this pool
+    let largestIdx = 0;
+    let largestDelta = 0;
+    for (let k = 0; k < pool.length; k++) {
+      const d = sp(pool[k]);
+      if (d > largestDelta) { largestDelta = d; largestIdx = k; }
     }
-    return false;
-  };
 
-  // Step 1: Start from the largest wave by delta (not the oldest)
-  let largestIdx = 0;
-  let largestDelta = 0;
-  for (let k = 0; k < waves.length; k++) {
-    const d = sp(waves[k]);
-    if (d > largestDelta) { largestDelta = d; largestIdx = k; }
-  }
-  let i = largestIdx;
+    const mwSeg = pool[largestIdx];
+    const fibs = buildFibLevels(mwSeg);
+    const mwAbsIdx = waves.indexOf(mwSeg);
+    const laterWaves = waves.slice(mwAbsIdx + 1);
 
-  // ── Collect full chain: previousWaves (invalidated) + current ────────────
-  const previousWaves = [];  // invalidated candidates, oldest first
+    const displacement = findDisplacingWave(mwSeg, fibs, laterWaves);
 
-  while (i < waves.length) {
-    const candidate = waves[i];
-    const nextWave = waves[i + 1];
-    if (!nextWave) break;
-
-    const ratio = sp(candidate) / sp(nextWave);
-    if (ratio < 2.5) { i += 1; continue; }
-
-    const inv = invLevel(candidate);
-    const breakingWave = waves.slice(i + 1).find(w => breachesFib(candidate, inv, w));
-    if (!breakingWave) break;
-
-    // This candidate passed ratio + fib but got breached → previous MW
-    previousWaves.push({ seg: candidate, inv });
-    i = waves.indexOf(breakingWave);
+    if (!displacement) {
+      // No displacement → this is the current (live) MW
+      rawChain.push({ seg: mwSeg, fibs, invalidated: false, displacedBy: null });
+      break;
+    } else {
+      // Displaced (fib breach or size promotion) → record and advance
+      rawChain.push({
+        seg: mwSeg,
+        fibs,
+        invalidated: true,
+        displacedBy: displacement.reason,  // "fib_breach" | "size_promotion"
+      });
+      searchStart = waves.indexOf(displacement.wave);
+    }
   }
 
-  const cand = waves[i];
-  if (!cand) return null;
+  if (!rawChain.length) return null;
 
-  // ── Build wave object from a segment ─────────────────────────────────────
-  function buildWave(seg) {
-    const iB = bull(seg);
-    const sp2 = Math.abs(seg.toPrice - seg.fromPrice);
+  // ── Number the chain: current = mwNo 0, previous = -1, -2 … ────────────
+  const chainOrdered = [...rawChain].reverse(); // current-first
+  const chain = chainOrdered.map(({ seg, fibs, invalidated, displacedBy }, idx) => {
+    const mwNo = -idx;
+    const wave = buildWaveObj(seg, seg._waveNum);
     return {
-      dir: iB ? "bull" : "bear",
-      col1Time: seg.fromTime,
-      col1Price: seg.fromPrice,
-      col2Time: seg.toTime,
-      col2Price: seg.toPrice,
-      delta: +sp2.toFixed(2),
-      waveNum: seg._waveNum,
-      label: (seg.prevWaveType && seg.currWaveType)
-        ? `${seg.prevWaveType}\u2192${seg.currWaveType}`
-        : "—",
-      toSide: seg.toSide,
-      fromPrice: seg.fromPrice,
-      toPrice: seg.toPrice,
-      fromTime: seg.fromTime,
-      toTime: seg.toTime,
-      startIndex: seg.fromBarIndex,
-      endIndex: seg.toBarIndex,
-    };
-  }
-
-  // ── Build fib levels from a segment ──────────────────────────────────────
-  function buildFibs(seg) {
-    const iB = bull(seg);
-    const sp2 = Math.abs(seg.toPrice - seg.fromPrice);
-    const o = seg.fromPrice;
-    const e = seg.toPrice;
-    return iB
-      ? {
-        "-0.618": e + 0.618 * sp2,
-        "0.0": e,
-        "0.236": e - 0.236 * sp2,
-        "0.382": e - 0.382 * sp2,
-        "0.5": e - 0.5 * sp2,
-        "0.618": e - 0.618 * sp2,
-        "0.786": e - 0.786 * sp2,
-        "1.0": o,
-      }
-      : {
-        "1.0": o,
-        "0.786": o - 0.214 * sp2,
-        "0.618": o - 0.382 * sp2,
-        "0.5": o - 0.5 * sp2,
-        "0.382": o - 0.618 * sp2,
-        "0.236": o - 0.764 * sp2,
-        "0.0": e,
-        "-0.618": e - 0.618 * sp2,
-      };
-  }
-
-  // ── Current MW ────────────────────────────────────────────────────────────
-  const isBull = bull(cand);
-  const span = sp(cand);
-  const origin = cand.fromPrice;
-  const end = cand.toPrice;
-
-  const wave = buildWave(cand);
-  const fibLevels = buildFibs(cand);
-
-  // ── Previous MWs — numbered -1, -2, -3 ... from most recent to oldest ────
-  // previousWaves is oldest-first, so reverse for -1 = most recent previous
-  const prevChain = previousWaves.slice().reverse().map((item, idx) => {
-    const pw = buildWave(item.seg);
-    const pFib = buildFibs(item.seg);
-    return {
-      mwNo: -(idx + 1),          // -1, -2, -3 ...
-      wave: pw,
-      fibLevels: pFib,
-      invalidation: pFib["-0.618"],
+      mwNo,
+      wave,
+      fibLevels: fibs,
+      invalidation: fibs["-0.618"],
+      invalidated,
+      displacedBy,  // null for current MW; "fib_breach"/"size_promotion" for older ones
     };
   });
 
+  const current = chain[0];
+
   return {
-    wave,
-    fibLevels,
-    invalidation: fibLevels["-0.618"],
-    // Full chain — current is mwNo 0, previous are -1, -2, ...
-    chain: [
-      { mwNo: 0, wave, fibLevels, invalidation: fibLevels["-0.618"] },
-      ...prevChain,
-    ],
+    wave: current.wave,
+    fibLevels: current.fibLevels,
+    invalidation: current.invalidation,
+    chain,
   };
 }
 
-// ─── Fib helpers (still exported for any router that needs them) ──────────────
+// ─── Fib helpers ─────────────────────────────────────────────────────────────
 function fibPrice(mw, ratio) {
-  // mw can be the full { wave, fibLevels } object OR a raw wave object
   const w = mw.wave || mw;
   const to = w.toPrice ?? w.endPrice;
   const from = w.fromPrice ?? w.startPrice;
@@ -307,7 +377,7 @@ function classifyZone(mw, currentPrice) {
 }
 
 module.exports = {
-  detectMotherWaveForAPI,   // ← THE one function everything uses
+  detectMotherWaveForAPI,
   fibPrice,
   calcTrapZone,
   classifyZone,

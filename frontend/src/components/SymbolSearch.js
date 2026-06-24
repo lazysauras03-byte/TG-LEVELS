@@ -16,7 +16,7 @@ async function loadSymbols() {
   try {
     const r = await fetch(`${BACKEND}/api/symbols`);
     if (r.ok) _symbolsCache = await r.json();
-  } catch {}
+  } catch { }
   _symbolsLoaded = true;
   return _symbolsCache;
 }
@@ -34,13 +34,18 @@ function addRecent(sym) {
     let arr = getRecent();
     arr = [sym, ...arr.filter(s => s.symbol !== sym.symbol)].slice(0, MAX_RECENT);
     localStorage.setItem(RECENT_KEY, JSON.stringify(arr));
-  } catch {}
+  } catch { }
 }
 
 // ── Type detection ─────────────────────────────────────────────────────────
+// NOTE: The server already sets the correct `type` field on every symbol.
+// This fallback only fires for symbols loaded from localStorage (recent
+// searches) that may predate the server's type field.
 function getType(sym) {
   if (sym.type) return sym.type;
   const s = sym.symbol.toUpperCase();
+  if (/\d{2}[A-Z]{3}\d+(CE|PE)$/.test(s)) return "option";
+  if (/\d{2}[A-Z]{3}FUT$/.test(s)) return "future";
   if (s.startsWith("MCX:")) return "commodity";
   if (s.includes("INDEX") || s.includes("SENSEX")) return "index";
   if (s.endsWith("-ETF") || s.endsWith("-EF")) return "etf";
@@ -57,36 +62,81 @@ function getTicker(sym) {
   return idx >= 0 ? sym.symbol.slice(idx + 1) : sym.symbol;
 }
 
+// ── Display name for a symbol ─────────────────────────────────────────────
+// For commodity-type entries the server returns the clean name ("Crude Oil (MCX)")
+// For future-type entries it may return "Crude Oil FUT (26JUL)"
+// We always show sym.name as-is — the server sets it correctly.
+function getDisplayName(sym) {
+  return sym.name;
+}
+
+// ── Ticker display: strip the dated month from MCX futures for readability ──
+// "CRUDEOIL26JULFUT" → "CRUDEOIL" for the sub-line ticker display only
+function getDisplayTicker(sym) {
+  const ticker = getTicker(sym);
+  // Strip dated month+FUT suffix for MCX futures so the ticker reads cleanly
+  return ticker.replace(/\d{2}(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)FUT$/i, "");
+}
+
 // ── Type badge config ───────────────────────────────────────────────────────
 const TYPE_META = {
-  index:     { label: "INDEX",  color: "#3d84ff", bg: "rgba(61,132,255,0.13)" },
-  equity:    { label: "EQ",     color: "#00d97e", bg: "rgba(0,217,126,0.11)" },
+  index: { label: "INDEX", color: "#3d84ff", bg: "rgba(61,132,255,0.13)" },
+  equity: { label: "EQ", color: "#00d97e", bg: "rgba(0,217,126,0.11)" },
   commodity: { label: "COMDTY", color: "#ffc135", bg: "rgba(255,193,53,0.12)" },
-  etf:       { label: "ETF",    color: "#7c5cfc", bg: "rgba(124,92,252,0.13)" },
+  future: { label: "FUT", color: "#ff5c8a", bg: "rgba(255,92,138,0.13)" },
+  option: { label: "OPT", color: "#22c3dd", bg: "rgba(34,195,221,0.13)" },
+  etf: { label: "ETF", color: "#7c5cfc", bg: "rgba(124,92,252,0.13)" },
 };
 
 // ── Category tabs ───────────────────────────────────────────────────────────
 const TABS = [
-  { id: "all",       label: "All" },
-  { id: "equity",    label: "Stocks" },
-  { id: "index",     label: "Index" },
+  { id: "all", label: "All" },
+  { id: "equity", label: "Stocks" },
+  { id: "index", label: "Index" },
   { id: "commodity", label: "Commodity" },
-  { id: "etf",       label: "ETF" },
+  { id: "future", label: "Futures" },
+  { id: "option", label: "Options" },
+  { id: "etf", label: "ETF" },
 ];
+
+// ── Search aliases ─────────────────────────────────────────────────────────
+// Maps common alternate spellings/abbreviations to the name string to match.
+const SEARCH_ALIASES = {
+  "nat gas": "natural gas",
+  "natgas": "natural gas",
+  "nat. gas": "natural gas",
+  "ng": "natural gas",
+  "nat gas mini": "natural gas mini",
+  "ngm": "natural gas mini",
+  "natgasmini": "natural gas mini",
+  "crude": "crude oil",
+  "crudeoil": "crude oil",
+  "crude mini": "crude oil mini",
+  "crudeoilm": "crude oil mini",
+  "silvermic": "silver micro",
+  "silver micro": "silver micro",
+  "zincmini": "zinc mini",
+  "leadmini": "lead mini",
+  "goldm": "gold mini",
+  "goldpetal": "gold petal",
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SymbolSearch
 // Props:
-//   isOpen   — boolean
-//   onClose  — () => void
-//   onSelect — (symbolString) => void
-// ═══════════════════════════════════════════════════════════════════════════
-export default function SymbolSearch({ isOpen, onClose, onSelect }) {
+//   isOpen      — boolean
+//   onClose     — () => void
+//   onSelect    — (symbolString) => void
+//   onOpenOptionsChain — (sym) => void  (optional; called instead of onSelect
+//                         when picking a result while the "Options" tab is
+//                         active, since options need a strike chain, not a
+//                         single symbol)
+export default function SymbolSearch({ isOpen, onClose, onSelect, onOpenOptionsChain }) {
   const [symbols, setSymbols] = useState([]);
-  const [query, setQuery]     = useState("");
-  const [tab, setTab]         = useState("all");
+  const [query, setQuery] = useState("");
+  const [tab, setTab] = useState("all");
   const [results, setResults] = useState([]);
-  const [recent, setRecent]   = useState([]);
+  const [recent, setRecent] = useState([]);
   const [activeIdx, setActiveIdx] = useState(-1);
 
   const inputRef = useRef(null);
@@ -101,7 +151,6 @@ export default function SymbolSearch({ isOpen, onClose, onSelect }) {
       setTab("all");
       setActiveIdx(-1);
       setRecent(getRecent());
-      // Focus after animation starts
       const t = setTimeout(() => inputRef.current?.focus(), 60);
       return () => clearTimeout(t);
     }
@@ -112,26 +161,47 @@ export default function SymbolSearch({ isOpen, onClose, onSelect }) {
     const q = query.toLowerCase().trim();
     if (!q) { setResults([]); setActiveIdx(-1); return; }
 
+    // Resolve alias (e.g. "natgas" → "natural gas")
+    const expandedQ = SEARCH_ALIASES[q] || q;
+
     let pool = symbols;
-    if (tab !== "all") {
+    if (tab === "option") {
+      // Options tab: show underlyings (equity, index, commodity) — picking one
+      // opens the live options chain modal.
+      pool = symbols.filter(s => {
+        const t = getType(s);
+        return t === "equity" || t === "index" || t === "commodity";
+      });
+    } else if (tab !== "all") {
       pool = symbols.filter(s => getType(s) === tab);
     }
 
     const hits = pool
       .filter(s => {
-        const name   = s.name.toLowerCase();
+        const name = s.name.toLowerCase();
         const ticker = getTicker(s).toLowerCase();
-        const base   = ticker.replace(/-(eq|be|index|etf|pp|sm|fut|i)$/i, "");
+        // Strip dated month suffix (e.g. "26JULFUT") to match on root only
+        const root = ticker
+          .replace(/\d{2}(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)fut$/i, "")
+          .replace(/-(eq|be|index|etf|pp|sm|i)$/i, "");
         return (
-          name.startsWith(q)  || name.includes(q) ||
-          ticker.startsWith(q) || base.startsWith(q) || base.includes(q)
+          name.startsWith(q) || name.includes(q) ||
+          name.startsWith(expandedQ) || name.includes(expandedQ) ||
+          ticker.startsWith(q) || root.startsWith(q) || root.includes(q)
         );
       })
       .sort((a, b) => {
-        const tA  = getTicker(a).toLowerCase().replace(/-(eq|be|index|etf|i)$/i, "");
-        const tB  = getTicker(b).toLowerCase().replace(/-(eq|be|index|etf|i)$/i, "");
-        const sA  = tA.startsWith(q) ? 0 : a.name.toLowerCase().startsWith(q) ? 1 : 2;
-        const sB  = tB.startsWith(q) ? 0 : b.name.toLowerCase().startsWith(q) ? 1 : 2;
+        const q2 = expandedQ;
+        const rA = getTicker(a).toLowerCase()
+          .replace(/\d{2}(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)fut$/i, "")
+          .replace(/-(eq|be|index|etf|i)$/i, "");
+        const rB = getTicker(b).toLowerCase()
+          .replace(/\d{2}(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)fut$/i, "")
+          .replace(/-(eq|be|index|etf|i)$/i, "");
+        const sA = rA.startsWith(q) || rA.startsWith(q2) ? 0
+          : a.name.toLowerCase().startsWith(q) || a.name.toLowerCase().startsWith(q2) ? 1 : 2;
+        const sB = rB.startsWith(q) || rB.startsWith(q2) ? 0
+          : b.name.toLowerCase().startsWith(q) || b.name.toLowerCase().startsWith(q2) ? 1 : 2;
         if (sA !== sB) return sA - sB;
         return a.name.localeCompare(b.name);
       })
@@ -164,21 +234,25 @@ export default function SymbolSearch({ isOpen, onClose, onSelect }) {
 
   function handleSelect(sym) {
     addRecent(sym);
+    if (tab === "option" && onOpenOptionsChain) {
+      onOpenOptionsChain(sym);
+      onClose();
+      return;
+    }
     onSelect(sym.symbol);
     onClose();
   }
 
-  // Trap focus inside modal
   function handleOverlayDown(e) {
     if (e.target === e.currentTarget) onClose();
   }
 
   if (!isOpen) return null;
 
-  const showRecent  = !query && recent.length > 0;
+  const showRecent = !query && recent.length > 0;
   const showResults = !!query;
-  const showEmpty   = showResults && results.length === 0;
-  const showHint    = !query && recent.length === 0;
+  const showEmpty = showResults && results.length === 0;
+  const showHint = !query && recent.length === 0;
 
   return (
     <div className="ss-overlay" onMouseDown={handleOverlayDown}>
@@ -240,6 +314,7 @@ export default function SymbolSearch({ isOpen, onClose, onSelect }) {
                   active={i === activeIdx}
                   onSelect={handleSelect}
                   onHover={() => setActiveIdx(i)}
+                  optionsMode={tab === "option"}
                 />
               ))}
             </div>
@@ -255,6 +330,7 @@ export default function SymbolSearch({ isOpen, onClose, onSelect }) {
                   active={i === activeIdx}
                   onSelect={handleSelect}
                   onHover={() => setActiveIdx(i)}
+                  optionsMode={tab === "option"}
                 />
               ))}
             </div>
@@ -265,7 +341,7 @@ export default function SymbolSearch({ isOpen, onClose, onSelect }) {
             <div className="ss-empty">
               <div className="ss-empty-glyph">⊘</div>
               <div className="ss-empty-msg">No results for <strong>"{query}"</strong></div>
-              <div className="ss-empty-sub">Try a ticker (e.g. RELIANCE) or company name</div>
+              <div className="ss-empty-sub">Try a ticker (e.g. RELIANCE, CRUDE OIL) or company name</div>
             </div>
           )}
 
@@ -293,11 +369,13 @@ export default function SymbolSearch({ isOpen, onClose, onSelect }) {
 }
 
 // ── Symbol row ─────────────────────────────────────────────────────────────
-function SymbolRow({ sym, active, onSelect, onHover }) {
-  const type     = getType(sym);
+function SymbolRow({ sym, active, onSelect, onHover, optionsMode }) {
+  const type = getType(sym);
   const exchange = getExchange(sym);
-  const ticker   = getTicker(sym);
-  const meta     = TYPE_META[type] || { label: "SYM", color: "#7a8099", bg: "rgba(122,128,153,0.1)" };
+  const ticker = getDisplayTicker(sym);  // clean ticker without dated month
+  const meta = optionsMode
+    ? { label: "CHAIN →", color: "#22c3dd", bg: "rgba(34,195,221,0.13)" }
+    : (TYPE_META[type] || { label: "SYM", color: "#7a8099", bg: "rgba(122,128,153,0.1)" });
 
   return (
     <div
@@ -309,7 +387,7 @@ function SymbolRow({ sym, active, onSelect, onHover }) {
         <ExchangeDot exchange={exchange} />
       </div>
       <div className="ss-row-body">
-        <div className="ss-row-name">{sym.name}</div>
+        <div className="ss-row-name">{getDisplayName(sym)}</div>
         <div className="ss-row-sub">
           <span className="ss-exchange">{exchange}</span>
           <span className="ss-sep2">·</span>

@@ -19,6 +19,7 @@ import React, {
 import { useNavigate, useLocation } from "react-router-dom";
 import StatusBar from "../components/StatusBar";
 import SymbolSearch from "../components/SymbolSearch";
+import OptionsChainModal from "../components/OptionsChainModal";
 import CandleChart from "../components/CandleChart";
 import SignalTable from "../components/SignalTable";
 import StatsPanel from "../components/StatsPanel";
@@ -277,6 +278,10 @@ const ChartPanel = memo(function ChartPanel({
   // ── Symbol search modal ────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
 
+  // ── Options chain modal ────────────────────────────────────────────────────
+  const [optionsChainOpen, setOptionsChainOpen] = useState(false);
+  const [optionsChainUnderlying, setOptionsChainUnderlying] = useState(null);
+
   // ── Crosshair ──────────────────────────────────────────────────────────────
   const [crosshairBar, setCrosshairBar] = useState(null);
   const handleCrosshairMove = useCallback((bar) => setCrosshairBar(bar), []);
@@ -367,6 +372,32 @@ const ChartPanel = memo(function ChartPanel({
           handleSymbolChange(sym);
           handleRefresh(sym, resolution);
         }}
+        onOpenOptionsChain={(sym) => {
+          // Load this underlying's chart too — gives the options chain a
+          // real last-close price to center strikes on (reusing the normal
+          // chart fetch; no extra Fyers call is made for this).
+          handleSymbolChange(sym.symbol);
+          handleRefresh(sym.symbol, resolution);
+          setOptionsChainUnderlying(sym); // { symbol, name }
+          setOptionsChainOpen(true);
+        }}
+      />
+
+      {/* Options chain modal */}
+      <OptionsChainModal
+        isOpen={optionsChainOpen}
+        onClose={() => setOptionsChainOpen(false)}
+        underlying={optionsChainUnderlying}
+        spot={
+          optionsChainUnderlying?.symbol === symbol && candles.length
+            ? candles[candles.length - 1].close
+            : null
+        }
+        loading={loading && optionsChainUnderlying?.symbol === symbol}
+        onSelect={(sym) => {
+          handleSymbolChange(sym);
+          handleRefresh(sym, resolution);
+        }}
       />
 
       {/* Body: chart + optional sidebar */}
@@ -374,19 +405,39 @@ const ChartPanel = memo(function ChartPanel({
         <div className="chart-area">
           {error && <div className="error-bar">⚠ {error}</div>}
 
-          {/* Symbol overlay */}
-          <button
-            className="chart-symbol-overlay"
-            onClick={() => setSearchOpen(true)}
-            title="Click to change symbol"
-          >
-            <span className="chart-symbol-overlay-ticker">
-              {symbol ? symbol.split(":").pop() : "—"}
-            </span>
-            <span className="chart-symbol-overlay-res">
-              {formatResolution(resolution)}
-            </span>
-          </button>
+          {/* Symbol overlay + quick Options button */}
+          <div className="chart-overlay-row">
+            <button
+              className="chart-symbol-overlay"
+              onClick={() => setSearchOpen(true)}
+              title="Click to change symbol"
+            >
+              <span className="chart-symbol-overlay-ticker">
+                {symbol ? symbol.split(":").pop() : "—"}
+              </span>
+              <span className="chart-symbol-overlay-res">
+                {formatResolution(resolution)}
+              </span>
+            </button>
+
+            {/* Only for plain equity/index symbols — the underlying types an
+                options chain can actually be built from */}
+            {symbol && /^NSE:[A-Z0-9&]+-(EQ|INDEX)$/i.test(symbol) && (
+              <button
+                className="chart-symbol-overlay chart-options-btn"
+                onClick={() => {
+                  setOptionsChainUnderlying({
+                    symbol,
+                    name: symbol.split(":").pop().replace(/-(EQ|INDEX)$/i, ""),
+                  });
+                  setOptionsChainOpen(true);
+                }}
+                title="View options chain for this symbol"
+              >
+                Options
+              </button>
+            )}
+          </div>
 
           {candles.length > 0 && (
             <EmaFloatPanel

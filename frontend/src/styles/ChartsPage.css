@@ -118,11 +118,17 @@
 
 /* ─── Floating Indicator Panel ──────────────────────────────────── */
 /* ─── Symbol overlay on chart canvas (TradingView style) ─── */
-.chart-symbol-overlay {
+.chart-overlay-row {
   position: absolute;
   top: 10px;
   left: 10px;
   z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-symbol-overlay {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -140,6 +146,12 @@
   background: var(--blue-dim);
   border-color: var(--blue);
   color: var(--text);
+}
+
+.chart-options-btn {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .chart-symbol-overlay-ticker {

@@ -481,13 +481,13 @@ export default function BacktestPage() {
             <span className="bth-stat-sep">·</span>
             <span className="bth-dot" />
             <span className="bth-stat-item bth-hot">
-              <span className="bth-stat-val">0.382</span>
+              <span className="bth-stat-val">0.618</span>
               <span className="bth-stat-lbl">HOT</span>
             </span>
             <span className="bth-stat-sep">·</span>
             <span className="bth-dot" />
             <span className="bth-stat-item bth-hot">
-              <span className="bth-stat-val">0.618</span>
+              <span className="bth-stat-val">0.382</span>
               <span className="bth-stat-lbl">NEAR</span>
             </span>
           </div>
@@ -553,7 +553,7 @@ export default function BacktestPage() {
         {/* Results */}
         {hits.length > 0 && (
           view === "stocks"
-            ? <StocksGrid stockRows={stockRows} slots={slots} resolution={resolution} />
+            ? <SplitStocksGrid filteredHits={filteredHits} stockRows={stockRows} slots={slots} resolution={resolution} stockSearch={stockSearch} />
             : <BarsChart hits={filteredHits} stockRows={stockRows} slots={slots} resolution={resolution} />
         )}
       </div>
@@ -561,58 +561,163 @@ export default function BacktestPage() {
   );
 }
 
-// ── STOCKS GRID ───────────────────────────────────────────────────────────────
-function StocksGrid({ stockRows, slots, resolution }) {
-  const wrapRef = useRef(null);
-  const tableWrapRef = useRef(null);
+// ── SPLIT STOCKS GRID (HOT 0.618 | NEAR 0.382) ────────────────────────────────
+function SplitStocksGrid({ filteredHits, stockRows, slots, resolution, stockSearch }) {
+  // Build separate hit collections per zone
+  const hotHits = filteredHits.filter(h => h.zone === "HOT");
+  const nearHits = filteredHits.filter(h => h.zone === "NEAR");
 
-  if (!stockRows.length) return <div className="bt-no-data">No matching hits.</div>;
+  // Build zone-specific stockRows & slots
+  function buildZoneData(zoneHits) {
+    const filtered = zoneHits.filter(h =>
+      !stockSearch?.trim() ||
+      tickerOf(h.symbol).toLowerCase().includes(stockSearch.trim().toLowerCase())
+    );
+    const slotSet = new Set(filtered.map(h => h.candleTime));
+    const zoneSlots = [...slotSet].sort((a, b) => b - a);
+
+    const stockMap = new Map();
+    for (const h of filtered) {
+      const t = tickerOf(h.symbol);
+      if (!stockMap.has(t)) stockMap.set(t, { ticker: t, symbol: h.symbol, count: 0, cells: new Map() });
+      const entry = stockMap.get(t);
+      entry.count++;
+      if (!entry.cells.has(h.candleTime)) entry.cells.set(h.candleTime, []);
+      entry.cells.get(h.candleTime).push(h);
+    }
+    const zoneRows = [...stockMap.values()].sort((a, b) => {
+      const aLatest = Math.max(...[...a.cells.keys()]);
+      const bLatest = Math.max(...[...b.cells.keys()]);
+      if (bLatest !== aLatest) return bLatest - aLatest;
+      return a.ticker.localeCompare(b.ticker);
+    });
+    return { zoneSlots, zoneRows };
+  }
+
+  const { zoneSlots: hotSlots, zoneRows: hotRows } = buildZoneData(hotHits);
+  const { zoneSlots: nearSlots, zoneRows: nearRows } = buildZoneData(nearHits);
+
+  if (!hotRows.length && !nearRows.length) {
+    return <div className="bt-no-data">No matching hits.</div>;
+  }
 
   return (
-    <div className="bth-grid-outer" ref={wrapRef}>
-      <div className="bth-grid-wrap" ref={tableWrapRef}>
-        <table className="bth-grid-table">
-          <thead>
-            <tr>
-              <th className="bth-col-stock">STOCK</th>
-              {slots.map(s => {
-                const parts = slotKey(s).split("\n");
-                return (
-                  <th key={s} className="bth-col-slot">
-                    <div className="bth-slot-date">{parts[0]}</div>
-                    <div className="bth-slot-time">{parts[1]}</div>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {stockRows.map(row => (
-              <tr key={row.ticker} className="bth-grid-row">
-                <td className="bth-stock-cell">
-                  <span className="bth-stock-name">{row.ticker}</span>
-                  <span className="bth-stock-count">{row.count}</span>
-                </td>
-                {slots.map(s => {
-                  const cellHits = row.cells.get(s);
-                  if (!cellHits?.length) return <td key={s} className="bth-empty-cell" />;
-                  const mainZone = cellHits.some(h => h.zone === "HOT") ? "HOT" : "NEAR";
-                  return (
-                    <td key={s} className="bth-hit-cell-wrap">
-                      <button
-                        className={`bth-hit-badge ${mainZone === "HOT" ? "bth-badge-hot" : "bth-badge-near"}`}
-                        onClick={() => openChart(cellHits[0], resolution)}
-                        title={`${row.ticker} @ ${toIST(s)} — click to open chart`}
-                      >
-                        {mainZone}
-                      </button>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="bth-split-outer">
+      {/* ── 0.618 HOT Panel ── */}
+      <div className="bth-zone-panel bth-zone-hot">
+        <div className="bth-zone-header bth-zone-header--hot">
+          <span className="bth-zone-fib">0.618</span>
+          <span className="bth-zone-label">HOT Zone</span>
+          <span className="bth-zone-count">{hotRows.length} stocks · {hotHits.length} hits</span>
+        </div>
+        {hotRows.length === 0
+          ? <div className="bt-no-data bt-no-data--small">No HOT hits in this range</div>
+          : (
+            <div className="bth-grid-wrap">
+              <table className="bth-grid-table">
+                <thead>
+                  <tr>
+                    <th className="bth-col-stock">STOCK</th>
+                    {hotSlots.map(s => {
+                      const parts = slotKey(s).split("\n");
+                      return (
+                        <th key={s} className="bth-col-slot">
+                          <div className="bth-slot-date">{parts[0]}</div>
+                          <div className="bth-slot-time">{parts[1]}</div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {hotRows.map(row => (
+                    <tr key={row.ticker} className="bth-grid-row">
+                      <td className="bth-stock-cell">
+                        <span className="bth-stock-name">{row.ticker}</span>
+                        <span className="bth-stock-count bth-stock-count--hot">{row.count}</span>
+                      </td>
+                      {hotSlots.map(s => {
+                        const cellHits = row.cells.get(s);
+                        if (!cellHits?.length) return <td key={s} className="bth-empty-cell" />;
+                        return (
+                          <td key={s} className="bth-hit-cell-wrap">
+                            <button
+                              className="bth-hit-badge bth-badge-hot"
+                              onClick={() => openChart(cellHits[0], resolution)}
+                              title={`${row.ticker} @ ${toIST(s)} — click to open chart`}
+                            >
+                              HOT
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </div>
+
+      {/* ── Divider ── */}
+      <div className="bth-split-divider" />
+
+      {/* ── 0.382 NEAR Panel ── */}
+      <div className="bth-zone-panel bth-zone-near">
+        <div className="bth-zone-header bth-zone-header--near">
+          <span className="bth-zone-fib">0.382</span>
+          <span className="bth-zone-label">NEAR Zone</span>
+          <span className="bth-zone-count">{nearRows.length} stocks · {nearHits.length} hits</span>
+        </div>
+        {nearRows.length === 0
+          ? <div className="bt-no-data bt-no-data--small">No NEAR hits in this range</div>
+          : (
+            <div className="bth-grid-wrap">
+              <table className="bth-grid-table">
+                <thead>
+                  <tr>
+                    <th className="bth-col-stock">STOCK</th>
+                    {nearSlots.map(s => {
+                      const parts = slotKey(s).split("\n");
+                      return (
+                        <th key={s} className="bth-col-slot">
+                          <div className="bth-slot-date">{parts[0]}</div>
+                          <div className="bth-slot-time">{parts[1]}</div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {nearRows.map(row => (
+                    <tr key={row.ticker} className="bth-grid-row">
+                      <td className="bth-stock-cell">
+                        <span className="bth-stock-name">{row.ticker}</span>
+                        <span className="bth-stock-count bth-stock-count--near">{row.count}</span>
+                      </td>
+                      {nearSlots.map(s => {
+                        const cellHits = row.cells.get(s);
+                        if (!cellHits?.length) return <td key={s} className="bth-empty-cell" />;
+                        return (
+                          <td key={s} className="bth-hit-cell-wrap">
+                            <button
+                              className="bth-hit-badge bth-badge-near"
+                              onClick={() => openChart(cellHits[0], resolution)}
+                              title={`${row.ticker} @ ${toIST(s)} — click to open chart`}
+                            >
+                              NEAR
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
       </div>
     </div>
   );
