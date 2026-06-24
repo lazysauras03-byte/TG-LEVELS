@@ -16,7 +16,7 @@
 import React, {
   useState, useCallback, useEffect, useRef, useMemo, memo,
 } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom"; // eslint-disable-line no-unused-vars
 import StatusBar from "../components/StatusBar";
 import SymbolSearch from "../components/SymbolSearch";
 import OptionsChainModal from "../components/OptionsChainModal";
@@ -164,6 +164,7 @@ const ChartPanel = memo(function ChartPanel({
   // ── SR Lines ───────────────────────────────────────────────────────────────
   const [srLinesToDraw, setSrLinesToDraw] = useState(() => urlSrLines || []);
   const [srLinesDrawn, setSrLinesDrawn] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const handleDrawSRLines = useCallback(() => {
     if (srLinesDrawn) {
       setSrLinesToDraw([]);
@@ -422,7 +423,7 @@ const ChartPanel = memo(function ChartPanel({
 
             {/* Only for plain equity/index symbols — the underlying types an
                 options chain can actually be built from */}
-            {symbol && /^NSE:[A-Z0-9&]+-(EQ|INDEX)$/i.test(symbol) && (
+            {symbol && /^(NSE:[A-Z0-9&]+-(EQ|INDEX)|BSE:[A-Z0-9&]+-INDEX|MCX:[A-Z0-9]+\d{2}[A-Z]{3}FUT)$/i.test(symbol) && (
               <button
                 className="chart-symbol-overlay chart-options-btn"
                 onClick={() => {

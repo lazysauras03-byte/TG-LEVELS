@@ -97,6 +97,7 @@ export default function BacktestPage() {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const socketRef = useRef(null);
+  // eslint-disable-next-line no-unused-vars
   const gridScrollRef = useRef(null);
 
   const [resolution, setResolution] = useState(15);
@@ -222,6 +223,7 @@ export default function BacktestPage() {
   }, [hits, mwFilter, viewCutoffMs]);
 
 
+  // eslint-disable-next-line no-unused-vars
   const { slots, stockRows, slotCountMap } = useMemo(() => {
     // filter by search
     const filtered = filteredHits.filter(h =>

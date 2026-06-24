@@ -247,6 +247,23 @@ class BacktestRunner extends EventEmitter {
 
           this._results.push(hit);
           this._progress.hits++;
+
+          // ── Update chain index hit count + stock count ────────────────────
+          if (!this._chainIndex.has(mwNo)) {
+            this._chainIndex.set(mwNo, {
+              mwNo,
+              hitCount: 0,
+              stockCount: 0,
+              _hitSymbols: new Set(),
+            });
+          }
+          const ci = this._chainIndex.get(mwNo);
+          ci.hitCount++;
+          if (!ci._hitSymbols.has(symbol)) {
+            ci._hitSymbols.add(symbol);
+            ci.stockCount++;
+          }
+
           this.emit("backtest_hit", hit);
         }
       }

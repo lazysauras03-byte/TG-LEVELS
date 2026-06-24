@@ -29,6 +29,7 @@ export default function OptionsChainModal({ isOpen, onClose, underlying, spot, l
 
   useEffect(() => { if (isOpen) setExpiryIdx(0); }, [isOpen, underlying?.symbol]);
 
+  // eslint-disable-next-line no-unused-vars
   const { exch, root, isIndex, isCommodity, strikeStep, commodityName } = useMemo(
     () => (underlying ? getOptionRoot(underlying.symbol) : { exch: "NSE", root: "", isIndex: false, isCommodity: false, strikeStep: 50, decimals: 0 }),
     [underlying]
@@ -149,8 +150,8 @@ export default function OptionsChainModal({ isOpen, onClose, underlying, spot, l
           ) : (
             strikes.map((strike, idx) => {
               const callSym = optionSymbol(exch, root, expiry.code, strike, "CE");
-              const putSym  = optionSymbol(exch, root, expiry.code, strike, "PE");
-              const isAtm   = strike === atm;
+              const putSym = optionSymbol(exch, root, expiry.code, strike, "PE");
+              const isAtm = strike === atm;
 
               const nextStrike = strikes[idx + 1];
               const showSpotLine = spot && nextStrike && spot > strike && spot < nextStrike;
