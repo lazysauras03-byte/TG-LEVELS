@@ -18,6 +18,19 @@ const createChartRouter = require("./routes/chartRouter");
 const corsMiddleware = require("./middleware/cors");
 const rateLimiter = require("./middleware/rateLimiter");
 
+// ─── Database ─────────────────────────────────────────────────────────────────
+// DB is optional — if DATABASE_URL / PGHOST is not set, TGG runs without DB
+// and behaves exactly as before (Fyers-only mode).
+let db = null;
+let dbEnabled = false;
+try {
+  db = require("../../database/src/index");
+  dbEnabled = true;
+  console.log("[DB] Database module loaded — PostgreSQL integration active");
+} catch (err) {
+  console.warn("[DB] Database module not found — running without DB (Fyers-only mode):", err.message);
+}
+
 const app = express();
 const server = http.createServer(app);
 
@@ -100,6 +113,13 @@ function getOrCreateBuilder(symbol) {
         console.log(`[Builder:${symbol}] Candle finalized @ ${new Date(finalizedCandle.time).toISOString()} close=${finalizedCandle.close}`);
         emitCandleUpdate(symbol, formingCandles);
         emitFinalCandle(symbol, finalizedCandle);
+
+        // ── DB: save finalized 1m candle to PostgreSQL ──────────────────────
+        if (dbEnabled) {
+          db.upsertCandles(symbol, 1, [finalizedCandle]).catch((err) => {
+            console.error(`[DB] Failed to save candle for ${symbol}:`, err.message);
+          });
+        }
 
         setImmediate(() => {
           const b = candleBuilders.get(symbol);
@@ -280,6 +300,17 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   const builder = getOrCreateBuilder(symbol);
   builder.seedHistory(raw1m);
 
+  // ── DB: bulk-save REST 1m candles on every fetch ────────────────────────
+  // This backfills the DB with historical 1m candles from Fyers REST.
+  // upsertCandles is idempotent (ON CONFLICT DO UPDATE) so re-fetching is safe.
+  if (dbEnabled && raw1m.length > 0) {
+    db.upsertCandles(symbol, 1, raw1m).then((n) => {
+      console.log(`[DB] Upserted ${n} REST 1m candles for ${symbol}`);
+    }).catch((err) => {
+      console.error(`[DB] REST upsert failed for ${symbol}:`, err.message);
+    });
+  }
+
   let candles;
   if (resolution === 1) { candles = raw1m; }
   else { candles = await fetchCandles(symbol, resolution, CANDLES_TO_FETCH); }
@@ -393,8 +424,12 @@ function startAutoRefresh() {
     const dk = `${SYMBOL}:${RESOLUTION}`;
     if (!pairs.has(dk)) pairs.set(dk, { symbol: SYMBOL, resolution: RESOLUTION });
 
-    for (const { symbol, resolution } of pairs.values()) {
-      console.log(`[AUTO] Refreshing ${symbol} res=${resolution}m...`);
+    // Stagger refreshes 600ms apart — prevents Fyers rate storm (Issue #2 fix)
+    const pairList = Array.from(pairs.values());
+    for (let i = 0; i < pairList.length; i++) {
+      const { symbol, resolution } = pairList[i];
+      if (i > 0) await new Promise(r => setTimeout(r, 600));
+      console.log(`[AUTO] Refreshing ${symbol} res=${resolution}m... (${i + 1}/${pairList.length})`);
       fetchAndBroadcast(symbol, resolution, true).catch((e) => console.error(`[AUTO] Error ${symbol} res=${resolution}:`, e.message));
     }
   }, REFRESH_MS);
@@ -506,6 +541,26 @@ server.listen(PORT, async () => {
   console.log(`   Scanner    : http://localhost:${PORT}/api/scanner/signals\n`);
   startAutoRefresh();
   startTickWatchdog();
+
+  // ── DB: connect, health-check, prune old candles ────────────────────────
+  if (dbEnabled) {
+    try {
+      const ok = await db.healthCheck();
+      if (ok) {
+        console.log("[DB] ✅  PostgreSQL connection healthy");
+        // Prune candles older than 90 days on startup
+        const pruned = await db.pruneOldCandles(null, 1, 90);
+        if (pruned > 0) console.log(`[DB] Pruned ${pruned} old candles (>90 days)`);
+      } else {
+        console.warn("[DB] ⚠️  PostgreSQL health check failed — DB writes disabled");
+        dbEnabled = false;
+      }
+    } catch (err) {
+      console.warn("[DB] ⚠️  PostgreSQL startup error — DB writes disabled:", err.message);
+      dbEnabled = false;
+    }
+  }
+
   await initialRestFetch();
 
   // ─── Scanner + Backtest symbol loading ──────────────────────────────────────

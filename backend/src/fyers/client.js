@@ -115,7 +115,7 @@ function weekAnchor(epochSec) {
 // ── Smart lookback calculator ─────────────────────────────────────────────────
 function calcLookbackDays(resolution) {
   const res = String(resolution).toUpperCase();
-  if (res === "W" || res === "10080") return 3650; // 10 years of daily for aggregation
+  if (res === "W" || res === "10080") return 1095; // 3 years = 4 chunks max (was 3650 = 11 chunks, caused rate storm)
   if (res === "D" || res === "1440") return 730;
   const mins = parseInt(res, 10) || 3;
   if (mins === 60) return 150;
