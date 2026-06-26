@@ -56,6 +56,7 @@ function createChartRouter(deps) {
     updateTickSubscription,
     getAuthURL, generateToken, validateToken,
     detectMotherWaveForAPI,
+    deriveTimeframe, runSignalEngine,
   } = deps;
 
   const router = express.Router();
@@ -102,11 +103,20 @@ function createChartRouter(deps) {
   /**
    * GET /api/chart?symbol=X&resolution=Y
    *
-   * Single endpoint for all chart data. Backend decides whether to serve from
-   * cache or re-fetch from Fyers based on symbol-aware TTL:
-   *   Live market  : 60s
-   *   Weekday/off  : 5min
-   *   Weekend/off  : 24hr (MCX Sat treated as weekday for MCX symbols)
+   * DB-FIRST path (Step 6 of architecture brief):
+   *   1. If DB is enabled and has enough 1m data for the last 3 months →
+   *      derive the requested resolution via deriveTimeframe, run signal
+   *      engine, respond. No Fyers call needed.
+   *   2. DB miss / insufficient rows → fall back to fetchAndProcess (Fyers),
+   *      which already write-throughs to DB. Same behavior as before.
+   *
+   * In-process symbolCacheMap sits in front of both paths (unchanged).
+   *
+   * 3-month window: ~90 days × 375 min/day = ~33,750 expected 1m candles.
+   * We consider DB "sufficient" if we have ≥ 50% of that (~16,875 rows),
+   * which guards against a freshly seeded or partially backfilled DB.
+   * During live market we always fall through to Fyers so the chart shows
+   * the latest forming candle (tick stream handles that, but REST confirms).
    */
   router.get("/api/chart", async (req, res) => {
     const symbol = req.query.symbol || SYMBOL;
@@ -117,9 +127,51 @@ function createChartRouter(deps) {
     const tradingDay = isTradingDay(symbol);
     const cacheTTL = live ? 60_000 : tradingDay ? 5 * 60_000 : 24 * 60 * 60_000;
 
+    // ── 1. In-process cache (unchanged) ──────────────────────────────────────
     if (cache.result && cache.candles.length > 0 && Date.now() - cache.lastFetch < cacheTTL) {
       return res.json(buildPayload(cache.candles, cache.result, symbol, resolution));
     }
+
+    // ── 2. DB-first: try loading 3 months of 1m candles from Postgres ────────
+    const db = deps.db;
+    const dbEnabled = deps.dbEnabled;
+
+    if (dbEnabled && db && !live) {
+      try {
+        const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
+        const from = new Date(Date.now() - THREE_MONTHS_MS);
+        const to = new Date();
+
+        const oneMinCandles = await db.loadCandles(symbol, 1, { from, to, limit: 50000 });
+
+        if (oneMinCandles.length > 0) {
+          console.log(`[DB-first] ${symbol} res=${resolution}m → ${oneMinCandles.length} 1m rows from DB`);
+
+          let candles;
+          if (resolution === 1) {
+            candles = oneMinCandles;
+          } else {
+            // deriveTimeframe(oneMinCandles, targetResolutionMinutes)
+            candles = deriveTimeframe(oneMinCandles, resolution);
+          }
+
+          if (candles && candles.length > 0) {
+            const result = runSignalEngine(candles);
+            // Populate in-process cache so subsequent calls hit the TTL path
+            cache.candles = candles;
+            cache.result = result;
+            cache.lastFetch = Date.now();
+            return res.json(buildPayload(candles, result, symbol, resolution));
+          }
+        } else {
+          console.log(`[DB-first] ${symbol} — no rows in DB, fetching from Fyers`);
+        }
+      } catch (dbErr) {
+        console.warn(`[DB-first] DB read failed for ${symbol}:`, dbErr.message, "— falling back to Fyers");
+      }
+    }
+
+    // ── 3. Fyers fallback (original behavior) ─────────────────────────────────
     try {
       const { candles, result } = await fetchAndProcess(symbol, resolution);
       if (live) setImmediate(() => updateTickSubscription().catch(console.error));

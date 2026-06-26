@@ -303,11 +303,28 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   // ── DB: bulk-save REST 1m candles on every fetch ────────────────────────
   // This backfills the DB with historical 1m candles from Fyers REST.
   // upsertCandles is idempotent (ON CONFLICT DO UPDATE) so re-fetching is safe.
+  // ── DB: smart upsert ─ only write candles newer than what's already stored ──
   if (dbEnabled && raw1m.length > 0) {
-    db.upsertCandles(symbol, 1, raw1m).then((n) => {
-      console.log(`[DB] Upserted ${n} REST 1m candles for ${symbol}`);
+    db.getLatestCandle(symbol, 1).then((latest) => {
+      const newCandles = latest
+        ? raw1m.filter((c) => c.time > latest.time)
+        : raw1m;
+
+      if (newCandles.length === 0) {
+        console.log(`[DB] ${symbol} — no new candles to upsert (already up to date)`);
+        return;
+      }
+
+      return db.upsertCandles(symbol, 1, newCandles).then((n) => {
+        const since = latest ? new Date(latest.time).toISOString() : 'first time';
+        console.log(`[DB] Upserted ${n} new 1m candles for ${symbol} (${since})`);
+      });
     }).catch((err) => {
-      console.error(`[DB] REST upsert failed for ${symbol}:`, err.message);
+      // getLatestCandle failed — skip upsert entirely, do NOT dump all candles.
+      // recoveryEngine will detect any gap on its next cycle and re-fetch
+      // only the affected day via deleteDayCandles + upsert. repairLog will
+      // record it. No blind fallback upsert here.
+      console.warn(`[DB] getLatestCandle failed for ${symbol} (${err.message}) — skipping upsert, recoveryEngine will handle gap`);
     });
   }
 
@@ -348,6 +365,11 @@ app.use(createChartRouter({
   tickStream, ticksFlowing, getActiveTickSymbols, updateTickSubscription, maybeStartTickStream,
   getAuthURL, generateToken, validateToken,
   detectMotherWaveForAPI,
+  // DB-first chart path
+  get db() { return dbEnabled ? db : null; },
+  get dbEnabled() { return dbEnabled; },
+  deriveTimeframe,
+  runSignalEngine,
 }));
 
 app.use("/api/symbols", symbolsRouter);
@@ -530,7 +552,7 @@ app.get("*", (req, res, next) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-const PORT = parseInt(process.env.PORT || "9004");
+const PORT = parseInt(process.env.PORT || "5280");
 server.listen(PORT, async () => {
   console.log(`\n✅ TGG Backend running on http://localhost:${PORT}`);
   console.log(`   Health     : http://localhost:${PORT}/health`);
@@ -549,7 +571,7 @@ server.listen(PORT, async () => {
       if (ok) {
         console.log("[DB] ✅  PostgreSQL connection healthy");
         // Prune candles older than 90 days on startup
-        const pruned = await db.pruneOldCandles(null, 1, 90);
+        const pruned = await db.pruneOldCandles(null, 1, 365);
         if (pruned > 0) console.log(`[DB] Pruned ${pruned} old candles (>90 days)`);
       } else {
         console.warn("[DB] ⚠️  PostgreSQL health check failed — DB writes disabled");
