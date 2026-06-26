@@ -156,7 +156,7 @@ async function loadCandles(symbol, resolution, { limit = 10000, from, to } = {})
   let p = 3;
 
   if (from) { whereClauses += ` AND time >= $${p++}`; params.push(new Date(from).toISOString()); }
-  if (to)   { whereClauses += ` AND time <= $${p++}`; params.push(new Date(to).toISOString()); }
+  if (to) { whereClauses += ` AND time <= $${p++}`; params.push(new Date(to).toISOString()); }
 
   const rows = await query(
     `SELECT extract(epoch from time)*1000 AS time,
@@ -169,11 +169,11 @@ async function loadCandles(symbol, resolution, { limit = 10000, from, to } = {})
   );
 
   return rows.map(r => ({
-    time:   Math.round(Number(r.time)),
-    open:   Number(r.open),
-    high:   Number(r.high),
-    low:    Number(r.low),
-    close:  Number(r.close),
+    time: Math.round(Number(r.time)),
+    open: Number(r.open),
+    high: Number(r.high),
+    low: Number(r.low),
+    close: Number(r.close),
     volume: Number(r.volume),
   }));
 }
@@ -193,11 +193,11 @@ async function getLatestCandle(symbol, resolution) {
   if (!rows.length) return null;
   const r = rows[0];
   return {
-    time:   Math.round(Number(r.time)),
-    open:   Number(r.open),
-    high:   Number(r.high),
-    low:    Number(r.low),
-    close:  Number(r.close),
+    time: Math.round(Number(r.time)),
+    open: Number(r.open),
+    high: Number(r.high),
+    low: Number(r.low),
+    close: Number(r.close),
     volume: Number(r.volume),
   };
 }
@@ -230,14 +230,14 @@ async function countCandles(symbol, resolution, from, to) {
  * @param {number} [retentionDays=90]
  * @returns {Promise<number>}  rows deleted
  */
-async function pruneOldCandles(symbol = null, resolution = 1, retentionDays = 90) {
+async function pruneOldCandles(symbol = null, resolution = 1, retentionDays = 365) {
   const cutoff = new Date(Date.now() - retentionDays * 86400 * 1000).toISOString();
 
   let sql = "DELETE FROM candles WHERE time < $1";
   const params = [cutoff];
   let p = 2;
 
-  if (symbol !== null)     { sql += ` AND symbol=$${p++}`;     params.push(symbol); }
+  if (symbol !== null) { sql += ` AND symbol=$${p++}`; params.push(symbol); }
   if (resolution !== null) { sql += ` AND resolution=$${p++}`; params.push(resolution); }
   sql += " RETURNING 1";
 
@@ -251,15 +251,15 @@ function isValidCandle(c) {
   return (
     c &&
     Number.isFinite(c.time) && c.time > 0 &&
-    Number.isFinite(c.open)  && c.open  > 0 &&
-    Number.isFinite(c.high)  && c.high  > 0 &&
-    Number.isFinite(c.low)   && c.low   > 0 &&
+    Number.isFinite(c.open) && c.open > 0 &&
+    Number.isFinite(c.high) && c.high > 0 &&
+    Number.isFinite(c.low) && c.low > 0 &&
     Number.isFinite(c.close) && c.close > 0 &&
     c.high >= c.low &&
     c.high >= c.open &&
     c.high >= c.close &&
-    c.low  <= c.open &&
-    c.low  <= c.close
+    c.low <= c.open &&
+    c.low <= c.close
   );
 }
 
