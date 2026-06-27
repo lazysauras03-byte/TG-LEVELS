@@ -18,8 +18,8 @@ const { loadCandles, getLatestCandle, countCandles } = require("./candleStore");
 // ─── IST helpers ─────────────────────────────────────────────────────────────
 
 const IST_OFFSET_MS = 5.5 * 3600 * 1000;
-const MARKET_OPEN_H  = 9;
-const MARKET_OPEN_M  = 15;
+const MARKET_OPEN_H = 9;
+const MARKET_OPEN_M = 15;
 const MARKET_CLOSE_H = 15;
 const MARKET_CLOSE_M = 30;
 
@@ -45,7 +45,7 @@ function expectedCandlesForDay(tradingDayMs, resolution) {
   ).getTime() - IST_OFFSET_MS;
 
   const sessionStartMs = istMidnightMs + (MARKET_OPEN_H * 60 + MARKET_OPEN_M) * 60000;
-  const sessionEndMs   = istMidnightMs + (MARKET_CLOSE_H * 60 + MARKET_CLOSE_M) * 60000;
+  const sessionEndMs = istMidnightMs + (MARKET_CLOSE_H * 60 + MARKET_CLOSE_M) * 60000;
   const stepMs = resolution * 60000;
 
   const times = [];
@@ -77,9 +77,9 @@ function validateCandleArray(candles, resolution) {
 
     // Corrupt OHLC
     if (!Number.isFinite(c.open) || c.open <= 0 ||
-        !Number.isFinite(c.high) || c.high <= 0 ||
-        !Number.isFinite(c.low)  || c.low  <= 0 ||
-        !Number.isFinite(c.close)|| c.close<= 0) {
+      !Number.isFinite(c.high) || c.high <= 0 ||
+      !Number.isFinite(c.low) || c.low <= 0 ||
+      !Number.isFinite(c.close) || c.close <= 0) {
       issues.push({ type: "CORRUPT_OHLC", time: c.time, message: `Zero or non-finite OHLC at ${new Date(c.time).toISOString()}` });
       continue;
     }
@@ -119,22 +119,22 @@ function validateCandleArray(candles, resolution) {
     // a date boundary — it's real missing data and must be flagged.
     if (i > 0 && resolution < 1440) {
       const expectedStep = resolution * 60 * 1000;
-      const actualStep   = sorted[i].time - sorted[i - 1].time;
+      const actualStep = sorted[i].time - sorted[i - 1].time;
       if (actualStep > expectedStep * 1.5) {
         const prevIST = toIST(sorted[i - 1].time);
         const currIST = toIST(sorted[i].time);
         const sameDay = prevIST.getUTCDate() === currIST.getUTCDate() &&
-                        prevIST.getUTCMonth() === currIST.getUTCMonth();
+          prevIST.getUTCMonth() === currIST.getUTCMonth();
 
         const prevMinOfDay = prevIST.getUTCHours() * 60 + prevIST.getUTCMinutes();
         const currMinOfDay = currIST.getUTCHours() * 60 + currIST.getUTCMinutes();
         const CLOSE_MIN = MARKET_CLOSE_H * 60 + MARKET_CLOSE_M;
-        const OPEN_MIN  = MARKET_OPEN_H * 60 + MARKET_OPEN_M;
+        const OPEN_MIN = MARKET_OPEN_H * 60 + MARKET_OPEN_M;
 
         // Previous candle should be within one resolution step of close;
         // next candle should be within one resolution step of open.
         const prevReachedClose = prevMinOfDay >= CLOSE_MIN - (expectedStep / 60000) - 1;
-        const currAtOpen       = currMinOfDay <= OPEN_MIN + (expectedStep / 60000) + 1;
+        const currAtOpen = currMinOfDay <= OPEN_MIN + (expectedStep / 60000) + 1;
 
         const isRealGap = sameDay || !prevReachedClose || !currAtOpen;
 
@@ -143,7 +143,7 @@ function validateCandleArray(candles, resolution) {
           issues.push({
             type: "GAP",
             time: sorted[i - 1].time,
-            message: `Gap of ${gapMinutes.toFixed(0)}min between ${new Date(sorted[i-1].time).toISOString()} and ${new Date(sorted[i].time).toISOString()}`,
+            message: `Gap of ${gapMinutes.toFixed(0)}min between ${new Date(sorted[i - 1].time).toISOString()} and ${new Date(sorted[i].time).toISOString()}`,
           });
         }
       }
@@ -173,7 +173,7 @@ async function validateCurrentDay(symbol, resolution) {
   ).getTime() - IST_OFFSET_MS;
 
   const sessionStart = istMidnightMs + (MARKET_OPEN_H * 60 + MARKET_OPEN_M) * 60000;
-  const sessionEnd   = Math.min(now, istMidnightMs + (MARKET_CLOSE_H * 60 + MARKET_CLOSE_M) * 60000);
+  const sessionEnd = Math.min(now, istMidnightMs + (MARKET_CLOSE_H * 60 + MARKET_CLOSE_M) * 60000);
 
   // Only validate if we are within or past the session
   if (now < sessionStart) return { valid: true, issues: [], candlesChecked: 0 };
@@ -228,7 +228,10 @@ async function validateHistorical(symbol, resolution, opts = {}) {
   const candles = await loadCandles(symbol, DB_RESOLUTION, { limit: 100000, ...opts, from, to: opts.to || safeTo });
   const { valid, issues } = validateCandleArray(candles, DB_RESOLUTION);
 
-  console.log(`[Validator] Historical ${symbol} res=1 (1m only): ${candles.length} candles, ${issues.length} issues`);
+  // Only log when issues found — clean symbols are silent to keep startup logs readable
+  if (issues.length > 0) {
+    console.log(`[Validator] ${symbol}: ${candles.length} candles, ${issues.length} issue(s) found`);
+  }
   return { valid, issues, candlesChecked: candles.length };
 }
 
@@ -247,20 +250,20 @@ async function validateHistorical(symbol, resolution, opts = {}) {
  * @param {Array<{time,...}>} brokerCandles  freshly fetched 1m candles from Fyers REST
  */
 async function checkPeriodicSync(symbol, resolution, brokerCandles) {
-  const latestDb     = await getLatestCandle(symbol, resolution);
+  const latestDb = await getLatestCandle(symbol, resolution);
   const latestBroker = brokerCandles && brokerCandles.length > 0
     ? brokerCandles[brokerCandles.length - 1]
     : null;
 
   if (!latestBroker) return { inSync: true, latestDb, latestBroker: null, gapMs: 0 };
-  if (!latestDb)     return { inSync: false, latestDb: null, latestBroker, gapMs: Infinity };
+  if (!latestDb) return { inSync: false, latestDb: null, latestBroker, gapMs: Infinity };
 
   const gapMs = latestBroker.time - latestDb.time;
   const toleranceMs = resolution * 60 * 1000 * 1.5; // 1.5× resolution
 
   const inSync = gapMs <= toleranceMs;
   if (!inSync) {
-    console.warn(`[PeriodicSync] ${symbol} res=${resolution} DRIFT detected: DB=${new Date(latestDb.time).toISOString()} Broker=${new Date(latestBroker.time).toISOString()} gap=${(gapMs/60000).toFixed(1)}min`);
+    console.warn(`[PeriodicSync] ${symbol} res=${resolution} DRIFT detected: DB=${new Date(latestDb.time).toISOString()} Broker=${new Date(latestBroker.time).toISOString()} gap=${(gapMs / 60000).toFixed(1)}min`);
   }
 
   return { inSync, latestDb, latestBroker, gapMs };

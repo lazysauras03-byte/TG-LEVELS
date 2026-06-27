@@ -23,8 +23,10 @@ const rateLimiter = require("./middleware/rateLimiter");
 // and behaves exactly as before (Fyers-only mode).
 let db = null;
 let dbEnabled = false;
+let recoveryEngine = null;
 try {
   db = require("../../database/src/index");
+  recoveryEngine = require("../../database/src/recoveryEngine");
   dbEnabled = true;
   console.log("[DB] Database module loaded — PostgreSQL integration active");
 } catch (err) {
@@ -464,7 +466,65 @@ async function initialRestFetch() {
   if (!valid) { console.log("[INIT] Not authenticated — skipping initial REST fetch. Chart will be empty."); return; }
   const dayLabel = isTradingDay() ? (isAnyMarketLive(getActiveTickSymbols()) ? "live market" : "weekday (market closed)") : "weekend/holiday";
   console.log(`[INIT] Pre-warming all resolutions for ${SYMBOL} (${dayLabel})...`);
+
   const ALL_RESOLUTIONS = [1, 3, 5, 15, 60, 1440, 10080];
+
+  // ── DB-first pre-warm ────────────────────────────────────────────────────
+  // If DB is enabled and has 1m data for SYMBOL, derive all resolutions from
+  // DB instead of hitting Fyers 7 times on every restart. Fyers is only used
+  // as a fallback if DB has no rows for the symbol (e.g. fresh install).
+  if (dbEnabled && db) {
+    try {
+      const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
+      const from = new Date(Date.now() - THREE_MONTHS_MS);
+      const to = new Date();
+      const oneMinCandles = await db.loadCandles(SYMBOL, 1, { from, to, limit: 50000 });
+
+      if (oneMinCandles.length > 0) {
+        console.log(`[INIT] DB has ${oneMinCandles.length} 1m rows for ${SYMBOL} — deriving all resolutions from DB`);
+
+        // Seed CandleBuilder with 1m history from DB (needed for live tick stream later)
+        const builder = getOrCreateBuilder(SYMBOL);
+        builder.seedHistory(oneMinCandles);
+
+        // Derive and cache every resolution from the DB 1m rows
+        for (const res of ALL_RESOLUTIONS) {
+          try {
+            let candles;
+            if (res === 1) {
+              candles = oneMinCandles;
+            } else if (res === 1440 || res === 10080) {
+              // Daily/weekly need full 1yr of 1m for accurate aggregation
+              const allOneMin = await db.loadCandles(SYMBOL, 1, { limit: 100000 });
+              candles = deriveTimeframe(allOneMin.length > 0 ? allOneMin : oneMinCandles, res);
+            } else {
+              candles = deriveTimeframe(oneMinCandles, res);
+            }
+            if (candles && candles.length > 0) {
+              const result = runSignalEngine(candles);
+              setCache(SYMBOL, res, candles, result);
+              console.log(`[INIT] res=${res} ✓ (DB)`);
+            }
+          } catch (err) {
+            console.warn(`[INIT] res=${res} derive failed: ${err.message}`);
+          }
+        }
+
+        try {
+          const cache = getCache(SYMBOL, RESOLUTION);
+          if (cache.result && cache.candles.length > 0) io.emit("chart_update", buildPayload(cache.candles, cache.result, SYMBOL, RESOLUTION, false));
+        } catch { }
+        console.log("[INIT] All resolutions loaded ✓  Chart is ready.");
+        return; // ← skip Fyers entirely
+      } else {
+        console.log(`[INIT] No DB rows for ${SYMBOL} — falling back to Fyers for pre-warm`);
+      }
+    } catch (dbErr) {
+      console.warn(`[INIT] DB pre-warm failed (${dbErr.message}) — falling back to Fyers`);
+    }
+  }
+
+  // ── Fyers fallback (only when DB has no data) ────────────────────────────
   for (const res of ALL_RESOLUTIONS) {
     const MAX_RETRIES = 3;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -570,9 +630,83 @@ server.listen(PORT, async () => {
       const ok = await db.healthCheck();
       if (ok) {
         console.log("[DB] ✅  PostgreSQL connection healthy");
-        // Prune candles older than 90 days on startup
+        // Prune candles older than 365 days on startup
         const pruned = await db.pruneOldCandles(null, 1, 365);
-        if (pruned > 0) console.log(`[DB] Pruned ${pruned} old candles (>90 days)`);
+        if (pruned > 0) console.log(`[DB] Pruned ${pruned} old candles (>365 days)`);
+
+        // ── Wire up recovery engine WebSocket emitter ──────────────────────
+        if (recoveryEngine) {
+          recoveryEngine.injectStatusEmitter((event, data) => io.emit(event, data));
+          console.log("[Recovery] Status emitter connected to WebSocket");
+        }
+
+        // ── Startup gap scan: validate all curated symbols, repair gaps ────
+        // Runs after initialRestFetch completes so we don't race with it.
+        // Throttled: 3 symbols at a time with 1s delay between batches to
+        // respect Fyers rate limits during repair refetch calls.
+        setImmediate(async () => {
+          if (!recoveryEngine) return;
+          const fs = require("fs");
+          const path = require("path");
+          const SYMBOLS_JSON = path.resolve(__dirname, "../../frontend/src/symbols.json");
+          const MCX_EXCLUDED = [
+            "CRUDEOIL26JUNFUT", "ALUMINIUM26MAYFUT", "NATGASMINI26MAYFUT",
+            "SILVER26JULFUT", "GOLD26JUNFUT",
+          ];
+          let curatedSymbols = [];
+          try {
+            const all = JSON.parse(fs.readFileSync(SYMBOLS_JSON, "utf8"));
+            curatedSymbols = all
+              .map((s) => s.symbol)
+              .filter((sym) => sym && !MCX_EXCLUDED.some((ex) => sym.includes(ex)));
+          } catch (e) {
+            console.warn("[Recovery] Could not load symbols.json for startup scan:", e.message);
+            return;
+          }
+
+          // Wait for initialRestFetch to finish (it runs right before this setImmediate)
+          await new Promise((r) => setTimeout(r, 5000));
+
+          console.log(`[Recovery] Startup gap scan: checking ${curatedSymbols.length} curated symbols...`);
+          let repaired = 0;
+          let clean = 0;
+          const CONCURRENCY = 3;
+          const BATCH_DELAY_MS = 1000;
+
+          for (let i = 0; i < curatedSymbols.length; i += CONCURRENCY) {
+            const batch = curatedSymbols.slice(i, i + CONCURRENCY);
+            await Promise.all(batch.map(async (symbol) => {
+              try {
+                const { valid, issues } = await db.validateHistorical(symbol, 1);
+                if (!valid && issues.length > 0) {
+                  // Find the earliest gap and repair that day
+                  const gapIssue = issues.find((iss) => iss.type === "GAP" || iss.type === "CORRUPT_OHLC");
+                  if (gapIssue) {
+                    const tradingDay = new Date(gapIssue.time || Date.now());
+                    console.log(`[Recovery] ${symbol}: ${issues.length} issue(s) — repairing gap at ${tradingDay.toISOString().slice(0, 10)}`);
+                    await recoveryEngine.repairDay({
+                      symbol,
+                      tradingDay,
+                      fetchCandles: (sym, res) => fetchCandles(sym, res),
+                      trigger: "startup",
+                    });
+                    repaired++;
+                  }
+                } else {
+                  clean++;
+                  // Silent for clean symbols — only log summary at end
+                }
+              } catch (e) {
+                console.warn(`[Recovery] ${symbol} scan error:`, e.message);
+              }
+            }));
+            if (i + CONCURRENCY < curatedSymbols.length) {
+              await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+            }
+          }
+          console.log(`[Recovery] Startup scan complete — ${clean} clean, ${repaired} repaired out of ${curatedSymbols.length} symbols`);
+        });
+
       } else {
         console.warn("[DB] ⚠️  PostgreSQL health check failed — DB writes disabled");
         dbEnabled = false;

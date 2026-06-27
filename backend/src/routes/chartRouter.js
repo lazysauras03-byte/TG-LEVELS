@@ -204,6 +204,77 @@ function createChartRouter(deps) {
 
     if (requestingSocketId) socketSymbols.set(requestingSocketId, symbol);
 
+    // ── DB-first path (mirrors GET /api/chart) ─────────────────────────────
+    // Market closed → serve entirely from DB, no Fyers call needed.
+    // Market open   → also serve from DB; tick stream handles the live forming
+    //                 candle separately via tick_update/candle_update events.
+    // Only fall through to Fyers if DB has no rows for this symbol.
+    const db = deps.db;
+    const dbEnabled = deps.dbEnabled;
+    const live = isLiveMarket(symbol);
+
+    if (dbEnabled && db) {
+      try {
+        const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
+        const from = new Date(Date.now() - THREE_MONTHS_MS);
+        const to = new Date();
+
+        const oneMinCandles = await db.loadCandles(symbol, 1, { from, to, limit: 50000 });
+
+        if (oneMinCandles.length > 0) {
+          console.log(`[DB-first] REFRESH ${symbol} res=${resolution}m → ${oneMinCandles.length} 1m rows from DB`);
+
+          let candles;
+          if (resolution === 1) {
+            candles = oneMinCandles;
+          } else if (resolution === 1440) {
+            // Daily — derive from full 1m history stored in DB (not just 3 months)
+            const allOneMIn = await db.loadCandles(symbol, 1, { limit: 100000 });
+            candles = deriveTimeframe(allOneMIn.length > 0 ? allOneMIn : oneMinCandles, resolution);
+          } else if (resolution === 10080) {
+            // Weekly — derive from full 1m history
+            const allOneMIn = await db.loadCandles(symbol, 1, { limit: 100000 });
+            candles = deriveTimeframe(allOneMIn.length > 0 ? allOneMIn : oneMinCandles, resolution);
+          } else {
+            candles = deriveTimeframe(oneMinCandles, resolution);
+          }
+
+          if (candles && candles.length > 0) {
+            const result = runSignalEngine(candles);
+            const cache = getCache(symbol, resolution);
+            cache.candles = candles;
+            cache.result = result;
+            cache.lastFetch = Date.now();
+
+            const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
+
+            if (requestingSocketId) {
+              io.to(requestingSocketId).emit("chart_update", { ...payload, isAutoRefresh: false });
+            } else {
+              const room = `res:${resolution}`;
+              const roomSockets = io.sockets.adapter.rooms.get(room);
+              if (roomSockets?.size) {
+                for (const sid of roomSockets) {
+                  const sock = io.sockets.sockets.get(sid);
+                  if (!sock) continue;
+                  if ((socketSymbols.get(sid) || SYMBOL) === symbol) sock.emit("chart_update", { ...payload, isAutoRefresh: true });
+                }
+              } else {
+                io.to(room).emit("chart_update", { ...payload, isAutoRefresh: true });
+              }
+            }
+
+            return res.json(payload);
+          }
+        } else {
+          console.log(`[DB-first] REFRESH ${symbol} — no rows in DB, fetching from Fyers`);
+        }
+      } catch (dbErr) {
+        console.warn(`[DB-first] REFRESH DB read failed for ${symbol}:`, dbErr.message, "— falling back to Fyers");
+      }
+    }
+
+    // ── Fyers fallback (only when DB has no data for this symbol) ──────────
     try {
       const { candles, result } = await fetchAndProcess(symbol, resolution);
       const payload = { ...buildPayload(candles, result, symbol, resolution, false), success: true };
