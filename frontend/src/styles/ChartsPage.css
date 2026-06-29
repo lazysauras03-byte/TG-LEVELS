@@ -226,6 +226,14 @@
   z-index: 20;
 }
 
+/* Amber warning bar — visually distinct from the red error-bar.
+   Used for non-fatal shortcut warnings (e.g. "no options for this symbol"). */
+.shortcut-warning-bar {
+  background: rgba(245, 166, 35, 0.15);
+  border-bottom: 1px solid var(--yellow, #f5a623);
+  color: var(--yellow, #f5a623);
+}
+
 /* ─── Loading / no-data ─────────────────────────────────────────── */
 .loading-screen {
   position: absolute;

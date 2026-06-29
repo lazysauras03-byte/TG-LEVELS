@@ -410,7 +410,11 @@ async function loadFromDB(symbol, resolution) {
 
 async function fetchAndProcess(symbol = SYMBOL || "NSE:NIFTY50-INDEX", resolution = RESOLUTION) {
   // ── 1. DB-first ──────────────────────────────────────────────────────────
-  const dbHit = await loadFromDB(symbol, resolution);
+  // Skip DB for option contracts (CE/PE) — they are never pre-seeded and the
+  // DB will always be empty for them. Go straight to Fyers with a short lookback.
+  const colonIdx2 = symbol.indexOf(":");
+  const ticker2 = colonIdx2 >= 0 ? symbol.slice(colonIdx2 + 1) : symbol;
+  const dbHit = OPTION_SUFFIX_RE.test(ticker2) ? null : await loadFromDB(symbol, resolution);
   if (dbHit) {
     const { candles, oneMinCandles } = dbHit;
     console.log(`[DB-first] ${symbol} res=${resolution}m → ${candles.length} candles from DB`);
@@ -430,7 +434,13 @@ async function fetchAndProcess(symbol = SYMBOL || "NSE:NIFTY50-INDEX", resolutio
 
   // ── 2. Fyers fallback (DB disabled, empty, or read failed) ───────────────
   console.log(`[Fyers-fallback] ${symbol} res=${resolution}m — no DB data, fetching from Fyers`);
-  const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH);
+  // Option contracts (CE/PE) only exist for days/weeks — using the default
+  // 30-day lookback causes Fyers to return empty chunks for dates before the
+  // contract was listed. Use a 5-day lookback instead so every chunk is valid.
+  const colonIdx = symbol.indexOf(":");
+  const ticker = colonIdx >= 0 ? symbol.slice(colonIdx + 1) : symbol;
+  const isOptionContract = OPTION_SUFFIX_RE.test(ticker);
+  const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH, isOptionContract ? 5 : null);
 
   if (candleBuilders.has(symbol)) {
     const existing = candleBuilders.get(symbol).getOneMinHistory();
