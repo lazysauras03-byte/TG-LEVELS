@@ -57,6 +57,14 @@ const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
 // if a count-based slice is added. The actual depth is controlled by
 // calcLookbackDays() in fyers/client.js (30d for 3m, 60d for 15m, 150d for 1h).
 const CANDLES_TO_FETCH = parseInt(process.env.CANDLES_TO_FETCH || "10000");
+// CHART_DB_WINDOW_DAYS: how many days of 1m history fetchAndProcess() pulls
+// from Postgres for intraday resolutions (1/3/5/15/60). DB itself still
+// stores a full year — this only controls what the chart loads/displays.
+// Kept at 90 days (full chart history) — the indicator-toggle unsmoothness
+// is a frontend rendering concern, to be fixed there, not by shrinking data.
+// Daily/Weekly (1440/10080) always derive from full DB history regardless
+// of this value, since they need long lookback for correct bar boundaries.
+const CHART_DB_WINDOW_DAYS = parseInt(process.env.CHART_DB_WINDOW_DAYS || "90");
 const REFRESH_MS = parseInt(process.env.SCHEDULE_INTERVAL_MS || "5000");
 const TICK_WATCHDOG_MS = parseInt(process.env.TICK_WATCHDOG_MS || "10000");
 const WATCHDOG_GRACE_MS = parseInt(process.env.WATCHDOG_GRACE_MS || "30000");
@@ -288,7 +296,74 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
 }
 
 // ─── Core fetch & process ─────────────────────────────────────────────────────
+// SINGLE SOURCE OF TRUTH for "get me candles for symbol+resolution".
+// Every caller — GET /api/chart, POST /api/chart/refresh, /api/motherwave,
+// and initialRestFetch() — goes through this one function. No DB code lives
+// anywhere else in the codebase.
+//
+// Order of operations:
+//   1. DB-first  — if DB is enabled and has 1m rows for `symbol`, derive the
+//      requested resolution from Postgres. No Fyers call needed. This is the
+//      common case once a symbol has been backfilled at least once.
+//   2. Fyers fallback — only when DB is disabled, DB has zero rows for this
+//      symbol (fresh symbol, never backfilled), or the DB read throws. Fetches
+//      from Fyers REST and write-throughs 1m candles to DB so the *next* call
+//      for this symbol takes the DB-first path.
+//
+// Daily/Weekly (1440/10080) always derive from the FULL 1m history stored in
+// DB (not the CHART_DB_WINDOW_DAYS slice) — they need long lookback to form
+// correct calendar-day/week boundaries. Everything else (1/3/5/15/60) uses
+// the last CHART_DB_WINDOW_DAYS days only, which is what keeps the chart
+// smooth.
+async function loadFromDB(symbol, resolution) {
+  if (!dbEnabled || !db) return null;
+  try {
+    let oneMinCandles;
+    if (resolution === 1440 || resolution === 10080) {
+      oneMinCandles = await db.loadCandles(symbol, 1, { limit: 100000 });
+    } else {
+      const windowMs = CHART_DB_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+      oneMinCandles = await db.loadCandles(symbol, 1, {
+        from: new Date(Date.now() - windowMs),
+        to: new Date(),
+        limit: 50000,
+      });
+    }
+
+    if (!oneMinCandles || oneMinCandles.length === 0) return null;
+
+    const candles = resolution === 1 ? oneMinCandles : deriveTimeframe(oneMinCandles, resolution);
+    if (!candles || candles.length === 0) return null;
+
+    return { candles, oneMinCandles };
+  } catch (err) {
+    console.warn(`[DB-first] DB read failed for ${symbol} res=${resolution} (${err.message}) — falling back to Fyers`);
+    return null;
+  }
+}
+
 async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
+  // ── 1. DB-first ──────────────────────────────────────────────────────────
+  const dbHit = await loadFromDB(symbol, resolution);
+  if (dbHit) {
+    const { candles, oneMinCandles } = dbHit;
+    console.log(`[DB-first] ${symbol} res=${resolution}m → ${candles.length} candles from DB`);
+
+    // Seed the candle builder so the live tick stream has 1m continuity for
+    // this symbol — same seedHistory() call the Fyers path always made.
+    // Safe to call repeatedly: seedHistory() fully replaces _oneMinHistory.
+    getOrCreateBuilder(symbol).seedHistory(oneMinCandles);
+
+    const result = runSignalEngine(candles);
+    setCache(symbol, resolution, candles, result);
+    if (resolution !== 1) {
+      try { setCache(symbol, 1, oneMinCandles, runSignalEngine(oneMinCandles)); } catch { }
+    }
+    return { candles, result };
+  }
+
+  // ── 2. Fyers fallback (DB disabled, empty, or read failed) ───────────────
+  console.log(`[Fyers-fallback] ${symbol} res=${resolution}m — no DB data, fetching from Fyers`);
   const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH);
 
   if (candleBuilders.has(symbol)) {
@@ -303,7 +378,8 @@ async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
   builder.seedHistory(raw1m);
 
   // ── DB: bulk-save REST 1m candles on every fetch ────────────────────────
-  // This backfills the DB with historical 1m candles from Fyers REST.
+  // This backfills the DB with historical 1m candles from Fyers REST so the
+  // *next* fetchAndProcess() call for this symbol takes the DB-first path.
   // upsertCandles is idempotent (ON CONFLICT DO UPDATE) so re-fetching is safe.
   // ── DB: smart upsert ─ only write candles newer than what's already stored ──
   if (dbEnabled && raw1m.length > 0) {
@@ -367,11 +443,6 @@ app.use(createChartRouter({
   tickStream, ticksFlowing, getActiveTickSymbols, updateTickSubscription, maybeStartTickStream,
   getAuthURL, generateToken, validateToken,
   detectMotherWaveForAPI,
-  // DB-first chart path
-  get db() { return dbEnabled ? db : null; },
-  get dbEnabled() { return dbEnabled; },
-  deriveTimeframe,
-  runSignalEngine,
 }));
 
 app.use("/api/symbols", symbolsRouter);
@@ -461,6 +532,9 @@ function startAutoRefresh() {
 }
 
 // ─── Initial REST fetch ───────────────────────────────────────────────────────
+// Pre-warms the in-process cache for every resolution on startup. All DB-first
+// / Fyers-fallback logic lives in fetchAndProcess() — this just calls it once
+// per resolution with retries, exactly like every other caller.
 async function initialRestFetch() {
   const valid = await validateToken().catch(() => false);
   if (!valid) { console.log("[INIT] Not authenticated — skipping initial REST fetch. Chart will be empty."); return; }
@@ -469,62 +543,6 @@ async function initialRestFetch() {
 
   const ALL_RESOLUTIONS = [1, 3, 5, 15, 60, 1440, 10080];
 
-  // ── DB-first pre-warm ────────────────────────────────────────────────────
-  // If DB is enabled and has 1m data for SYMBOL, derive all resolutions from
-  // DB instead of hitting Fyers 7 times on every restart. Fyers is only used
-  // as a fallback if DB has no rows for the symbol (e.g. fresh install).
-  if (dbEnabled && db) {
-    try {
-      const THREE_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
-      const from = new Date(Date.now() - THREE_MONTHS_MS);
-      const to = new Date();
-      const oneMinCandles = await db.loadCandles(SYMBOL, 1, { from, to, limit: 50000 });
-
-      if (oneMinCandles.length > 0) {
-        console.log(`[INIT] DB has ${oneMinCandles.length} 1m rows for ${SYMBOL} — deriving all resolutions from DB`);
-
-        // Seed CandleBuilder with 1m history from DB (needed for live tick stream later)
-        const builder = getOrCreateBuilder(SYMBOL);
-        builder.seedHistory(oneMinCandles);
-
-        // Derive and cache every resolution from the DB 1m rows
-        for (const res of ALL_RESOLUTIONS) {
-          try {
-            let candles;
-            if (res === 1) {
-              candles = oneMinCandles;
-            } else if (res === 1440 || res === 10080) {
-              // Daily/weekly need full 1yr of 1m for accurate aggregation
-              const allOneMin = await db.loadCandles(SYMBOL, 1, { limit: 100000 });
-              candles = deriveTimeframe(allOneMin.length > 0 ? allOneMin : oneMinCandles, res);
-            } else {
-              candles = deriveTimeframe(oneMinCandles, res);
-            }
-            if (candles && candles.length > 0) {
-              const result = runSignalEngine(candles);
-              setCache(SYMBOL, res, candles, result);
-              console.log(`[INIT] res=${res} ✓ (DB)`);
-            }
-          } catch (err) {
-            console.warn(`[INIT] res=${res} derive failed: ${err.message}`);
-          }
-        }
-
-        try {
-          const cache = getCache(SYMBOL, RESOLUTION);
-          if (cache.result && cache.candles.length > 0) io.emit("chart_update", buildPayload(cache.candles, cache.result, SYMBOL, RESOLUTION, false));
-        } catch { }
-        console.log("[INIT] All resolutions loaded ✓  Chart is ready.");
-        return; // ← skip Fyers entirely
-      } else {
-        console.log(`[INIT] No DB rows for ${SYMBOL} — falling back to Fyers for pre-warm`);
-      }
-    } catch (dbErr) {
-      console.warn(`[INIT] DB pre-warm failed (${dbErr.message}) — falling back to Fyers`);
-    }
-  }
-
-  // ── Fyers fallback (only when DB has no data) ────────────────────────────
   for (const res of ALL_RESOLUTIONS) {
     const MAX_RETRIES = 3;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
