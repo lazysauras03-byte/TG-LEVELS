@@ -50,6 +50,7 @@ export function useSocket() {
   const [error, setError] = useState(null);
   const [tickStreamActive, setTickStreamActive] = useState(false);
   const [ticksFlowing, setTicksFlowing] = useState(null); // null = not yet known, true/false = server confirmed
+  const [underlyingTick, setUnderlyingTick] = useState(null); // Auto-ATM: last LTP from underlying
 
   const socketRef = useRef(null);
   const activeResolutionRef = useRef(null);
@@ -58,6 +59,7 @@ export function useSocket() {
   const lastSocketUpdateRef = useRef(0);
   const hasDataRef = useRef(false);
   const pollTimerRef = useRef(null);
+  const underlyingOptionSymbolRef = useRef(null); // last symbol passed to setUnderlying
 
   // ── matchesActive — drop stale socket events ──────────────────────────────
   const matchesActive = useCallback((d) => {
@@ -154,6 +156,8 @@ export function useSocket() {
       // so the server's socketSymbols map is populated before any refresh fires.
       if (activeSymbolRef.current) socket.emit("set_symbol", activeSymbolRef.current);
       if (activeResolutionRef.current) socket.emit("set_resolution", activeResolutionRef.current);
+      // Re-register Auto-ATM underlying after reconnect
+      if (underlyingOptionSymbolRef.current) socket.emit("set_underlying", underlyingOptionSymbolRef.current);
       // Only fall back to a GET fetch if there's genuinely no data and nothing is in-flight.
       // ChartsPage calls refresh() (POST) on mount which already covers the initial load.
       // The latestRequestIdRef check inside fetchChart prevents stale responses from landing.
@@ -168,6 +172,7 @@ export function useSocket() {
       // when the socket reconnects. Server will re-send market_status on connect.
       setTicksFlowing(null);
       setTickStreamActive(false);
+      setUnderlyingTick(null);
     });
 
     socket.on("chart_update", (d) => {
@@ -250,6 +255,11 @@ export function useSocket() {
         }
         return { ...prev, candles: updated, lastUpdate: new Date(timestamp || Date.now()).toISOString() };
       });
+    });
+
+    // Only arrives while setUnderlying() has registered a symbol server-side.
+    socket.on("underlying_tick", (d) => {
+      setUnderlyingTick(d);
     });
 
     socket.on("market_status", (d) => {
@@ -336,5 +346,15 @@ export function useSocket() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing };
+  // ── setUnderlying — Auto-ATM side-channel control ──────────────────────────
+  // Call with option symbol string to start receiving underlying_tick events.
+  // Call with null to stop (toggle off, symbol changed, panel unmounted).
+  const setUnderlying = useCallback((optionSymbolOrNull) => {
+    if (underlyingOptionSymbolRef.current === (optionSymbolOrNull || null)) return;
+    underlyingOptionSymbolRef.current = optionSymbolOrNull || null;
+    if (!optionSymbolOrNull) setUnderlyingTick(null);
+    if (socketRef.current?.connected) socketRef.current.emit("set_underlying", optionSymbolOrNull || null);
+  }, []);
+
+  return { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing, underlyingTick, setUnderlying };
 }

@@ -35,6 +35,7 @@ import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import { toISTDate } from "../utils/istUtils";
 import { loadPref, savePref } from "../utils/prefs";
 import { formatResolution } from "../utils/formatResolution";
+import { parseOptionSymbol, isOptionSymbol, optionSymbol, getOptionRoot, getStrikeStep, nearestStrikeWithHysteresis } from "../utils/optionsChain";
 import { LAYOUTS } from "../components/layout/LayoutPicker";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { ChartPanelPropTypes } from "./ChartPanelPropTypes";
@@ -101,7 +102,7 @@ const ChartPanel = memo(function ChartPanel({
   onSyncCrosshair,        // (price: number|null, symbol: string) => void
 }) {
   // ── EACH PANEL has its own socket/data — fully independent ─────────────────
-  const { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing } = useSocket();
+  const { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing, underlyingTick, setUnderlying } = useSocket();
 
   // ── Symbol / resolution / mode — all namespaced by pfx ────────────────────
   const [symbol, setSymbol] = useState(() => urlSymbol || loadPref(pfx + "symbol", "NSE:NIFTY50-INDEX"));
@@ -134,6 +135,49 @@ const ChartPanel = memo(function ChartPanel({
   useEffect(() => { savePref(pfx + "sidebarOpen", sidebarOpen); }, [sidebarOpen]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { savePref(pfx + "activeTabs", activeTabs); }, [activeTabs]);
+
+  // ── Auto-ATM ───────────────────────────────────────────────────────────────
+  // parsedOption: null when symbol is not an option contract.
+  const parsedOption = useMemo(() => isOptionSymbol(symbol) ? parseOptionSymbol(symbol) : null, [symbol]);
+  const [autoAtmOn, setAutoAtmOn] = useState(() => loadPref(pfx + "autoAtm", false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { savePref(pfx + "autoAtm", autoAtmOn); }, [autoAtmOn]);
+
+  // Register/clear the underlying side-channel whenever autoAtmOn or symbol changes.
+  useEffect(() => {
+    setUnderlying(autoAtmOn && parsedOption ? symbol : null);
+  }, [autoAtmOn, parsedOption, symbol, setUnderlying]);
+
+  // Debounce ref: only act on an underlying tick if one arrived > 500ms after the last switch.
+  const lastAtmSwitchRef = useRef(0);
+  const currentStrikeRef = useRef(null);
+  useEffect(() => {
+    if (!autoAtmOn || !parsedOption || !underlyingTick?.ltp) {
+      currentStrikeRef.current = null;
+      return;
+    }
+    const spot = underlyingTick.ltp;
+    const parsed = getOptionRoot(symbol);
+    const step = getStrikeStep(spot, parsed);
+    if (currentStrikeRef.current === null) currentStrikeRef.current = parsedOption.strike;
+
+    const suggested = nearestStrikeWithHysteresis(spot, currentStrikeRef.current, step, 0.2);
+    if (suggested === currentStrikeRef.current) return; // still in dead zone — no switch
+
+    // Debounce: ignore if we just switched within 500ms
+    const now = Date.now();
+    if (now - lastAtmSwitchRef.current < 500) return;
+
+    currentStrikeRef.current = suggested;
+    lastAtmSwitchRef.current = now;
+
+    // Switch chart to new strike, same expiry + kind
+    const newSym = optionSymbol(parsedOption.exch, parsedOption.root, parsedOption.expiryCode, suggested, parsedOption.kind);
+    if (newSym !== symbol) {
+      setSymbol(newSym);
+      refresh(newSym, resolution);
+    }
+  }, [autoAtmOn, parsedOption, underlyingTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Drawings hidden — per panel ────────────────────────────────────────────
   const [drawingsHidden, setDrawingsHidden] = useState(false);
@@ -436,6 +480,17 @@ const ChartPanel = memo(function ChartPanel({
                 title="View options chain for this symbol"
               >
                 Options
+              </button>
+            )}
+
+            {/* Auto-ATM toggle — only shown when viewing an option contract */}
+            {parsedOption && (
+              <button
+                className={`chart-symbol-overlay chart-auto-atm-btn${autoAtmOn ? " chart-auto-atm-btn-on" : ""}`}
+                onClick={() => setAutoAtmOn((v) => !v)}
+                title={autoAtmOn ? "Auto ATM on — chart follows nearest strike automatically" : "Auto ATM off — click to enable"}
+              >
+                {autoAtmOn ? "Auto ATM ✓" : "Auto ATM"}
               </button>
             )}
           </div>

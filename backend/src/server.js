@@ -90,6 +90,11 @@ const symbolCacheMap = new Map();  // "SYMBOL:resolution" → { candles, result,
 let autoRefreshTimer = null;
 const socketResolutions = new Map(); // socket.id → resolution
 const socketSymbols = new Map();     // socket.id → symbol (dual-panel per-socket filtering)
+const socketUnderlyings = new Map(); // socket.id → underlying index/equity symbol, only set
+// while that panel is showing an OPTION symbol and has
+// "Auto ATM" switched on. Used purely as a side-channel
+// LTP feed for the auto strike-switch feature — it never
+// touches candleBuilders/symbolCacheMap.
 let lastTickAt = 0;
 let lastConnectAt = 0;
 const lastTickBySymbol = new Map(); // symbol → Date.now() of last tick received
@@ -242,19 +247,63 @@ tickStream.on("tick", (tick) => {
   // If ticks just started flowing (e.g. after a gap/holiday silence),
   // immediately tell all clients — don't wait for the 30s broadcast.
   if (!wasFlowing) io.emit("market_status", { ticksFlowing: true });
+
+  // ── Auto-ATM side-channel: forward this tick's LTP to any socket that has
+  // registered this exact symbol as its underlying via set_underlying.
+  // Pure passthrough — no candle building, no cache writes.
+  for (const [sid, underlyingSym] of socketUnderlyings) {
+    if (underlyingSym !== tick.symbol) continue;
+    const sock = io.sockets.sockets.get(sid);
+    if (!sock) continue;
+    sock.emit("underlying_tick", { symbol: tick.symbol, ltp: tick.ltp, timestamp: now });
+  }
 });
 tickStream.on("connected", () => { console.log("[TickStream] Fyers WebSocket connected ✓"); lastTickAt = 0; lastConnectAt = Date.now(); io.emit("market_status", { tickStreamActive: true, ticksFlowing: false }); });
 tickStream.on("disconnected", () => { console.log("[TickStream] Fyers WebSocket disconnected"); io.emit("market_status", { tickStreamActive: false, ticksFlowing: false }); });
 tickStream.on("error", (err) => { console.error("[TickStream] Error:", err?.message || err); });
 
 /**
+ * deriveUnderlyingSymbol — given an OPTION contract symbol, return its
+ * underlying index/equity symbol so the tick stream can be subscribed to it.
+ * Mirrors frontend/src/utils/optionsChain.js getOptionRoot() — kept in sync.
+ *   "NSE:NIFTY2570724000PE"   → "NSE:NIFTY50-INDEX"
+ *   "NSE:RELIANCE26JUL3200CE" → "NSE:RELIANCE-EQ"
+ *   "MCX:CRUDEOIL26JUL5000CE" → null  (commodity options — not supported)
+ */
+const OPTION_SUFFIX_RE = /^(.*?)(\d{2}(?:[A-Z]{3}|[1-9OND]\d{2}))(\d+(?:\.\d+)?)(CE|PE)$/;
+const INDEX_ROOT_TO_SYMBOL = {
+  NIFTY: "NSE:NIFTY50-INDEX",
+  BANKNIFTY: "NSE:NIFTYBANK-INDEX",
+  FINNIFTY: "NSE:CNXFINANCE-INDEX",
+  NIFTYIT: "NSE:CNXIT-INDEX",
+  MIDCPNIFTY: "NSE:MIDCPNIFTY-INDEX",
+  SENSEX: "BSE:SENSEX-INDEX",
+};
+function deriveUnderlyingSymbol(sym) {
+  if (!sym) return null;
+  const colonIdx = sym.indexOf(":");
+  if (colonIdx < 0) return null;
+  const exch = sym.slice(0, colonIdx);
+  const ticker = sym.slice(colonIdx + 1);
+  if (exch === "MCX") return null; // commodity options — not supported by Auto-ATM
+  const m = OPTION_SUFFIX_RE.exec(ticker);
+  if (!m) return null;
+  const root = m[1];
+  if (INDEX_ROOT_TO_SYMBOL[root]) return INDEX_ROOT_TO_SYMBOL[root];
+  return `NSE:${root}-EQ`;
+}
+
+/**
  * getActiveTickSymbols — returns every symbol currently watched by any connected
- * socket, plus the default SYMBOL. This is the list Fyers WebSocket subscribes to.
+ * socket, plus the default SYMBOL, plus any Auto-ATM underlying symbols any
+ * socket has registered via set_underlying. This is the list Fyers WebSocket
+ * subscribes to.
  */
 function getActiveTickSymbols() {
   const set = new Set();
   if (SYMBOL) set.add(SYMBOL);
   for (const sym of socketSymbols.values()) { if (sym) set.add(sym); }
+  for (const sym of socketUnderlyings.values()) { if (sym) set.add(sym); }
   return [...set];
 }
 
@@ -458,7 +507,7 @@ app.use(createChartRouter({
   getCache, buildPayload, fetchAndProcess, fetchAndBroadcast,
   isLiveMarket, isTradingDay, isAnyMarketLive,
   tickStream, ticksFlowing, getActiveTickSymbols, updateTickSubscription, maybeStartTickStream,
-  getAuthURL, generateToken, validateToken,
+  getAuthURL, generateToken, validateToken, bustTokenCache,
   detectMotherWaveForAPI,
 }));
 
@@ -630,6 +679,28 @@ io.on("connection", (socket) => {
     }
   });
 
+  // AUTO-ATM: register/clear this socket's underlying LTP side-channel.
+  // Frontend calls this with the OPTION symbol currently on the panel when
+  // the user has switched "Auto ATM" on; the server derives the underlying
+  // itself (single source of truth for the option→underlying mapping) and
+  // subscribes the tick stream to it. Calling with null/undefined stops the
+  // feed (toggle off, symbol changed away from an option, panel unmounted).
+  socket.on("set_underlying", (optionSym) => {
+    const underlyingSym = deriveUnderlyingSymbol(optionSym);
+    if (!underlyingSym) {
+      if (socketUnderlyings.delete(socket.id)) {
+        updateTickSubscription().catch(console.error);
+      }
+      return;
+    }
+    if (socketUnderlyings.get(socket.id) === underlyingSym) return;
+    socketUnderlyings.set(socket.id, underlyingSym);
+    console.log(`[WS] ${socket.id} → underlying=${underlyingSym} (Auto-ATM, from ${optionSym})`);
+    if (isLiveMarket(underlyingSym)) {
+      updateTickSubscription().catch(console.error);
+    }
+  });
+
   socket.on("request_refresh", () => {
     // No token check — fetchAndProcess() is DB-first, works without Fyers token.
     // If DB has data → instant. If DB empty + token dead → error emitted below.
@@ -641,6 +712,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     socketResolutions.delete(socket.id);
     socketSymbols.delete(socket.id);
+    socketUnderlyings.delete(socket.id);
     console.log(`[WS] Client disconnected: ${socket.id}`);
     // Possibly trim unused symbols from tick subscription
     if (isAnyMarketLive(getActiveTickSymbols())) updateTickSubscription().catch(console.error);

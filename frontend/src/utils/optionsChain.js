@@ -5,33 +5,33 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Month codes ───────────────────────────────────────────────────────────────
-const MONTH_CODES = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+const MONTH_CODES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
 // ── MCX commodity config ──────────────────────────────────────────────────────
 // strikeStep  — interval between strikes (in ₹ per unit)
 // decimals    — decimal places in strike price
 // unit        — traded unit label shown in the options chain header
 export const MCX_COMMODITIES = {
-  GOLD:        { name: "Gold",             strikeStep: 100,  decimals: 0, unit: "10g",   exchange: "MCX" },
-  GOLDM:       { name: "Gold Mini",        strikeStep: 100,  decimals: 0, unit: "100g",  exchange: "MCX" },
-  GOLDPETAL:   { name: "Gold Petal",       strikeStep: 50,   decimals: 0, unit: "1g",    exchange: "MCX" },
-  SILVER:      { name: "Silver",           strikeStep: 500,  decimals: 0, unit: "1kg",   exchange: "MCX" },
-  SILVERM:     { name: "Silver Mini",      strikeStep: 500,  decimals: 0, unit: "100g",  exchange: "MCX" },
-  SILVERMIC:   { name: "Silver Micro",     strikeStep: 100,  decimals: 0, unit: "1kg",   exchange: "MCX" },
-  CRUDEOIL:    { name: "Crude Oil",        strikeStep: 50,   decimals: 0, unit: "bbl",   exchange: "MCX" },
-  CRUDEOILM:   { name: "Crude Oil Mini",   strikeStep: 50,   decimals: 0, unit: "bbl",   exchange: "MCX" },
-  NATURALGAS:  { name: "Natural Gas",      strikeStep: 5,    decimals: 1, unit: "mmBtu", exchange: "MCX" },
-  NATGASMINI:  { name: "Natural Gas Mini", strikeStep: 5,    decimals: 1, unit: "mmBtu", exchange: "MCX" },
-  COPPER:      { name: "Copper",           strikeStep: 5,    decimals: 1, unit: "1kg",   exchange: "MCX" },
-  ZINC:        { name: "Zinc",             strikeStep: 1,    decimals: 1, unit: "1kg",   exchange: "MCX" },
-  ZINCMINI:    { name: "Zinc Mini",        strikeStep: 1,    decimals: 1, unit: "1kg",   exchange: "MCX" },
-  LEAD:        { name: "Lead",             strikeStep: 1,    decimals: 1, unit: "1kg",   exchange: "MCX" },
-  LEADMINI:    { name: "Lead Mini",        strikeStep: 1,    decimals: 1, unit: "1kg",   exchange: "MCX" },
-  NICKEL:      { name: "Nickel",           strikeStep: 10,   decimals: 0, unit: "1kg",   exchange: "MCX" },
-  ALUMINIUM:   { name: "Aluminium",        strikeStep: 1,    decimals: 1, unit: "1kg",   exchange: "MCX" },
-  MENTHAOIL:   { name: "Mentha Oil",       strikeStep: 1,    decimals: 1, unit: "kg",    exchange: "MCX" },
-  COTTON:      { name: "Cotton",           strikeStep: 100,  decimals: 0, unit: "bale",  exchange: "MCX" },
-  CASTORSEED:  { name: "Castor Seed",      strikeStep: 50,   decimals: 0, unit: "100kg", exchange: "MCX" },
+  GOLD: { name: "Gold", strikeStep: 100, decimals: 0, unit: "10g", exchange: "MCX" },
+  GOLDM: { name: "Gold Mini", strikeStep: 100, decimals: 0, unit: "100g", exchange: "MCX" },
+  GOLDPETAL: { name: "Gold Petal", strikeStep: 50, decimals: 0, unit: "1g", exchange: "MCX" },
+  SILVER: { name: "Silver", strikeStep: 500, decimals: 0, unit: "1kg", exchange: "MCX" },
+  SILVERM: { name: "Silver Mini", strikeStep: 500, decimals: 0, unit: "100g", exchange: "MCX" },
+  SILVERMIC: { name: "Silver Micro", strikeStep: 100, decimals: 0, unit: "1kg", exchange: "MCX" },
+  CRUDEOIL: { name: "Crude Oil", strikeStep: 50, decimals: 0, unit: "bbl", exchange: "MCX" },
+  CRUDEOILM: { name: "Crude Oil Mini", strikeStep: 50, decimals: 0, unit: "bbl", exchange: "MCX" },
+  NATURALGAS: { name: "Natural Gas", strikeStep: 5, decimals: 1, unit: "mmBtu", exchange: "MCX" },
+  NATGASMINI: { name: "Natural Gas Mini", strikeStep: 5, decimals: 1, unit: "mmBtu", exchange: "MCX" },
+  COPPER: { name: "Copper", strikeStep: 5, decimals: 1, unit: "1kg", exchange: "MCX" },
+  ZINC: { name: "Zinc", strikeStep: 1, decimals: 1, unit: "1kg", exchange: "MCX" },
+  ZINCMINI: { name: "Zinc Mini", strikeStep: 1, decimals: 1, unit: "1kg", exchange: "MCX" },
+  LEAD: { name: "Lead", strikeStep: 1, decimals: 1, unit: "1kg", exchange: "MCX" },
+  LEADMINI: { name: "Lead Mini", strikeStep: 1, decimals: 1, unit: "1kg", exchange: "MCX" },
+  NICKEL: { name: "Nickel", strikeStep: 10, decimals: 0, unit: "1kg", exchange: "MCX" },
+  ALUMINIUM: { name: "Aluminium", strikeStep: 1, decimals: 1, unit: "1kg", exchange: "MCX" },
+  MENTHAOIL: { name: "Mentha Oil", strikeStep: 1, decimals: 1, unit: "kg", exchange: "MCX" },
+  COTTON: { name: "Cotton", strikeStep: 100, decimals: 0, unit: "bale", exchange: "MCX" },
+  CASTORSEED: { name: "Castor Seed", strikeStep: 50, decimals: 0, unit: "100kg", exchange: "MCX" },
 };
 
 // ── MCX expiry-day approximations ─────────────────────────────────────────────
@@ -54,22 +54,46 @@ const EXPIRY_GRACE_DAYS = 1; // roll this many days AFTER the approx expiry (nev
 // Commodities that trade WEEKLY options (every Friday expiry on MCX)
 export const WEEKLY_EXPIRY_COMMODITIES = new Set(["SILVERMIC"]);
 
+// ── Index weekly expiry weekday ───────────────────────────────────────────────
+// SEBI's Oct-2024 circular limited weekly index options to ONE benchmark per
+// exchange: NSE kept NIFTY, BSE kept SENSEX. Every other index (BANKNIFTY,
+// FINNIFTY, MIDCPNIFTY, NIFTYIT) now trades MONTHLY ONLY — not listed here.
+// Weekday: 0=Sun..6=Sat (JS Date.getDay()).
+//   NIFTY:  Tuesday (2) — moved from Thursday, effective 1 Sep 2025.
+//   SENSEX: Thursday (4) — BSE's weekly day, unchanged through the same
+//           Aug/Sep 2025 restructuring (BSE's monthly expiry also moved to
+//           the last Thursday of the month at the same time).
+// If either exchange changes this again, update here only — both the expiry
+// list (nextMonthlyExpiries) and the symbol builder (optionSymbol) read it.
+const INDEX_WEEKLY_EXPIRY_DAY = {
+  NIFTY: 2,
+  SENSEX: 4,
+};
+export { INDEX_WEEKLY_EXPIRY_DAY };
+
 // ── NSE index option roots ────────────────────────────────────────────────────
 const NSE_INDEX_ROOTS = {
-  "NIFTY50-INDEX":    "NIFTY",
-  "NIFTYBANK-INDEX":  "BANKNIFTY",
+  "NIFTY50-INDEX": "NIFTY",
+  "NIFTYBANK-INDEX": "BANKNIFTY",
   "CNXFINANCE-INDEX": "FINNIFTY",
-  "CNXIT-INDEX":      "NIFTYIT",
+  "CNXIT-INDEX": "NIFTYIT",
   "MIDCPNIFTY-INDEX": "MIDCPNIFTY",
-  "SENSEX-INDEX":     "SENSEX",   // BSE
+  "SENSEX-INDEX": "SENSEX",   // BSE
 };
+
+// Inverse of NSE_INDEX_ROOTS (option root → index ticker), derived once so the
+// two stay in sync automatically. Used to rebuild a full underlying symbol
+// ("SENSEX" → "SENSEX-INDEX") from a parsed option's root.
+export const NSE_INDEX_TICKERS = Object.fromEntries(
+  Object.entries(NSE_INDEX_ROOTS).map(([ticker, root]) => [root, ticker])
+);
 
 // ── Parse an underlying symbol → { exch, root, isIndex, isCommodity, strikeStep, decimals } ──
 export function getOptionRoot(symbolStr) {
   if (!symbolStr) return { exch: "NSE", root: "", isIndex: false, isCommodity: false, strikeStep: 50, decimals: 0 };
 
   const colonIdx = symbolStr.indexOf(":");
-  const exch   = colonIdx >= 0 ? symbolStr.slice(0, colonIdx) : "NSE";
+  const exch = colonIdx >= 0 ? symbolStr.slice(0, colonIdx) : "NSE";
   const ticker = colonIdx >= 0 ? symbolStr.slice(colonIdx + 1) : symbolStr;
 
   // MCX commodity — ticker may be:
@@ -82,12 +106,12 @@ export function getOptionRoot(symbolStr) {
     base = base.toUpperCase();
     const cfg = MCX_COMMODITIES[base] || { strikeStep: 50, decimals: 0 };
     return {
-      exch:          "MCX",
-      root:          base,
-      isIndex:       false,
-      isCommodity:   true,
-      strikeStep:    cfg.strikeStep,
-      decimals:      cfg.decimals,
+      exch: "MCX",
+      root: base,
+      isIndex: false,
+      isCommodity: true,
+      strikeStep: cfg.strikeStep,
+      decimals: cfg.decimals,
       commodityName: cfg.name || base,
     };
   }
@@ -114,20 +138,32 @@ function mcxNearMonthOffset(root, now = new Date()) {
 }
 
 // ── Build expiry list ─────────────────────────────────────────────────────────
-// Returns `count` upcoming expiry objects { label, code, date, approx }
+// Returns `count` upcoming expiry objects { label, code, date, approx, weekly }
 //
 // KEY DESIGN: For MCX commodities, the starting month is determined by
 // mcxNearMonthOffset() — the SAME roll logic as symbolsRouter.js — so
 // the first expiry shown here always matches the contract month shown
 // in the Commodity tab and Futures tab of the search bar.
 //
-// NSE equities/indices: last Thursday of the month (exchange rule, exact).
+// NSE equities/indices: last Thursday of the month (exchange rule, exact) —
+// EXCEPT NIFTY/SENSEX, which also trade WEEKLY (see INDEX_WEEKLY_EXPIRY_DAY)
+// and so must list every week's expiry, not just the monthly one. Before this
+// fix, nextMonthlyExpiries always jumped straight to lastThursdayOfMonth(),
+// which IS a real SENSEX/NIFTY expiry (the monthly one) but skips every
+// weekly expiry before it in the same month — e.g. on 26 Jun 2026 it returned
+// "30 JUL" as the nearest SENSEX expiry, when the true nearest expiry is the
+// next Thursday, "02 JUL".
 // MCX commodities: approximate expiry day per commodity (MCX publishes exact
 // date via monthly circular; `approx: true` flags this in the UI).
-export function nextMonthlyExpiries(count = 3, commodityRoot = null) {
+export function nextMonthlyExpiries(count = 3, commodityRoot = null, indexRoot = null) {
   // Silver Micro uses WEEKLY expiries (every Friday), not monthly
   if (commodityRoot && WEEKLY_EXPIRY_COMMODITIES.has(commodityRoot)) {
-    return nextWeeklyExpiries(count);
+    return nextWeeklyExpiries(count, 5, { fyersWeeklyCode: false });
+  }
+  // NIFTY/SENSEX trade weekly — every Tuesday/Thursday is a real, separately
+  // tradeable expiry, including the one that happens to also be month-end.
+  if (indexRoot && INDEX_WEEKLY_EXPIRY_DAY[indexRoot] != null) {
+    return nextWeeklyExpiries(count, INDEX_WEEKLY_EXPIRY_DAY[indexRoot], { fyersWeeklyCode: true });
   }
 
   const now = new Date();
@@ -136,12 +172,12 @@ export function nextMonthlyExpiries(count = 3, commodityRoot = null) {
   // For MCX: start from the near-month offset so we match symbolsRouter
   // For NSE: start offset = 0 (current month), let the cutoff skip if passed
   const startOffset = commodityRoot ? mcxNearMonthOffset(commodityRoot, now) : 0;
-  const approxDay   = commodityRoot ? MCX_EXPIRY_DAY[commodityRoot] : null;
+  const approxDay = commodityRoot ? MCX_EXPIRY_DAY[commodityRoot] : null;
 
-  let year  = now.getFullYear();
+  let year = now.getFullYear();
   let month = now.getMonth() + startOffset; // 0-based, may exceed 11
-  year  += Math.floor(month / 12);
-  month  = month % 12;
+  year += Math.floor(month / 12);
+  month = month % 12;
 
   for (let i = 0; results.length < count; i++) {
     let m = month + i;
@@ -161,36 +197,50 @@ export function nextMonthlyExpiries(count = 3, commodityRoot = null) {
     // For MCX, we trust the offset calculation — no additional cutoff check
     // needed because mcxNearMonthOffset() already ensures we start fresh.
 
-    const dd  = String(expDate.getDate()).padStart(2, "0");
+    const dd = String(expDate.getDate()).padStart(2, "0");
     const mon = MONTH_CODES[m];
-    const yy  = String(y).slice(-2);
+    const yy = String(y).slice(-2);
 
     results.push({
-      label:  `${approxDay ? "~" : ""}${dd} ${mon}`,
-      code:   `${yy}${mon}`,  // e.g. "26JUL" — used in Fyers option symbol
-      date:   expDate,
+      label: `${approxDay ? "~" : ""}${dd} ${mon}`,
+      code: `${yy}${mon}`,  // e.g. "26JUL" — used in Fyers option symbol
+      date: expDate,
       approx: !!approxDay,
+      weekly: false,
     });
   }
   return results;
 }
 
-// Returns upcoming Friday expiry dates (for weekly-expiry commodities like SILVERMIC)
-function nextWeeklyExpiries(count = 4) {
+// ── Fyers weekly-contract month character ─────────────────────────────────────
+// Confirmed against real Fyers symbols: months 1-9 are the bare digit, and
+// Oct/Nov/Dec are single letters O/N/D (e.g. "NIFTY24D2622700CE" = 26 Dec 2024).
+// This is ONLY used for the weekly date-coded format — monthly contracts keep
+// the existing 3-letter MONTH_CODES (e.g. "26JAN") untouched.
+const FYERS_WEEKLY_MONTH_CHAR = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "O", "N", "D"];
+
+// Returns upcoming expiry dates for a given weekday (0=Sun..6=Sat).
+// Used for: MCX weekly commodities (Friday, fyersWeeklyCode:false — keeps the
+// existing YYMON-style code since that path was already working and hasn't
+// been verified against a real MCX weekly symbol) and NSE/BSE weekly index
+// options (Tuesday/Thursday, fyersWeeklyCode:true — uses Fyers' actual
+// {YY}{monthChar}{DD} weekly symbol format, confirmed against real examples).
+function nextWeeklyExpiries(count, weekday, { fyersWeeklyCode }) {
   const results = [];
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() + 1); // start from tomorrow
   while (results.length < count) {
-    if (d.getDay() === 5) { // Friday
-      const dd  = String(d.getDate()).padStart(2, "0");
+    if (d.getDay() === weekday) {
+      const dd = String(d.getDate()).padStart(2, "0");
       const mon = MONTH_CODES[d.getMonth()];
-      const yy  = String(d.getFullYear()).slice(-2);
+      const yy = String(d.getFullYear()).slice(-2);
       results.push({
-        label:  `${dd} ${mon}`,
-        code:   `${yy}${mon}`,
-        date:   new Date(d),
-        approx: true,
+        label: `${dd} ${mon}`,
+        code: fyersWeeklyCode ? `${yy}${FYERS_WEEKLY_MONTH_CHAR[d.getMonth()]}${dd}` : `${yy}${mon}`,
+        date: new Date(d),
+        approx: !fyersWeeklyCode, // MCX weekly stays "approx" as before; index weekly is exact (exchange-published rule)
+        weekly: true,
       });
     }
     d.setDate(d.getDate() + 1);
@@ -207,6 +257,19 @@ function lastThursdayOfMonth(year, month) {
   const d = new Date(year, month + 1, 0); // last day of month
   while (d.getDay() !== 4) d.setDate(d.getDate() - 1);
   return new Date(d);
+}
+
+// ── Resolve the correct strike step for a root, regardless of underlying type ─
+// getOptionRoot() above always reports strikeStep:50 for indices (the real
+// per-index step is applied later inside buildStrikeLadder via
+// INDEX_STRIKE_STEPS) — kept as-is there to avoid changing existing callers.
+// Auto-ATM needs the REAL step up front, so resolve it the same way
+// buildStrikeLadder does: commodity override → index table → guessed step.
+export function getStrikeStep(spot, parsed) {
+  if (!parsed) return guessStep(spot);
+  if (parsed.isCommodity) return parsed.strikeStep;
+  if (parsed.isIndex) return INDEX_STRIKE_STEPS[parsed.root] || guessStep(spot);
+  return guessStep(spot);
 }
 
 // ── Build strike ladder centred on spot ───────────────────────────────────────
@@ -230,25 +293,25 @@ export function buildStrikeLadder(spot, indexRoot, stepsEachSide = 14, overrideS
 }
 
 const INDEX_STRIKE_STEPS = {
-  NIFTY:      50,
-  BANKNIFTY:  100,
-  FINNIFTY:   50,
+  NIFTY: 50,
+  BANKNIFTY: 100,
+  FINNIFTY: 50,
   MIDCPNIFTY: 25,
-  NIFTYIT:    50,
-  SENSEX:     100,
+  NIFTYIT: 50,
+  SENSEX: 100,
 };
 
 function guessStep(price) {
   if (price >= 50000) return 500;
   if (price >= 10000) return 200;
-  if (price >=  5000) return 100;
-  if (price >=  2000) return 50;
-  if (price >=  1000) return 20;
-  if (price >=   500) return 10;
-  if (price >=   200) return 5;
-  if (price >=   100) return 2;
-  if (price >=    50) return 1;
-  if (price >=    10) return 0.5;
+  if (price >= 5000) return 100;
+  if (price >= 2000) return 50;
+  if (price >= 1000) return 20;
+  if (price >= 500) return 10;
+  if (price >= 200) return 5;
+  if (price >= 100) return 2;
+  if (price >= 50) return 1;
+  if (price >= 10) return 0.5;
   return 0.1;
 }
 
@@ -260,4 +323,66 @@ function guessStep(price) {
 export function optionSymbol(exch, root, expiryCode, strike, kind) {
   const strikeStr = Number.isInteger(strike) ? String(strike) : strike.toFixed(1);
   return `${exch}:${root}${expiryCode}${strikeStr}${kind}`;
+}
+
+// ── Recognize + parse an option contract symbol ───────────────────────────────
+// Matches the shape produced by optionSymbol() above:
+//   EXCH:ROOT + YYMON + STRIKE + (CE|PE)
+// e.g. "BSE:SENSEX25JUL77000CE" → { exch:"BSE", root:"SENSEX", expiryCode:"25JUL", strike:77000, kind:"CE" }
+// Matches BOTH Fyers expiry encodings:
+//   Monthly: YY + 3-letter month            e.g. "26JUL" → BANKNIFTY26JUL50000CE
+//   Weekly:  YY + 1-char month (1-9/O/N/D) + DD   e.g. "26702" → SENSEX2670277000CE (02 Jul 2026)
+// Both are exactly 5 characters, so a single alternation handles both without
+// ambiguity (the 3-letter month only matches A-Z letters, so "702" can never
+// be misread as a month code).
+const OPTION_SYMBOL_RE = /^([A-Z]+):(.*?)(\d{2}(?:[A-Z]{3}|[1-9OND]\d{2}))(\d+(?:\.\d+)?)(CE|PE)$/;
+
+export function isOptionSymbol(symbolStr) {
+  if (!symbolStr) return false;
+  return OPTION_SYMBOL_RE.test(symbolStr);
+}
+
+export function parseOptionSymbol(symbolStr) {
+  if (!symbolStr) return null;
+  const m = OPTION_SYMBOL_RE.exec(symbolStr);
+  if (!m) return null;
+  const [, exch, root, expiryCode, strikeStr, kind] = m;
+  return { exch, root, expiryCode, strike: Number(strikeStr), kind };
+}
+
+// ── Auto-ATM strike switching with hysteresis ─────────────────────────────────
+// Decides whether the chart should switch to a different strike as spot moves,
+// WITHOUT flip-flopping every time price oscillates near a strike boundary.
+//
+// Plain "nearest strike" rounding is symmetric around the midpoint between two
+// strikes — e.g. step=100, strikes 77000/77100: the boundary sits at 77050, so
+// price bouncing 77049 ⇄ 77051 would flip the result every tick. That's the
+// exact problem described: real markets chop back and forth across boundaries
+// constantly.
+//
+// Fix: a dead zone (hysteresis buffer) straddles each boundary. Once on a given
+// strike, price must move PAST the boundary by `buffer` extra points before a
+// switch is suggested — not just past the raw midpoint. Until that happens this
+// returns the SAME strike the caller already has, so chop near a boundary never
+// triggers a result change.
+//
+// `bufferRatio` is the extra cushion as a fraction of one strike step (e.g. 0.2
+// = 20% of step on each side of the boundary, so for SENSEX step=100 a switch
+// only fires once spot is >60 points from the current strike's center).
+export function nearestStrikeWithHysteresis(spot, currentStrike, step, bufferRatio = 0.2) {
+  if (!spot || spot <= 0 || !step || step <= 0) return currentStrike;
+  if (currentStrike == null) return Math.round(spot / step) * step;
+
+  const buffer = step * Math.min(Math.max(bufferRatio, 0), 0.49); // clamp — can't exceed half a step
+  const distance = spot - currentStrike;
+
+  // Still within the dead zone around the current strike — no switch.
+  if (Math.abs(distance) <= step / 2 + buffer) return currentStrike;
+
+  // Breached the dead zone — move exactly one step in that direction.
+  // (Large jumps, e.g. after a long disconnect, fall through to plain rounding.)
+  if (Math.abs(distance) <= step * 1.5 + buffer) {
+    return distance > 0 ? currentStrike + step : currentStrike - step;
+  }
+  return Math.round(spot / step) * step;
 }

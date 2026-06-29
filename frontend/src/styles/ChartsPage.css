@@ -154,6 +154,23 @@
   letter-spacing: 0.02em;
 }
 
+.chart-auto-atm-btn {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text2);
+}
+
+.chart-auto-atm-btn-on {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.35) !important;
+}
+
+.chart-auto-atm-btn-on:hover {
+  background: rgba(34, 197, 94, 0.2) !important;
+}
+
 .chart-symbol-overlay-ticker {
   font-size: 12px;
   font-weight: 700;
