@@ -21,18 +21,11 @@ import StatusBar from "../components/StatusBar";
 import SymbolSearch from "../components/SymbolSearch";
 import OptionsChainModal from "../components/OptionsChainModal";
 import CandleChart from "../components/CandleChart";
-import SignalTable from "../components/SignalTable";
-import StatsPanel from "../components/StatsPanel";
-import WaveSignalTable from "../components/WaveSignalTable";
-import WaveStatsPanel from "../components/WaveStatsPanel";
-import ConsolidationZoneTable from "../components/ConsolidationZoneTable";
-import ConsolidationStatsPanel from "../components/ConsolidationStatsPanel";
 import EmaFloatPanel from "../components/EmaFloatPanel";
 import TradingToolbar from "../components/TradingToolbar";
 import { DrawingProvider, usePanelLink, setAllLinked } from "../components/DrawingContext";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
-import { toISTDate } from "../utils/istUtils";
 import { loadPref, savePref } from "../utils/prefs";
 import { formatResolution } from "../utils/formatResolution";
 import { parseOptionSymbol, isOptionSymbol, optionSymbol, getOptionRoot, getStrikeStep, nearestStrikeWithHysteresis, NSE_INDEX_TICKERS, nextMonthlyExpiries } from "../utils/optionsChain";
@@ -46,41 +39,11 @@ import "../styles/ChartsPage.css";
 // eligibility check and the Ctrl+Q/D shortcut use this so they always agree.
 const OPTIONS_ELIGIBLE_RE = /^(NSE:[A-Z0-9&]+-(EQ|INDEX)|BSE:[A-Z0-9&]+-INDEX|MCX:[A-Z0-9]+\d{2}[A-Z]{3}FUT)$/i;
 
-// ─── SidebarSection — defined OUTSIDE so it never remounts ────────────────────
-const SidebarSection = memo(function SidebarSection({ id, title, color, tab, onTabChange, children }) {
-  return (
-    <div style={{ borderBottom: "1px solid var(--border)" }}>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 6,
-        padding: "8px 12px 4px",
-        borderBottom: "1px solid var(--border)",
-      }}>
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text3)", textTransform: "uppercase" }}>
-          {title}
-        </span>
-      </div>
-      <div className="tabs">
-        <button className={`tab-btn ${tab === "signals" ? "active" : ""}`} onClick={() => onTabChange(id, "signals")}>
-          {children.signalLabel}
-        </button>
-        <button className={`tab-btn ${tab === "stats" ? "active" : ""}`} onClick={() => onTabChange(id, "stats")}>
-          Stats
-        </button>
-      </div>
-      <div className="tab-content">
-        {tab === "signals" ? children.signals : children.stats}
-      </div>
-    </div>
-  );
-});
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // ChartPanel — one fully independent chart panel (TradingView style).
 // ═══════════════════════════════════════════════════════════════════════════════
 const ChartPanel = memo(function ChartPanel({
   pfx,
-  showSidebar,
   panelIdx,
   panelCount,
   layoutId,
@@ -101,10 +64,11 @@ const ChartPanel = memo(function ChartPanel({
   panelLinkRef,
   setToolbarLinked,
   // ── Synced crosshair ──────────────────────────────────────────────────────
-  // price+symbol broadcast by whichever panel the mouse is on
-  syncedCrosshairPrice,   // number | null
-  syncedCrosshairSymbol,  // string | null  — symbol that produced the price
-  onSyncCrosshair,        // (price: number|null, symbol: string) => void
+  // ref + listener registry instead of state — no re-render on crosshair move
+  // panelCount is already destructured above; synced crosshair is disabled when panelCount === 1
+  syncedCrosshairRef,       // { price: number|null, symbol: string|null }
+  syncedCrosshairListeners, // Set of (syncState) => void callbacks
+  onSyncCrosshair,          // (price: number|null, symbol: string) => void
 }) {
   // ── EACH PANEL has its own socket/data — fully independent ─────────────────
   const { chartData, connected, loading, error, refresh, tickStreamActive, ticksFlowing, underlyingTick, setUnderlying } = useSocket();
@@ -116,11 +80,6 @@ const ChartPanel = memo(function ChartPanel({
     if (urlSymbol || urlResolution) return false;
     return loadPref(pfx + "todayMode", true);
   });
-  const [sidebarOpen, setSidebarOpen] = useState(() => loadPref(pfx + "sidebarOpen", true));
-  const [activeTabs, setActiveTabs] = useState(() =>
-    loadPref(pfx + "activeTabs", { bubble: "signals", waves: "signals", consolidation: "zones" })
-  );
-
   // ── Drawing link — symbol-based sync, only active when panelCount > 1 ────
   const { linked, setLinked, sharedDrawings, setSharedDrawings, publishDrawings, setAbsorbShared } = usePanelLink(
     `panel_${panelIdx ?? 0}`,
@@ -136,10 +95,6 @@ const ChartPanel = memo(function ChartPanel({
   useEffect(() => { savePref(pfx + "resolution", resolution); }, [resolution]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { savePref(pfx + "todayMode", todayMode); }, [todayMode]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { savePref(pfx + "sidebarOpen", sidebarOpen); }, [sidebarOpen]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { savePref(pfx + "activeTabs", activeTabs); }, [activeTabs]);
 
   // ── Auto-ATM: keep an open option chart pinned to the at-the-money strike ──
   // Off by default — user opts in per panel via the toggle near the symbol
@@ -274,30 +229,14 @@ const ChartPanel = memo(function ChartPanel({
   const consolidationOn = !!indicators.consolidation;
   const srZonesOn = !!indicators.srZones;
   const bubbleGap = typeof indicators.bubbleGap === "number" ? indicators.bubbleGap : 4;
-  const anySidebarIndicator = bubbleOn || wavesOn || consolidationOn;
 
-  const prevAnyRef = useRef(bubbleOn || wavesOn || consolidationOn);
-  useEffect(() => {
-    const anyNow = bubbleOn || wavesOn || consolidationOn;
-    const anyBefore = prevAnyRef.current;
-    if (!anyBefore && anyNow) setSidebarOpen(true);
-    if (anyBefore && !anyNow) setSidebarOpen(false);
-    prevAnyRef.current = anyNow;
-  }, [bubbleOn, wavesOn, consolidationOn]);
-
-  // ── Wave data ──────────────────────────────────────────────────────────────
-  const [wavePivots, setWavePivots] = useState([]);
-  const [waveSegments, setWaveSegments] = useState([]);
-  const handleWaveData = useCallback((pivots, segments) => {
-    setWavePivots(pivots);
-    setWaveSegments(segments);
-  }, []);
-
-  // ── Consolidation zone data ────────────────────────────────────────────────
-  const [consolidationZones, setConsolidationZones] = useState([]);
-  const handleConsolidationData = useCallback((zones) => {
-    setConsolidationZones(zones);
-  }, []);
+  // Wave/consolidation callbacks — CandleChart calls these to output processed data.
+  // Sidebar is gone so we don't need to store the results; no-op callbacks satisfy
+  // CandleChart's prop contract without any extra React state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleWaveData = useCallback(() => { }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleConsolidationData = useCallback(() => { }, []);
 
   const chartResetRef = useRef(null);
   const handleResetViewReady = useCallback((fn) => { chartResetRef.current = fn; }, []);
@@ -443,14 +382,33 @@ const ChartPanel = memo(function ChartPanel({
   const [optionsChainOpen, setOptionsChainOpen] = useState(false);
   const [optionsChainUnderlying, setOptionsChainUnderlying] = useState(null);
 
-  // ── Crosshair ──────────────────────────────────────────────────────────────
-  const [crosshairBar, setCrosshairBar] = useState(null);
-  const handleCrosshairMove = useCallback((bar) => setCrosshairBar(bar), []);
+  // ── Crosshair — kept as ref to avoid re-rendering ChartPanel on every mouse move ──
+  // StatusBar gets a crosshairBarRef it reads directly; EmaFloatPanel uses an imperative
+  // update callback. Neither triggers a ChartPanel re-render on crosshair moves.
+  const crosshairBarRef = useRef(null);
+  const emaFloatPanelRef = useRef(null);
+  const statusBarCrosshairRef = useRef(null); // imperative update fn set by StatusBar
+  const handleCrosshairMove = useCallback((bar) => {
+    crosshairBarRef.current = bar;
+    if (emaFloatPanelRef.current?.update) emaFloatPanelRef.current.update(bar);
+    if (statusBarCrosshairRef.current) statusBarCrosshairRef.current(bar);
+  }, []);
 
-  // ── Synced crosshair: this panel shows synced line only if same symbol ─────
-  // Only pass the synced price down if the broadcasting panel has the same symbol.
-  const matchesSyncedSymbol = syncedCrosshairSymbol === symbol;
-  const thisPanelSyncedPrice = matchesSyncedSymbol ? syncedCrosshairPrice : null;
+  // ── Synced crosshair — subscribe to ref updates, disabled in single panel ──
+  // In single-panel mode (panelCount === 1) we never show the sync line —
+  // it was producing a ghost dashed line on top of the native LW crosshair.
+  const [thisPanelSyncedPrice, setThisPanelSyncedPrice] = useState(null);
+  useEffect(() => {
+    if (!syncedCrosshairListeners || panelCount <= 1) {
+      setThisPanelSyncedPrice(null);
+      return;
+    }
+    function onSync({ price, symbol: syncSym }) {
+      setThisPanelSyncedPrice(syncSym === symbol ? (price ?? null) : null);
+    }
+    syncedCrosshairListeners.current.add(onSync);
+    return () => { syncedCrosshairListeners.current.delete(onSync); };
+  }, [syncedCrosshairListeners, panelCount, symbol]);
 
   // onSyncCrosshair wrapper: include this panel's symbol so ChartsPage can filter
   const handleSyncCrosshair = useCallback((price) => {
@@ -467,30 +425,8 @@ const ChartPanel = memo(function ChartPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const signals = useMemo(() => signalsRaw, [signalsRaw.map((s) => `${s.type}:${s.time}`).join("|")]);
   const currentState = chartData?.currentState ?? 0;
-  const bestPrice = chartData?.bestPrice;
   const chartDataResolution = chartData?.resolution ?? resolution;
   const showLoadingScreen = loading && candles.length === 0;
-
-  const todayIST = useMemo(() => new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }), []);
-
-  const displayedSignals = useMemo(() => {
-    if (!todayMode) return signals;
-    return signals.filter((s) => toISTDate(s.time) === todayIST);
-  }, [signals, todayMode, todayIST]);
-
-  const displayedWavePivots = useMemo(() => {
-    if (!todayMode) return wavePivots;
-    return wavePivots.filter((p) => toISTDate(p.time) === todayIST);
-  }, [wavePivots, todayMode, todayIST]);
-
-  const handleSidebarToggle = useCallback(() => {
-    if (!anySidebarIndicator) return;
-    setSidebarOpen((p) => !p);
-  }, [anySidebarIndicator]);
-
-  const setTab = useCallback((indicator, tab) => {
-    setActiveTabs((prev) => ({ ...prev, [indicator]: tab }));
-  }, []);
 
   const handleTodayToggle = useCallback(() => setTodayMode((p) => !p), []);
 
@@ -514,8 +450,8 @@ const ChartPanel = memo(function ChartPanel({
           onOpenSearch={() => setSearchOpen(true)}
           todayMode={todayMode}
           onTodayToggle={handleTodayToggle}
-          crosshairBar={crosshairBar}
-          onSidebarToggle={handleSidebarToggle}
+          crosshairBar={crosshairBarRef.current}
+          onCrosshairBarUpdate={(fn) => { statusBarCrosshairRef.current = fn; }}
           tickStreamActive={tickStreamActive}
           ticksFlowing={ticksFlowing}
           layoutId={isPrimary ? layoutId : undefined}
@@ -619,10 +555,10 @@ const ChartPanel = memo(function ChartPanel({
 
           {candles.length > 0 && (
             <EmaFloatPanel
+              ref={emaFloatPanelRef}
               emaHighs={emaHighs}
               emaLows={emaLows}
               candles={candles}
-              crosshairBar={crosshairBar}
             />
           )}
 
@@ -696,69 +632,6 @@ const ChartPanel = memo(function ChartPanel({
             />
           )}
         </div>
-
-        {/* Sidebar */}
-        {showSidebar && anySidebarIndicator && (
-          <div className={`sidebar ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
-            <div className="sidebar-sections">
-
-              {bubbleOn && (
-                <div className="sidebar-section-wrap">
-                  <SidebarSection
-                    id="bubble"
-                    title="Bubble"
-                    color="var(--accent, #3d84ff)"
-                    tab={activeTabs.bubble}
-                    onTabChange={setTab}
-                  >
-                    {{
-                      signalLabel: `Signals (${displayedSignals.length})`,
-                      signals: <SignalTable signals={signals} candles={candles} todayMode={todayMode} />,
-                      stats: <StatsPanel signals={signals} candles={candles} currentState={currentState} bestPrice={bestPrice} todayMode={todayMode} />,
-                    }}
-                  </SidebarSection>
-                </div>
-              )}
-
-              {wavesOn && (
-                <div className="sidebar-section-wrap">
-                  <SidebarSection
-                    id="waves"
-                    title="Waves"
-                    color="#f5a623"
-                    tab={activeTabs.waves}
-                    onTabChange={setTab}
-                  >
-                    {{
-                      signalLabel: `Pivots (${displayedWavePivots.length})`,
-                      signals: <WaveSignalTable wavePivots={wavePivots} todayMode={todayMode} />,
-                      stats: <WaveStatsPanel wavePivots={wavePivots} waveSegments={waveSegments} todayMode={todayMode} />,
-                    }}
-                  </SidebarSection>
-                </div>
-              )}
-
-              {consolidationOn && (
-                <div className="sidebar-section-wrap">
-                  <SidebarSection
-                    id="consolidation"
-                    title="Consolidation"
-                    color="#a259ff"
-                    tab={activeTabs.consolidation ?? "zones"}
-                    onTabChange={setTab}
-                  >
-                    {{
-                      signalLabel: `Zones (${consolidationZones.length})`,
-                      signals: <ConsolidationZoneTable zones={consolidationZones} todayMode={todayMode} />,
-                      stats: <ConsolidationStatsPanel zones={consolidationZones} todayMode={todayMode} />,
-                    }}
-                  </SidebarSection>
-                </div>
-              )}
-
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -841,7 +714,7 @@ function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
     <div className="layout-single">
       <ErrorBoundary minimal label="Panel 1">
         <ChartPanel
-          key="p0" pfx="" panelIdx={0} panelCount={1} showSidebar={true}
+          key="p0" pfx="" panelIdx={0} panelCount={1}
           layoutId={layoutId} onLayoutChange={onLayoutChange}
           urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -861,7 +734,7 @@ function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
     <div className="layout-2h" ref={containerRef}>
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
         <ErrorBoundary minimal label="Panel 1">
-          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2}
             layoutId={layoutId} onLayoutChange={onLayoutChange}
             urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -875,7 +748,7 @@ function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
       <Divider dir="col" onMouseDown={onDivMouseDown} />
       <div className="layout-cell" style={{ flex: 1 }}>
         <ErrorBoundary minimal label="Panel 2">
-          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -895,7 +768,7 @@ function Layout2V({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
     <div className="layout-2v" ref={containerRef}>
       <div className="layout-cell" style={{ height: `${rowPct}%` }}>
         <ErrorBoundary minimal label="Panel 1">
-          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2} showSidebar={true}
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2}
             layoutId={layoutId} onLayoutChange={onLayoutChange}
             urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -909,7 +782,7 @@ function Layout2V({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
       <Divider dir="row" onMouseDown={onDivMouseDown} />
       <div className="layout-cell" style={{ flex: 1 }}>
         <ErrorBoundary minimal label="Panel 2">
-          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2} showSidebar={false}
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2}
             layoutId={undefined} onLayoutChange={undefined}
             urlSymbol={null} urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -930,7 +803,7 @@ function Layout3({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
     <div className="layout-3" ref={containerRef}>
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
         <ErrorBoundary minimal label="Panel 1">
-          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={3} showSidebar={true}
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={3}
             layoutId={layoutId} onLayoutChange={onLayoutChange}
             urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -945,7 +818,7 @@ function Layout3({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPct}%` }}>
           <ErrorBoundary minimal label="Panel 2">
-            <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={3} showSidebar={false}
+            <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={3}
               layoutId={undefined} onLayoutChange={undefined}
               urlSymbol={null} urlResolution={null}
               urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -958,7 +831,7 @@ function Layout3({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
         <Divider dir="row" onMouseDown={onRowMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
           <ErrorBoundary minimal label="Panel 3">
-            <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={3} showSidebar={false}
+            <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={3}
               layoutId={undefined} onLayoutChange={undefined}
               urlSymbol={null} urlResolution={null}
               urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -982,7 +855,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
       <div className="layout-col" style={{ width: `${colPct}%` }} ref={leftRef}>
         <div className="layout-cell" style={{ height: `${rowPctL}%` }}>
           <ErrorBoundary minimal label="Panel 1">
-            <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={4} showSidebar={false}
+            <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={4}
               layoutId={layoutId} onLayoutChange={onLayoutChange}
               urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
               urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
@@ -996,7 +869,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
         <Divider dir="row" onMouseDown={onRowLMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
           <ErrorBoundary minimal label="Panel 3">
-            <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={4} showSidebar={false}
+            <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={4}
               layoutId={undefined} onLayoutChange={undefined}
               urlSymbol={null} urlResolution={null}
               urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -1011,7 +884,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
       <div className="layout-col" style={{ flex: 1 }} ref={rightRef}>
         <div className="layout-cell" style={{ height: `${rowPctR}%` }}>
           <ErrorBoundary minimal label="Panel 2">
-            <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={4} showSidebar={false}
+            <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={4}
               layoutId={undefined} onLayoutChange={undefined}
               urlSymbol={null} urlResolution={null}
               urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -1024,7 +897,7 @@ function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
         <Divider dir="row" onMouseDown={onRowRMouseDown} />
         <div className="layout-cell" style={{ flex: 1 }}>
           <ErrorBoundary minimal label="Panel 4">
-            <ChartPanel key="p3" pfx="p4_" panelIdx={3} panelCount={4} showSidebar={false}
+            <ChartPanel key="p3" pfx="p4_" panelIdx={3} panelCount={4}
               layoutId={undefined} onLayoutChange={undefined}
               urlSymbol={null} urlResolution={null}
               urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
@@ -1071,16 +944,18 @@ export default function ChartsPage() {
   const panelLinkRef = useRef({ linked: false, setLinked: null });
   const [toolbarLinked, setToolbarLinked] = useState(false);
 
-  // ── Synced crosshair state — shared across all panels ─────────────────────
-  // syncedCrosshairPrice: the price under the cursor on whichever panel is active
-  // syncedCrosshairSymbol: the symbol of the panel broadcasting the price
-  // Only panels with the SAME symbol will render the synced horizontal line.
-  const [syncedCrosshairPrice, setSyncedCrosshairPrice] = useState(null);
-  const [syncedCrosshairSymbol, setSyncedCrosshairSymbol] = useState(null);
+  // ── Synced crosshair — ref-based to avoid rebuilding toolbarProps on every mouse move ──
+  // In single-panel mode (panelCount === 1) the sync crosshair is disabled entirely —
+  // it was producing a ghost line on top of the native LW-charts crosshair.
+  // In multi-panel mode it works exactly as before: panels with the same symbol
+  // show the dashed horizontal price line from the active panel.
+  const syncedCrosshairRef = useRef({ price: null, symbol: null });
+  // Notify panels when synced crosshair changes — panels subscribe via a Set of callbacks.
+  const syncedCrosshairListeners = useRef(new Set());
 
-  const handleSyncCrosshair = useCallback((price, symbol) => {
-    setSyncedCrosshairPrice(price);
-    setSyncedCrosshairSymbol(price != null ? symbol : null);
+  const handleSyncCrosshair = useCallback((price, sym) => {
+    syncedCrosshairRef.current = { price: price ?? null, symbol: price != null ? sym : null };
+    syncedCrosshairListeners.current.forEach((fn) => fn(syncedCrosshairRef.current));
   }, []);
 
   // Esc key globally → cursor
@@ -1134,7 +1009,9 @@ export default function ChartsPage() {
     setActivePanel((p) => (p >= panelCount ? 0 : p));
   }, [panelCount]);
 
-  // ── Toolbar props bundle — syncedCrosshair props included in shared ────────
+  // ── Toolbar props bundle ───────────────────────────────────────────────────
+  // syncedCrosshair is ref-based — NOT in deps. toolbarProps only rebuilds on
+  // activePanel / selectedTool / drawColor / panelCount changes.
   const toolbarProps = useMemo(() => ({
     activePanel,
     setActivePanel,
@@ -1142,14 +1019,16 @@ export default function ChartsPage() {
       selectedTool, setSelectedTool, drawColor,
       panelActionsRef, setActivePanelHidden,
       panelLinkRef, setToolbarLinked,
-      syncedCrosshairPrice,
-      syncedCrosshairSymbol,
+      // Panels receive the ref + listener registration instead of state values.
+      // This means a crosshair move on one panel does NOT rebuild toolbarProps
+      // and does NOT re-render sibling panels.
+      syncedCrosshairRef,
+      syncedCrosshairListeners,
       onSyncCrosshair: handleSyncCrosshair,
+      panelCount,
     },
-    // setSelectedTool / panelActionsRef / panelLinkRef / setActivePanelHidden /
-    // setToolbarLinked are stable refs/setters — omitting them is intentional.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [activePanel, selectedTool, drawColor, syncedCrosshairPrice, syncedCrosshairSymbol, handleSyncCrosshair]);
+  }), [activePanel, selectedTool, drawColor, panelCount, handleSyncCrosshair]);
 
   // ── URL params — panel 0 only ──────────────────────────────────────────────
   const urlParams = useMemo(() => {
