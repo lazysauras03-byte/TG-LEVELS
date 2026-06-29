@@ -458,10 +458,21 @@ const ChartPanel = memo(function ChartPanel({
             <div className="loading-screen">
               <div className="no-data-msg">
                 <div className="no-data-icon">📊</div>
-                <div className="no-data-title">No Data Yet</div>
+                <div className="no-data-title">No Data Available</div>
                 <div className="no-data-sub">
-                  Run <code>npm run generate</code> in the backend terminal,<br />
-                  then click Refresh above.
+                  {error === "no_data" ? (
+                    <>
+                      This symbol has no historical data in the database<br />
+                      and Fyers is not connected (token expired).<br /><br />
+                      <strong>To load data:</strong> generate a fresh token,<br />
+                      then click <strong>Refresh</strong> above.
+                    </>
+                  ) : (
+                    <>
+                      Run <code>npm run generate</code> in the backend terminal,<br />
+                      then click Refresh above.
+                    </>
+                  )}
                 </div>
               </div>
             </div>

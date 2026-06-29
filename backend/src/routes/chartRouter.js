@@ -59,7 +59,7 @@ function createChartRouter(deps) {
     isLiveMarket, isTradingDay,
     tickStream, ticksFlowing, isAnyMarketLive, getActiveTickSymbols,
     updateTickSubscription,
-    getAuthURL, generateToken, validateToken,
+    getAuthURL, generateToken, validateToken, bustTokenCache,
     detectMotherWaveForAPI,
   } = deps;
 
@@ -98,6 +98,7 @@ function createChartRouter(deps) {
     if (!code) return res.status(400).json({ error: "auth_code required" });
     try {
       await generateToken(code);
+      if (bustTokenCache) bustTokenCache();  // clear 60s cache so next validateToken is live
       await deps.maybeStartTickStream();
       res.json({ success: true, message: "Token saved successfully" });
     } catch (err) { res.status(500).json({ error: err.message }); }

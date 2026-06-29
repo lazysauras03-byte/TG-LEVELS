@@ -25,6 +25,16 @@ const EventEmitter = require("events");
 const { fetchCandles } = require("../fyers/client");
 const { detectMotherWaveForAPI } = require("./motherwave");
 
+// ─── DB (optional) ────────────────────────────────────────────────────────────
+let db = null;
+let dbEnabled = false;
+try {
+  db = require("../../../database/src/index");
+  dbEnabled = true;
+} catch { /* DB optional */ }
+
+const { deriveTimeframe } = require("./candleBuilder");
+
 const CONCURRENCY = parseInt(process.env.SCANNER_CONCURRENCY || "3");
 const BATCH_DELAY_MS = parseInt(process.env.SCANNER_BATCH_DELAY_MS || "1000");
 const DEFAULT_RESOLUTION = parseInt(process.env.SCANNER_RESOLUTION || "15");
@@ -173,7 +183,26 @@ class BacktestRunner extends EventEmitter {
   // ── Per-symbol processing ───────────────────────────────────────────────────
   async _processSymbol(symbol, isRetry = false, resolution = DEFAULT_RESOLUTION) {
     try {
-      const candles = await fetchCandles(symbol, resolution, 5000, 90);
+      // ── DB-first: read from Postgres, fall back to Fyers if empty ─────────
+      let candles = null;
+
+      if (dbEnabled && db) {
+        try {
+          // Backtest needs FULL history — no date window, load everything stored.
+          const oneMin = await db.loadCandles(symbol, 1, { limit: 200000 });
+          if (oneMin && oneMin.length > 0) {
+            candles = resolution === 1 ? oneMin : deriveTimeframe(oneMin, resolution);
+            if (!candles || candles.length === 0) candles = null;
+          }
+        } catch (dbErr) {
+          console.warn(`[Backtest] DB read failed for ${symbol}: ${dbErr.message} — trying Fyers`);
+        }
+      }
+
+      if (!candles) {
+        candles = await fetchCandles(symbol, resolution, 5000, 90);
+      }
+
       if (!candles || candles.length < 10) return;
 
       this._errors.delete(symbol);

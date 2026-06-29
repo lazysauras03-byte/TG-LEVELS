@@ -86,7 +86,10 @@ export function useSocket() {
 
         if (!r.data?.candles?.length) {
           if (attempt < retries) { await sleep(1500 * (attempt + 1)); continue; }
+          // All retries exhausted — no data in DB and Fyers unreachable.
+          // Set a clear error instead of leaving an infinite empty state.
           setLoading(false);
+          setError("no_data");
           return;
         }
 
@@ -103,6 +106,7 @@ export function useSocket() {
         if (reqId !== latestRequestIdRef.current) return;
         if (attempt < retries) { await sleep(1500 * (attempt + 1)); continue; }
         setLoading(false);
+        setError("no_data");
       }
     }
     // Mount-only: socket and poll setup runs once. All state setters are stable.

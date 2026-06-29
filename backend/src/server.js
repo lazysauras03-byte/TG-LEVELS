@@ -5,7 +5,21 @@ const path = require("path");
 const { Server } = require("socket.io");
 
 const { runSignalEngine } = require("./services/signalEngine");
-const { getAuthURL, generateToken, fetchCandles, validateToken, loadToken } = require("./fyers/client");
+const { getAuthURL, generateToken, fetchCandles, validateToken: _validateToken, loadToken } = require("./fyers/client");
+
+// ── Throttled validateToken — caches result for 60s to prevent log spam ──────
+// Raw validateToken() is called repeatedly by updateTickSubscription, startAutoRefresh,
+// and maybeStartTickStream every few seconds. When token is expired every call logs
+// "validateToken failed" — this wrapper silences the churn.
+let _tokenCache = { valid: null, at: 0 };
+async function validateToken() {
+  if (Date.now() - _tokenCache.at < 60_000) return _tokenCache.valid;
+  const valid = await _validateToken().catch(() => false);
+  _tokenCache = { valid, at: Date.now() };
+  return valid;
+}
+// Bust the cache immediately after a new token is saved so the next call is live
+function bustTokenCache() { _tokenCache = { valid: null, at: 0 }; }
 const { CandleBuilder, deriveTimeframe } = require("./services/candleBuilder");
 const { TickStream, isMarketOpen, isLiveMarket, isAnyMarketLive, isMCXSymbol, isTradingDay } = require("./fyers/tickStream");
 const symbolsRouter = require("./routes/symbolsRouter");
@@ -49,7 +63,9 @@ app.use(express.json()); // parse JSON body — needed for req.body.socketId in 
 app.use(rateLimiter);
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const SYMBOL = process.env.SYMBOL || "NSE:NIFTY50-INDEX";
+// SYMBOL: optional — if set in .env, that symbol is pre-warmed at boot.
+// If not set, the chart loads whatever the first connected client requests.
+const SYMBOL = process.env.SYMBOL || null;
 const RESOLUTION = parseInt(process.env.CANDLE_RESOLUTION || "3");
 // CANDLES_TO_FETCH: passed to fetchCandles() as the `count` parameter but
 // fetchCandles() currently ignores it — Fyers data is fetched by date-range
@@ -169,7 +185,7 @@ function getOrCreateBuilder(symbol) {
             for (const sid of roomSockets) {
               const sock = io.sockets.sockets.get(sid);
               if (!sock) continue;
-              if ((socketSymbols.get(sid) || SYMBOL) === symbol) sock.emit("chart_update", payload);
+              if ((socketSymbols.get(sid) || SYMBOL || symbol) === symbol) sock.emit("chart_update", payload);
             }
           }
         }, 250);
@@ -191,7 +207,7 @@ function emitCandleUpdate(symbol, formingCandles) {
     for (const sid of roomSockets) {
       const sock = io.sockets.sockets.get(sid);
       if (!sock) continue;
-      if ((socketSymbols.get(sid) || SYMBOL) === symbol) {
+      if ((socketSymbols.get(sid) || SYMBOL || symbol) === symbol) {
         sock.emit("tick_update", payload);
         sock.emit("candle_update", payload);
       }
@@ -207,7 +223,7 @@ function emitFinalCandle(symbol, finalizedCandle) {
     for (const sid of roomSockets) {
       const sock = io.sockets.sockets.get(sid);
       if (!sock) continue;
-      if ((socketSymbols.get(sid) || SYMBOL) === symbol) {
+      if ((socketSymbols.get(sid) || SYMBOL || symbol) === symbol) {
         sock.emit("new_candle", { symbol, resolution: res, candle: finalizedCandle, timestamp: Date.now() });
       }
     }
@@ -236,7 +252,8 @@ tickStream.on("error", (err) => { console.error("[TickStream] Error:", err?.mess
  * socket, plus the default SYMBOL. This is the list Fyers WebSocket subscribes to.
  */
 function getActiveTickSymbols() {
-  const set = new Set([SYMBOL]);
+  const set = new Set();
+  if (SYMBOL) set.add(SYMBOL);
   for (const sym of socketSymbols.values()) { if (sym) set.add(sym); }
   return [...set];
 }
@@ -291,7 +308,7 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
     symbol, resolution: Number(resolution), candles: clean,
     emaHighs: result.emaHighs, emaLows: result.emaLows, signals: result.signals,
     currentState: result.currentState, bestPrice: result.bestPrice, bestBar: result.bestBar,
-    lastUpdate: new Date().toISOString(), balance: parseFloat(process.env.CURRENT_BALANCE || 0), isAutoRefresh,
+    lastUpdate: new Date().toISOString(), isAutoRefresh,
   };
 }
 
@@ -342,7 +359,7 @@ async function loadFromDB(symbol, resolution) {
   }
 }
 
-async function fetchAndProcess(symbol = SYMBOL, resolution = RESOLUTION) {
+async function fetchAndProcess(symbol = SYMBOL || "NSE:NIFTY50-INDEX", resolution = RESOLUTION) {
   // ── 1. DB-first ──────────────────────────────────────────────────────────
   const dbHit = await loadFromDB(symbol, resolution);
   if (dbHit) {
@@ -426,7 +443,7 @@ async function fetchAndBroadcast(symbol, resolution, isAutoRefresh = true) {
     for (const sid of roomSockets) {
       const sock = io.sockets.sockets.get(sid);
       if (!sock) continue;
-      if ((socketSymbols.get(sid) || SYMBOL) === symbol) sock.emit("chart_update", payload);
+      if ((socketSymbols.get(sid) || SYMBOL || symbol) === symbol) sock.emit("chart_update", payload);
     }
   }
   console.log(`[BROADCAST] ${symbol} res=${resolution}m → ${candles.length} candles`);
@@ -515,9 +532,11 @@ function startAutoRefresh() {
       const key = `${sym}:${res}`;
       if (!pairs.has(key)) pairs.set(key, { symbol: sym, resolution: res });
     }
-    // Always include default
-    const dk = `${SYMBOL}:${RESOLUTION}`;
-    if (!pairs.has(dk)) pairs.set(dk, { symbol: SYMBOL, resolution: RESOLUTION });
+    // Always include default (only if a default SYMBOL is configured)
+    if (SYMBOL) {
+      const dk = `${SYMBOL}:${RESOLUTION}`;
+      if (!pairs.has(dk)) pairs.set(dk, { symbol: SYMBOL, resolution: RESOLUTION });
+    }
 
     // Stagger refreshes 600ms apart — prevents Fyers rate storm (Issue #2 fix)
     const pairList = Array.from(pairs.values());
@@ -532,12 +551,16 @@ function startAutoRefresh() {
 }
 
 // ─── Initial REST fetch ───────────────────────────────────────────────────────
-// Pre-warms the in-process cache for every resolution on startup. All DB-first
-// / Fyers-fallback logic lives in fetchAndProcess() — this just calls it once
-// per resolution with retries, exactly like every other caller.
+// Pre-warms the in-process cache for every resolution on startup.
+// NO token check here — fetchAndProcess() handles DB-first internally.
+// If DB has data → loads instantly without any Fyers call.
+// If DB is empty AND token is invalid → Fyers fallback fails gracefully per-res.
+// Either way the site is never fully blocked by an expired token.
 async function initialRestFetch() {
-  const valid = await validateToken().catch(() => false);
-  if (!valid) { console.log("[INIT] Not authenticated — skipping initial REST fetch. Chart will be empty."); return; }
+  if (!SYMBOL) {
+    console.log("[INIT] No default SYMBOL set — skipping pre-warm. Charts load on first client request.");
+    return;
+  }
   const dayLabel = isTradingDay() ? (isAnyMarketLive(getActiveTickSymbols()) ? "live market" : "weekday (market closed)") : "weekend/holiday";
   console.log(`[INIT] Pre-warming all resolutions for ${SYMBOL} (${dayLabel})...`);
 
@@ -564,14 +587,17 @@ async function initialRestFetch() {
 io.on("connection", (socket) => {
   console.log(`[WS] Client connected: ${socket.id}`);
   let currentResolution = RESOLUTION;
-  let currentSymbol = SYMBOL;
+  let currentSymbol = SYMBOL;  // null if not set — client sends set_symbol on connect
   socketResolutions.set(socket.id, currentResolution);
-  socketSymbols.set(socket.id, currentSymbol);
+  if (currentSymbol) socketSymbols.set(socket.id, currentSymbol);
   socket.join(`res:${currentResolution}`);
 
-  const initialCache = getCache(SYMBOL, currentResolution);
-  if (initialCache.result && initialCache.candles.length > 0) {
-    socket.emit("chart_update", buildPayload(initialCache.candles, initialCache.result, SYMBOL, currentResolution, true));
+  // Only push cached data if we have a known default symbol with data already loaded
+  if (currentSymbol) {
+    const initialCache = getCache(currentSymbol, currentResolution);
+    if (initialCache.result && initialCache.candles.length > 0) {
+      socket.emit("chart_update", buildPayload(initialCache.candles, initialCache.result, currentSymbol, currentResolution, true));
+    }
   }
   socket.emit("market_status", { tickStreamActive: tickStream.isConnected(), liveMarket: isAnyMarketLive(getActiveTickSymbols()), tradingDay: isTradingDay(), ticksFlowing: ticksFlowing() });
 
@@ -604,9 +630,9 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("request_refresh", async () => {
-    const valid = await validateToken();
-    if (!valid) { socket.emit("error", { message: "Not authenticated. Please set up Fyers token." }); return; }
+  socket.on("request_refresh", () => {
+    // No token check — fetchAndProcess() is DB-first, works without Fyers token.
+    // If DB has data → instant. If DB empty + token dead → error emitted below.
     fetchAndProcess(currentSymbol, currentResolution)
       .then(({ candles, result }) => socket.emit("chart_update", buildPayload(candles, result, currentSymbol, currentResolution, false)))
       .catch((e) => socket.emit("error", { message: e.message }));
@@ -685,6 +711,13 @@ server.listen(PORT, async () => {
           // Wait for initialRestFetch to finish (it runs right before this setImmediate)
           await new Promise((r) => setTimeout(r, 5000));
 
+          // Skip gap scan if token is invalid -- repairs need Fyers, pointless without auth
+          const tokenOk = await validateToken().catch(() => false);
+          if (!tokenOk) {
+            console.log("[Recovery] Startup gap scan skipped \u2014 token expired. Will repair after re-auth.");
+            return;
+          }
+
           console.log(`[Recovery] Startup gap scan: checking ${curatedSymbols.length} curated symbols...`);
           let repaired = 0;
           let clean = 0;
@@ -701,6 +734,13 @@ server.listen(PORT, async () => {
                   const gapIssue = issues.find((iss) => iss.type === "GAP" || iss.type === "CORRUPT_OHLC");
                   if (gapIssue) {
                     const tradingDay = new Date(gapIssue.time || Date.now());
+                    // Skip today — an in-progress trading day always looks incomplete
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    if (tradingDay.toISOString().slice(0, 10) >= todayStr) {
+                      console.log(`[Recovery] ${symbol}: skipping today's in-progress candles (not a real gap)`);
+                      clean++;
+                      return;
+                    }
                     console.log(`[Recovery] ${symbol}: ${issues.length} issue(s) — repairing gap at ${tradingDay.toISOString().slice(0, 10)}`);
                     await recoveryEngine.repairDay({
                       symbol,
