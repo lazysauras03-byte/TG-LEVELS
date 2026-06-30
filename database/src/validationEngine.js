@@ -131,10 +131,24 @@ function validateCandleArray(candles, resolution) {
         const CLOSE_MIN = MARKET_CLOSE_H * 60 + MARKET_CLOSE_M;
         const OPEN_MIN = MARKET_OPEN_H * 60 + MARKET_OPEN_M;
 
-        // Previous candle should be within one resolution step of close;
-        // next candle should be within one resolution step of open.
-        const prevReachedClose = prevMinOfDay >= CLOSE_MIN - (expectedStep / 60000) - 1;
-        const currAtOpen = currMinOfDay <= OPEN_MIN + (expectedStep / 60000) + 1;
+        // BOUNDARY_TOLERANCE_MIN: how close to official close/open a candle
+        // needs to be to count as "the day basically ended/started normally
+        // here". Real exchange feeds routinely have their last print a few
+        // minutes before 15:30 (thin closing volume) or first print a few
+        // minutes after 09:15 (slow opening tick). The previous tolerance
+        // was only `expectedStep/60000 + 1` — for 1m candles that's ~2
+        // minutes — which was tight enough to misclassify this completely
+        // normal pattern as a real GAP on the exact same day-boundary every
+        // single day, which is what was driving symbols like
+        // NSE:NIFTY50-INDEX to get "repaired" again on every server restart
+        // even though nothing was actually wrong. 10 minutes gives real
+        // headroom for normal session edge behavior while still catching
+        // genuine multi-hour/overnight outages (which this code path never
+        // even reaches anyway, since isRealGap only fires when actualStep
+        // already exceeds 1.5x the expected step).
+        const BOUNDARY_TOLERANCE_MIN = 10;
+        const prevReachedClose = prevMinOfDay >= CLOSE_MIN - BOUNDARY_TOLERANCE_MIN;
+        const currAtOpen = currMinOfDay <= OPEN_MIN + BOUNDARY_TOLERANCE_MIN;
 
         const isRealGap = sameDay || !prevReachedClose || !currAtOpen;
 

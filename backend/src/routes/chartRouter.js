@@ -50,6 +50,7 @@ const express = require("express");
  * @param {Function} deps.generateToken
  * @param {Function} deps.validateToken
  * @param {Function} deps.detectMotherWaveForAPI
+ * @param {Function} deps.markBroadcastSymbol  - marks a symbol "recently requested" even without a socketId, so it's still picked up by the tick-stream subscription (fixes broadcast-mode refreshes never attaching live ticks)
  */
 function createChartRouter(deps) {
   const {
@@ -61,6 +62,7 @@ function createChartRouter(deps) {
     updateTickSubscription,
     getAuthURL, generateToken, validateToken, bustTokenCache,
     detectMotherWaveForAPI,
+    markBroadcastSymbol,
   } = deps;
 
   const router = express.Router();
@@ -116,6 +118,7 @@ function createChartRouter(deps) {
   router.get("/api/chart", async (req, res) => {
     const symbol = req.query.symbol || SYMBOL;
     const resolution = parseInt(req.query.resolution || RESOLUTION);
+    if (markBroadcastSymbol) markBroadcastSymbol(symbol);
     const cache = getCache(symbol, resolution);
 
     const live = isLiveMarket(symbol);
@@ -163,6 +166,10 @@ function createChartRouter(deps) {
     console.log(`[REFRESH] symbol=${symbol} res=${resolution}m socket=${requestingSocketId || "broadcast"} liveMarket=${isLiveMarket(symbol)}`);
 
     if (requestingSocketId) socketSymbols.set(requestingSocketId, symbol);
+    // Always mark the symbol as "wanted" for tick-stream purposes, even in
+    // broadcast mode (no socketId) — see markBroadcastSymbol definition in
+    // server.js for the full root-cause explanation.
+    if (markBroadcastSymbol) markBroadcastSymbol(symbol);
 
     try {
       const { candles, result } = await fetchAndProcess(symbol, resolution);

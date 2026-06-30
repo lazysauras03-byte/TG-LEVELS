@@ -103,7 +103,7 @@ async function repairDay(opts) {
     activeRepairs.add(key);
     emit("repair_status", { symbol, resolution, status: "starting", trigger });
 
-    const logId = await logRepairStart({ symbol, resolution, trigger }).catch(() => null);
+    const logId = await logRepairStart({ symbol, resolution, trigger, tradingDay }).catch(() => null);
 
     try {
       // Step 1 (REORDERED — was: delete first, fetch second):
@@ -146,7 +146,7 @@ async function repairDay(opts) {
 
       // Step 3: NOW it's safe to delete the corrupted/affected day — a
       // validated replacement is already in hand and about to be written back.
-      console.log(`[Recovery] Deleting 1m day data for ${symbol} day=${new Date(tradingDay).toISOString().slice(0,10)}`);
+      console.log(`[Recovery] Deleting 1m day data for ${symbol} day=${new Date(tradingDay).toISOString().slice(0, 10)}`);
       const deleted = await deleteDayCandles(symbol, resolution, tradingDay);
       emit("repair_status", { symbol, resolution, status: "deleted", deleted });
 
@@ -306,7 +306,7 @@ async function periodicSync(opts) {
     }
 
     // Out of sync — upsert the missing 1m candles
-    console.warn(`[PeriodicSync] ${symbol} res=1 out of sync (gap=${(gapMs/60000).toFixed(1)}min) — recovering`);
+    console.warn(`[PeriodicSync] ${symbol} res=1 out of sync (gap=${(gapMs / 60000).toFixed(1)}min) — recovering`);
 
     // Find 1m candles that are newer than what we have in DB
     const from = latestDb ? latestDb.time : THREE_MONTHS_AGO;
