@@ -27,7 +27,7 @@ import { DrawingProvider, usePanelLink, setAllLinked } from "../components/Drawi
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import { loadPref, savePref } from "../utils/prefs";
-import { formatResolution } from "../utils/formatResolution";
+import { formatResolution, TIMEFRAMES } from "../utils/formatResolution";
 import { parseOptionSymbol, isOptionSymbol, optionSymbol, getOptionRoot, getStrikeStep, nearestStrikeWithHysteresis, NSE_INDEX_TICKERS, nextMonthlyExpiries } from "../utils/optionsChain";
 import { LAYOUTS } from "../components/layout/LayoutPicker";
 import ErrorBoundary from "../components/ErrorBoundary";
@@ -304,6 +304,30 @@ const ChartPanel = memo(function ChartPanel({
     const t = setTimeout(() => setShortcutWarning(null), 3500);
     return () => clearTimeout(t);
   }, [shortcutWarning]);
+
+  // ── Type-a-number → switch timeframe (Fyers-style) ─────────────────────────
+  // Only ever applies a SUPPORTED resolution (from TIMEFRAMES — the same list
+  // driving the timeframe pill buttons). Typing any number that isn't one of
+  // 1/3/5/15/60/1440/10080 does nothing and shows a brief warning — the
+  // chart stays exactly on its current timeframe, never a half-applied or
+  // invalid resolution.
+  const applyTypedTimeframe = useCallback((digits) => {
+    const n = parseInt(digits, 10);
+    const supported = TIMEFRAMES.some((tf) => tf.value === n);
+    if (!Number.isFinite(n) || !supported) {
+      setShortcutWarning(`"${digits}" isn't a supported timeframe (1, 3, 5, 15, 60, 1440, 10080).`);
+      return;
+    }
+    handleResolutionChange(n);
+    handleRefresh(symbol, n);
+  }, [handleResolutionChange, handleRefresh, symbol]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Register applyTypedTimeframe on panelActionsRef alongside the other
+  // active-panel actions (openOptionsAtm, openSearchWithQuery).
+  useEffect(() => {
+    if (!isActivePanel || !panelActionsRef) return;
+    panelActionsRef.current = { ...panelActionsRef.current, applyTypedTimeframe };
+  }, [isActivePanel, applyTypedTimeframe, panelActionsRef]);
 
   const openOptionsAtm = useCallback((kind) => {
     // If already viewing an option chart, use its underlying as the basis so
@@ -938,6 +962,7 @@ export default function ChartsPage() {
     toggleHide: null, trashAll: null, drawingsHidden: false,
     openOptionsAtm: null,      // (kind: "CE"|"PE") => void — Ctrl+Q / Ctrl+D
     openSearchWithQuery: null, // (firstChar: string) => void — type-to-search
+    applyTypedTimeframe: null, // (digits: string) => void — type-a-number timeframe switch
   });
   const [activePanelHidden, setActivePanelHidden] = useState(false);
 
@@ -983,18 +1008,59 @@ export default function ChartsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Type-a-number → switch timeframe (Fyers-style). Digits accumulate into a
+  // short-lived buffer (so "15" can be typed, not just single-digit "1"/"5");
+  // Enter applies it immediately, or it auto-applies after a short pause.
+  // Esc cancels the buffer without changing anything. This intentionally
+  // intercepts digits BEFORE the letter-based type-to-search handler below,
+  // so numbers never accidentally open the symbol search instead.
+  const tfDigitBufferRef = useRef("");
+  const tfDigitTimerRef = useRef(null);
+  useEffect(() => {
+    function clearBuffer() {
+      tfDigitBufferRef.current = "";
+      if (tfDigitTimerRef.current) { clearTimeout(tfDigitTimerRef.current); tfDigitTimerRef.current = null; }
+    }
+    function applyBuffer() {
+      const digits = tfDigitBufferRef.current;
+      clearBuffer();
+      if (digits) panelActionsRef.current?.applyTypedTimeframe?.(digits);
+    }
+    function onKey(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+
+      if (tfDigitBufferRef.current) {
+        if (e.key === "Enter") { e.preventDefault(); applyBuffer(); return; }
+        if (e.key === "Escape") { e.preventDefault(); clearBuffer(); return; }
+      }
+
+      if (e.key.length === 1 && e.key >= "0" && e.key <= "9") {
+        e.preventDefault();
+        tfDigitBufferRef.current += e.key;
+        if (tfDigitTimerRef.current) clearTimeout(tfDigitTimerRef.current);
+        // Auto-apply shortly after the last digit, so a single digit (e.g. "1")
+        // still works without requiring Enter — matches Fyers' feel.
+        tfDigitTimerRef.current = setTimeout(applyBuffer, 700);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); clearBuffer(); };
+  }, []);
+
   // Type-to-search: start typing anywhere → active panel's symbol search opens
-  // pre-filled with the typed character. Only single plain chars with no
-  // modifier — can never collide with Ctrl+Q/D, Alt+letter, Ctrl+Z, arrows.
+  // pre-filled with the typed character. Only single plain LETTER chars with no
+  // modifier — digits are claimed by the timeframe-typing handler above, so
+  // they never collide with Ctrl+Q/D, Alt+letter, Ctrl+Z, arrows, or numbers.
   useEffect(() => {
     function onKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      // e.key is exactly one printable character for plain letter/digit keys
-      // (e.g. "a", "5"); anything else ("Enter", "Shift", "ArrowUp", " "
-      // for space, etc.) has length !== 1 or is whitespace — ignore those so
-      // this never fires on navigation, selection, or accidental space-bar.
+      // e.key is exactly one printable character for plain letter keys
+      // (e.g. "a"); anything else ("Enter", "Shift", "ArrowUp", " "
+      // for space, digits, etc.) has length !== 1 or isn't a letter — ignore.
       if (e.key.length !== 1 || e.key === " ") return;
+      if (e.key >= "0" && e.key <= "9") return; // claimed by timeframe-typing handler
       if (!panelActionsRef.current?.openSearchWithQuery) return;
       e.preventDefault();
       panelActionsRef.current.openSearchWithQuery(e.key);
