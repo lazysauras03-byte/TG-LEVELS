@@ -281,7 +281,16 @@ export function useSocket() {
       socket.emit("request_refresh");
     });
 
+    // FIX: the server now attaches { symbol, resolution } to error events that
+    // are tied to a specific fetch (e.g. a failed request_refresh) — filter it
+    // through the same matchesActive() check as chart_update/tick_update/etc
+    // so an error for a DIFFERENT symbol or resolution (e.g. a background
+    // res=1 fetch unrelated to what's actually on screen) never overwrites
+    // the error bar on a panel that's rendering perfectly fine. Errors with
+    // no symbol/resolution at all (genuine connection-level failures) still
+    // always apply, since there's nothing to filter them against.
     socket.on("error", (e) => {
+      if (e && (e.symbol != null || e.resolution != null) && !matchesActive(e)) return;
       setError(e?.message || String(e));
       setLoading(false);
     });

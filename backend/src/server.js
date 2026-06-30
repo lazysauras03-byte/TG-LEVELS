@@ -854,9 +854,17 @@ io.on("connection", (socket) => {
   socket.on("request_refresh", () => {
     // No token check — fetchAndProcess() is DB-first, works without Fyers token.
     // If DB has data → instant. If DB empty + token dead → error emitted below.
+    // FIX: error now carries the symbol/resolution it actually failed for, so
+    // the frontend can filter it through the same matchesActive() check every
+    // other socket event already uses — without this, a failed background
+    // fetch for an unrelated symbol/resolution (e.g. an Auto-ATM underlying
+    // res=1 seed) was bleeding through and overwriting whatever chart was
+    // actually on screen, even though that chart's own data was fine.
+    const failedSymbol = currentSymbol;
+    const failedResolution = currentResolution;
     fetchAndProcess(currentSymbol, currentResolution)
       .then(({ candles, result }) => socket.emit("chart_update", buildPayload(candles, result, currentSymbol, currentResolution, false)))
-      .catch((e) => socket.emit("error", { message: e.message }));
+      .catch((e) => socket.emit("error", { message: e.message, symbol: failedSymbol, resolution: failedResolution }));
   });
 
   socket.on("disconnect", () => {
