@@ -267,6 +267,20 @@ export function useSocket() {
       if (d?.ticksFlowing != null) setTicksFlowing(!!d.ticksFlowing);
     });
 
+    // FRONTEND-SYNC FIX: the server broadcasts this whenever a staleness
+    // backfill, repair, or periodic sync writes NEW history for a symbol —
+    // e.g. you opened a chart for a symbol that hadn't been touched in days,
+    // the server caught it up in the background, and your already-rendered
+    // chart would otherwise carry that pre-catch-up gap forward forever
+    // (the live tick stream only appends new candles going forward, it never
+    // retroactively patches an old render). Only react if it's for the
+    // symbol currently on screen, and re-pull via the same "request_refresh"
+    // path the Refresh button already uses — no new state plumbing needed.
+    socket.on("history_updated", (d) => {
+      if (!d?.symbol || d.symbol !== activeSymbolRef.current) return;
+      socket.emit("request_refresh");
+    });
+
     socket.on("error", (e) => {
       setError(e?.message || String(e));
       setLoading(false);

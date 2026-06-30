@@ -27,7 +27,7 @@
  *  • Emit status events so the frontend can show repair progress
  */
 
-const { upsertCandles, deleteDayCandles, deleteAllCandles } = require("./candleStore");
+const { upsertCandles, deleteDayCandles, deleteAllCandles, replaceDayCandles, replaceAllCandles } = require("./candleStore");
 const { validateCandleArray, checkPeriodicSync } = require("./validationEngine");
 const { logRepairStart, logRepairFinish } = require("./repairLog");
 
@@ -144,14 +144,15 @@ async function repairDay(opts) {
         emit("repair_status", { symbol, resolution, status: "validation_warning", issues: issues.length });
       }
 
-      // Step 3: NOW it's safe to delete the corrupted/affected day — a
-      // validated replacement is already in hand and about to be written back.
-      console.log(`[Recovery] Deleting 1m day data for ${symbol} day=${new Date(tradingDay).toISOString().slice(0, 10)}`);
-      const deleted = await deleteDayCandles(symbol, resolution, tradingDay);
+      // Step 3+4 (FIXED — was: separate delete then separate insert, two
+      // independently-committed queries). A client reading via loadCandles()
+      // in the gap between those two calls could see this trading day as
+      // empty — a transient phantom gap. Both steps now run inside ONE DB
+      // transaction (replaceDayCandles), so readers always see either the
+      // old day intact or the new day intact, never neither.
+      console.log(`[Recovery] Atomically replacing 1m day data for ${symbol} day=${new Date(tradingDay).toISOString().slice(0, 10)}`);
+      const { deleted, inserted } = await replaceDayCandles(symbol, resolution, tradingDay, fresh);
       emit("repair_status", { symbol, resolution, status: "deleted", deleted });
-
-      // Step 4: Store the freshly fetched 1m candles into DB.
-      const inserted = await upsertCandles(symbol, resolution, fresh);
       console.log(`[Recovery] ${symbol} res=1: inserted ${inserted} 1m candles`);
       emit("repair_status", { symbol, resolution, status: "restored", inserted });
 
@@ -166,6 +167,11 @@ async function repairDay(opts) {
       }
 
       emit("repair_status", { symbol, resolution, status: "ok", inserted, deleted });
+      // FRONTEND-SYNC FIX: same reasoning as the staleness-backfill broadcast —
+      // a chart already open for this symbol when the repair started would
+      // otherwise keep showing the pre-repair (possibly gapped/corrupt) day
+      // until a manual reload. Let any open chart silently re-pull fresh data.
+      emit("history_updated", { symbol, resolution, reason: "repair", inserted });
       await logRepairFinish(logId, { status: "ok", deleted, inserted }).catch(() => null);
       return { success: true, inserted, deleted };
 
@@ -241,27 +247,31 @@ async function fullRefetch(opts) {
       emit("repair_status", { symbol, resolution: DB_RESOLUTION, status: "full_refetch_validation_warning", issues: issues.length });
     }
 
-    // Step 2: NOW delete the old (possibly corrupted) timeline — a validated
-    // replacement is already in hand and about to be written back immediately.
-    const deleted = await deleteAllCandles(symbol, DB_RESOLUTION);
-    totalDeleted += deleted;
-    console.log(`[Recovery] Full refetch ${symbol}: deleted ${deleted} 1m candles`);
-    emit("repair_status", { symbol, status: "full_refetch_deleted", deleted });
-
-    // Prune any stale candles >3 months old across all symbols (safety net)
+    // Step 2+4 (FIXED — was: deleteAllCandles() then a separate upsertCandles()
+    // call, two independently-committed queries, same race class as the
+    // single-day repair had. A chart read landing in that window could see
+    // the whole symbol as empty mid "Full Refetch" click). Now atomic via
+    // one DB transaction (replaceAllCandles).
+    //
+    // Prune any stale candles >3 months old across all symbols (safety net) —
+    // run BEFORE the atomic swap since it touches other symbols too.
     try {
       const pruned = await require("./candleStore").pruneOldCandles(null, null, 90);
       if (pruned > 0) console.log(`[Recovery] Full refetch: pruned ${pruned} stale candles (>3 months)`);
     } catch { /* non-fatal */ }
 
-    // Step 3: Store the freshly fetched candles — idempotent, always run
-    // regardless of the informational validation result above.
-    const inserted = await upsertCandles(symbol, DB_RESOLUTION, candles);
+    const { deleted, inserted } = await replaceAllCandles(symbol, DB_RESOLUTION, candles);
+    totalDeleted += deleted;
     totalInserted += inserted;
+    console.log(`[Recovery] Full refetch ${symbol}: deleted ${deleted} 1m candles`);
+    emit("repair_status", { symbol, status: "full_refetch_deleted", deleted });
     console.log(`[Recovery] Full refetch ${symbol} res=1: ${inserted} 1m candles stored`);
     emit("repair_status", { symbol, resolution: DB_RESOLUTION, status: "full_refetch_res_ok", inserted });
 
     emit("repair_status", { symbol, status: "full_refetch_complete", totalInserted, totalDeleted });
+    if (totalInserted > 0) {
+      emit("history_updated", { symbol, reason: "full_refetch", inserted: totalInserted });
+    }
     await logRepairFinish(logId, {
       status: totalInserted > 0 ? "ok" : "error",
       deleted: totalDeleted,
@@ -318,6 +328,7 @@ async function periodicSync(opts) {
         const inserted = await upsertCandles(symbol, resolution, missing);
         console.log(`[PeriodicSync] ${symbol} res=1: inserted ${inserted} missing 1m candles`);
         emit("repair_status", { symbol, resolution, status: "periodic_sync_ok", inserted });
+        emit("history_updated", { symbol, resolution, reason: "periodic_sync", inserted });
         return { inSync: true, recovered: inserted };
       }
     }

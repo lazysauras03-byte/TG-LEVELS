@@ -119,6 +119,84 @@ async function deleteDayCandles(symbol, resolution, tradingDay) {
 }
 
 /**
+ * Atomically replace a single trading day's candles: delete the old day's
+ * rows and insert the freshly fetched ones inside ONE database transaction.
+ *
+ * RACE FIXED: repairDay() previously called deleteDayCandles() and then
+ * upsertCandles() as two separate, independently-committed queries. Any
+ * client reading via loadCandles() in the window between those two calls
+ * would see that trading day as empty/partial — a transient phantom gap.
+ * Wrapping both in BEGIN/COMMIT makes the replacement atomic: readers either
+ * see the old day intact or the new day intact, never neither.
+ *
+ * @param {string} symbol
+ * @param {number} resolution
+ * @param {Date|string} tradingDay
+ * @param {Array<{time,open,high,low,close,volume}>} candles  the replacement rows
+ * @returns {Promise<{deleted:number, inserted:number}>}
+ */
+async function replaceDayCandles(symbol, resolution, tradingDay, candles) {
+  const d = new Date(tradingDay);
+  const dayStart = new Date(d);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+  const valid = (candles || []).filter(isValidCandle);
+
+  let deleted = 0;
+  let inserted = 0;
+
+  await transaction(async (client) => {
+    const delRows = await client.query(
+      `DELETE FROM candles
+       WHERE symbol=$1 AND resolution=$2
+         AND time >= $3 AND time < $4
+       RETURNING 1`,
+      [symbol, resolution, dayStart.toISOString(), dayEnd.toISOString()]
+    );
+    deleted = delRows.rows.length;
+
+    if (valid.length === 0) return;
+
+    const UPSERT_BATCH_SIZE = 500;
+    const UPSERT_SQL_SUFFIX = `
+      ON CONFLICT (symbol, resolution, time) DO UPDATE SET
+        open        = EXCLUDED.open,
+        high        = EXCLUDED.high,
+        low         = EXCLUDED.low,
+        close       = EXCLUDED.close,
+        volume      = EXCLUDED.volume,
+        validated   = TRUE,
+        inserted_at = NOW()
+    `;
+
+    for (let offset = 0; offset < valid.length; offset += UPSERT_BATCH_SIZE) {
+      const batch = valid.slice(offset, offset + UPSERT_BATCH_SIZE);
+      const values = [];
+      const params = [];
+      let p = 1;
+
+      for (const c of batch) {
+        values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++})`);
+        params.push(symbol, resolution, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0);
+      }
+
+      const sql = `
+        INSERT INTO candles (symbol, resolution, time, open, high, low, close, volume)
+        VALUES ${values.join(",")}
+        ${UPSERT_SQL_SUFFIX}
+      `;
+
+      await client.query(sql, params);
+      inserted += batch.length;
+    }
+  });
+
+  return { deleted, inserted };
+}
+
+/**
  * Delete ALL candles for a symbol (full refetch / nuke).
  */
 async function deleteAllCandles(symbol, resolution = null) {
@@ -217,6 +295,74 @@ async function countCandles(symbol, resolution, from, to) {
 // ─── Pruning ────────────────────────────────────────────────────────────────
 
 /**
+ * Atomically replace a symbol's ENTIRE 1m timeline: delete everything and
+ * insert the freshly fetched full history inside ONE database transaction.
+ *
+ * RACE FIXED: fullRefetch() previously called deleteAllCandles() and then
+ * upsertCandles() as two separate, independently-committed queries — same
+ * class of bug as the single-day repair race, just symbol-wide. A chart
+ * read landing in that window could see the whole symbol as empty during
+ * a manual "Full Refetch" click. Wrapped in BEGIN/COMMIT for the same
+ * all-or-nothing guarantee as replaceDayCandles().
+ *
+ * @param {string} symbol
+ * @param {number} resolution
+ * @param {Array<{time,open,high,low,close,volume}>} candles  the full replacement set
+ * @returns {Promise<{deleted:number, inserted:number}>}
+ */
+async function replaceAllCandles(symbol, resolution, candles) {
+  const valid = (candles || []).filter(isValidCandle);
+
+  let deleted = 0;
+  let inserted = 0;
+
+  await transaction(async (client) => {
+    const delRows = await client.query(
+      "DELETE FROM candles WHERE symbol=$1 AND resolution=$2 RETURNING 1",
+      [symbol, resolution]
+    );
+    deleted = delRows.rows.length;
+
+    if (valid.length === 0) return;
+
+    const UPSERT_BATCH_SIZE = 500;
+    const UPSERT_SQL_SUFFIX = `
+      ON CONFLICT (symbol, resolution, time) DO UPDATE SET
+        open        = EXCLUDED.open,
+        high        = EXCLUDED.high,
+        low         = EXCLUDED.low,
+        close       = EXCLUDED.close,
+        volume      = EXCLUDED.volume,
+        validated   = TRUE,
+        inserted_at = NOW()
+    `;
+
+    for (let offset = 0; offset < valid.length; offset += UPSERT_BATCH_SIZE) {
+      const batch = valid.slice(offset, offset + UPSERT_BATCH_SIZE);
+      const values = [];
+      const params = [];
+      let p = 1;
+
+      for (const c of batch) {
+        values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++})`);
+        params.push(symbol, resolution, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0);
+      }
+
+      const sql = `
+        INSERT INTO candles (symbol, resolution, time, open, high, low, close, volume)
+        VALUES ${values.join(",")}
+        ${UPSERT_SQL_SUFFIX}
+      `;
+
+      await client.query(sql, params);
+      inserted += batch.length;
+    }
+  });
+
+  return { deleted, inserted };
+}
+
+/**
  * Delete 1m candles older than RETENTION_DAYS (default 90 = 3 months).
  * Called once at startup and optionally on a nightly schedule.
  *
@@ -266,6 +412,8 @@ function isValidCandle(c) {
 module.exports = {
   upsertCandles,
   deleteDayCandles,
+  replaceDayCandles,
+  replaceAllCandles,
   deleteAllCandles,
   pruneOldCandles,
   loadCandles,

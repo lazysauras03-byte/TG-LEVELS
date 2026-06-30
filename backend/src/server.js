@@ -494,6 +494,15 @@ async function ensureFreshOneMinData(symbol, oneMinCandles) {
       try {
         const inserted = await db.upsertCandles(symbol, 1, newOnes);
         console.log(`[Staleness] ${symbol}: backfilled ${inserted} missing 1m candle(s)`);
+        // FRONTEND-SYNC FIX: if a chart for this symbol was already open in a
+        // browser tab BEFORE this backfill ran, the page's first render would
+        // have shipped with the (then-stale) DB data — and since the live tick
+        // stream only appends NEW candles going forward, that earlier render
+        // would carry a visual gap forward indefinitely with nothing telling
+        // it to re-fetch. Broadcasting this event lets any open chart for this
+        // symbol silently re-pull fresh history the moment the backfill lands,
+        // instead of requiring a manual page reload to see corrected data.
+        io.emit("history_updated", { symbol, reason: "staleness_backfill", count: inserted });
       } catch (err) {
         console.warn(`[Staleness] ${symbol}: upsert of delta candles failed (${err.message}) — still using them in-memory for this response`);
       }
