@@ -330,15 +330,31 @@ const ChartPanel = memo(function ChartPanel({
   }, [isActivePanel, applyTypedTimeframe, panelActionsRef]);
 
   const openOptionsAtm = useCallback((kind) => {
-    // If already viewing an option chart, use its underlying as the basis so
-    // the shortcut works from an option chart too, not just the underlying.
     const optionHere = isOptionSymbol(symbol) ? parseOptionSymbol(symbol) : null;
-    const baseSymbol = optionHere
-      ? (NSE_INDEX_TICKERS[optionHere.root]
-        ? `${optionHere.exch}:${NSE_INDEX_TICKERS[optionHere.root]}`
-        : `${optionHere.exch}:${optionHere.root}-EQ`)
-      : symbol;
 
+    // BUG FIX: previously, when already viewing an option chart, this still
+    // tried to recompute an "ATM" strike from `candles[last].close` — but
+    // `candles` at that point belongs to the OPTION currently on screen (its
+    // own premium, e.g. ₹356), not the underlying's spot price (e.g. 76,700).
+    // round(356/100)*100 = 400 → a nonsense strike with no real Fyers data,
+    // which is exactly the "no candles" error this caused. Flipping Call<->Put
+    // at the SAME strike+expiry is also what this shortcut should actually do
+    // here — a quick CE/PE toggle, not a fresh ATM re-pick (Auto-ATM already
+    // handles real strike drift separately, via the live underlying tick).
+    if (optionHere) {
+      if (optionHere.kind === kind) return; // already showing this kind
+      const newSymbol = optionSymbol(
+        optionHere.exch, optionHere.root,
+        optionHere.expiryCode, optionHere.strike, kind
+      );
+      handleSymbolChange(newSymbol);
+      handleRefresh(newSymbol, resolution);
+      return;
+    }
+
+    // Starting from the underlying — candles here genuinely is the spot
+    // price, so a fresh ATM-from-spot computation is correct.
+    const baseSymbol = symbol;
     if (!baseSymbol || !OPTIONS_ELIGIBLE_RE.test(baseSymbol)) {
       setShortcutWarning(`Options aren't available for ${symbol || "this symbol"}.`);
       return;
@@ -373,6 +389,87 @@ const ChartPanel = memo(function ChartPanel({
     if (!isActivePanel || !panelActionsRef) return;
     panelActionsRef.current = { ...panelActionsRef.current, openOptionsAtm };
   }, [isActivePanel, openOptionsAtm, panelActionsRef]);
+
+  // ── openOptionsSplit — Ctrl+Q: compute ATM CE+PE and trigger the 2h split ──
+  // Called by ChartsPage's global Ctrl+Q handler via panelActionsRef.
+  // Only meaningful on a spot/underlying chart — if we're already on an option
+  // this is a no-op (the split should always originate from the underlying).
+  const openOptionsSplit = useCallback(() => {
+    // Must be a spot chart (not an option) to trigger split
+    if (isOptionSymbol(symbol)) return;
+    if (!OPTIONS_ELIGIBLE_RE.test(symbol)) {
+      setShortcutWarning(`Options aren't available for ${symbol || "this symbol"}.`);
+      return;
+    }
+    const lastClose = candles.length ? candles[candles.length - 1].close : null;
+    if (!lastClose || lastClose <= 0) {
+      setShortcutWarning("No price loaded yet — open the chart first.");
+      return;
+    }
+    const info = getOptionRoot(symbol);
+    const expiries = nextMonthlyExpiries(
+      1,
+      info.isCommodity ? info.root : null,
+      info.isIndex ? info.root : null
+    );
+    const nearestExpiry = expiries[0];
+    if (!nearestExpiry) {
+      setShortcutWarning(`Couldn't determine an expiry for ${symbol}.`);
+      return;
+    }
+    const step = getStrikeStep(lastClose, info);
+    const atmStrike = Math.round(lastClose / step) * step;
+    const ceSymbol = optionSymbol(info.exch, info.root, nearestExpiry.code, atmStrike, "CE");
+    const peSymbol = optionSymbol(info.exch, info.root, nearestExpiry.code, atmStrike, "PE");
+
+    // Store the split payload on the shared ref so Layout2H reads it on mount
+    if (panelActionsRef?.p2OverrideRef) {
+      panelActionsRef.p2OverrideRef.current = { ceSymbol, peSymbol, resolution };
+    }
+    // Store the original spot so Esc can restore it
+    if (panelActionsRef?.autoSplitRef) {
+      panelActionsRef.autoSplitRef.current = { symbol, resolution };
+    }
+    // Load CE into THIS panel (panel 0 / left)
+    handleSymbolChange(ceSymbol);
+    handleRefresh(ceSymbol, resolution);
+    // Auto-enable Auto-ATM on both panels so the split immediately live-tracks
+    // the ATM strike as spot moves.
+    // Panel 0 is already mounted — flip its state directly via panelActionsRef.
+    panelActionsRef.current?.enableAutoAtm?.();
+    // Panel 1 mounts fresh when layout switches — set pref so its useState inits to true.
+    savePref("autoAtm", true);   // panel 0 pfx=""
+    savePref("p2_autoAtm", true); // panel 1 pfx="p2_"
+    // Switch to 2h layout — panel 1 (right) mounts fresh and reads p2OverrideRef
+    if (panelActionsRef?.triggerLayout) panelActionsRef.triggerLayout("2h");
+  }, [symbol, candles, resolution, handleSymbolChange, handleRefresh, panelActionsRef]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── restoreSpot — Esc: return to the original spot symbol ─────────────────
+  const restoreSpot = useCallback((origSym, origRes) => {
+    if (!origSym) return;
+    handleSymbolChange(origSym);
+    handleRefresh(origSym, origRes || resolution);
+  }, [resolution, handleSymbolChange, handleRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // enableAutoAtm — called programmatically by openOptionsSplit to activate
+
+  // Auto-ATM on panel 0 immediately (panel 0 is already mounted when Ctrl+Q fires,
+
+  // so savePref alone won't flip its useState — we need the setter directly).
+
+  const enableAutoAtm = useCallback(() => setAutoAtmOn(true), []);
+
+
+
+  // Register openOptionsSplit + restoreSpot + enableAutoAtm on panelActionsRef
+
+  useEffect(() => {
+
+    if (!isActivePanel || !panelActionsRef) return;
+
+    panelActionsRef.current = { ...panelActionsRef.current, openOptionsSplit, restoreSpot, enableAutoAtm };
+
+  }, [isActivePanel, openOptionsSplit, restoreSpot, enableAutoAtm, panelActionsRef]);
 
   // ── Symbol search modal ────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
@@ -752,19 +849,35 @@ function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   );
 }
 
-function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
+function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps, p2OverrideRef, autoSplitRef }) {
   const [colPct, containerRef, onDivMouseDown] = useDraggableSplit("col", "split2h_col");
+  // Read the auto-split override ONCE on mount — if Ctrl+Q triggered this layout
+  // switch, p2OverrideRef holds the CE/PE symbols to inject into both panels.
+  // After reading we null it out so a manual layout-switch to "2h" sees nothing.
+  const override = p2OverrideRef?.current ?? null;
+  useEffect(() => {
+    if (p2OverrideRef) p2OverrideRef.current = null; // consumed — clear for next manual switch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Mark auto-split as manually touched if user activates panel 1 themselves
+  // (i.e. clicks into it), which detaches the Esc-restore behaviour.
+  const handleP1Activate = useCallback(() => {
+    if (autoSplitRef) autoSplitRef.current = null;
+    toolbarProps.setActivePanel(1);
+  }, [autoSplitRef, toolbarProps]);
   return (
     <div className="layout-2h" ref={containerRef}>
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
         <ErrorBoundary minimal label="Panel 1">
           <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2}
             layoutId={layoutId} onLayoutChange={onLayoutChange}
-            urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
-            urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+            urlSymbol={urlParams.symbol}
+            urlResolution={urlParams.resolution}
+            urlWaveTarget={urlParams.waveTarget}
+            urlFibDrawing={urlParams.fibDrawing}
             urlSrLines={urlParams.srLines}
             isActivePanel={toolbarProps.activePanel === 0}
-            onPanelActivate={() => toolbarProps.setActivePanel(0)}
+            onPanelActivate={() => { if (autoSplitRef) autoSplitRef.current = null; toolbarProps.setActivePanel(0); }}
             {...toolbarProps.shared}
           />
         </ErrorBoundary>
@@ -774,10 +887,11 @@ function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
         <ErrorBoundary minimal label="Panel 2">
           <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2}
             layoutId={undefined} onLayoutChange={undefined}
-            urlSymbol={null} urlResolution={null}
+            urlSymbol={override ? override.peSymbol : null}
+            urlResolution={override ? override.resolution : null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
             isActivePanel={toolbarProps.activePanel === 1}
-            onPanelActivate={() => toolbarProps.setActivePanel(1)}
+            onPanelActivate={handleP1Activate}
             {...toolbarProps.shared}
           />
         </ErrorBoundary>
@@ -960,11 +1074,39 @@ export default function ChartsPage() {
 
   const panelActionsRef = useRef({
     toggleHide: null, trashAll: null, drawingsHidden: false,
-    openOptionsAtm: null,      // (kind: "CE"|"PE") => void — Ctrl+Q / Ctrl+D
+    openOptionsAtm: null,      // (kind: "CE"|"PE") => void — legacy internal use
+    openOptionsSplit: null,    // () => void — Ctrl+Q: CE left + PE right auto-split
+    restoreSpot: null,         // (sym, res) => void — Esc: restore original spot
+    enableAutoAtm: null,       // () => void — programmatically turn Auto-ATM on
     openSearchWithQuery: null, // (firstChar: string) => void — type-to-search
     applyTypedTimeframe: null, // (digits: string) => void — type-a-number timeframe switch
   });
   const [activePanelHidden, setActivePanelHidden] = useState(false);
+
+  // Auto-split refs — declared here so ALL effects and renderLayout can see them.
+  // autoSplitRef: non-null while the "2h" layout was auto-triggered by Ctrl+Q.
+  //   Stores { symbol, resolution } of original spot to restore on Esc.
+  //   Cleared on any manual layout/symbol touch so Esc only works on untouched splits.
+  // p2OverrideRef: { ceSymbol, peSymbol, resolution } read by Layout2H on mount
+  //   to seed CE into panel 0 and PE into panel 1. Nulled out after consumed.
+  const autoSplitRef = useRef(null);
+  const p2OverrideRef = useRef(null);
+
+  // Attach layout-switching callback and split refs onto panelActionsRef so
+  // ChartPanel can trigger the 2h split without needing these as props.
+  // Done once after panelActionsRef is created — safe because all three are stable refs.
+  useEffect(() => {
+    panelActionsRef.current.p2OverrideRef = p2OverrideRef;
+    panelActionsRef.current.autoSplitRef = autoSplitRef;
+    panelActionsRef.current.triggerLayout = (id) => {
+      setLayoutId(id);
+      savePref("layoutId", id);
+      setActivePanel(0);
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const panelLinkRef = useRef({ linked: false, setLinked: null });
   const [toolbarLinked, setToolbarLinked] = useState(false);
@@ -983,24 +1125,44 @@ export default function ChartsPage() {
     syncedCrosshairListeners.current.forEach((fn) => fn(syncedCrosshairRef.current));
   }, []);
 
-  // Esc key globally → cursor
+  // Esc key globally → if auto-split is active restore spot, else reset tool.
   useEffect(() => {
-    function onKey(e) { if (e.key === "Escape") setSelectedTool("cursor"); }
+    function onKey(e) {
+      if (e.key !== "Escape") return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (autoSplitRef.current) {
+        const { symbol: origSym, resolution: origRes } = autoSplitRef.current;
+        autoSplitRef.current = null;
+        p2OverrideRef.current = null;
+        setLayoutId("1");
+        savePref("layoutId", "1");
+        setActivePanel(0);
+        panelActionsRef.current?.restoreSpot?.(origSym, origRes);
+        setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
+        setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
+      } else {
+        setSelectedTool("cursor");
+      }
+    }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // autoSplitRef / p2OverrideRef are stable refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Ctrl+Q / Ctrl+D globally → open ATM CE / PE on the active panel.
-  // Ctrl+Q = CE, Ctrl+D = PE — no toggle. Acts on whichever panel was last
-  // clicked (panelActionsRef is re-registered by that panel's own effect).
+  // Ctrl+Q — auto CE+PE split. Works only from a spot/underlying chart.
+  // Switches to 2h layout, loads CE in panel 0 (left), PE in panel 1 (right).
+  // Esc restores the original single-panel spot if nothing was touched manually.
+  // Ctrl+D is removed — all option navigation goes through this one shortcut.
   useEffect(() => {
     function onKey(e) {
       if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
-      const key = e.key.toLowerCase();
-      if (key !== "q" && key !== "d") return;
+      if (e.key.toLowerCase() !== "q") return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       e.preventDefault();
-      panelActionsRef.current?.openOptionsAtm?.(key === "q" ? "CE" : "PE");
+      // Delegate to active panel which knows current symbol + last close price.
+      panelActionsRef.current?.openOptionsSplit?.();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1124,7 +1286,7 @@ export default function ChartsPage() {
   function renderLayout() {
     const props = { urlParams, layoutId, onLayoutChange: handleLayoutChange, toolbarProps };
     switch (layoutId) {
-      case "2h": return <Layout2H {...props} />;
+      case "2h": return <Layout2H {...props} p2OverrideRef={p2OverrideRef} autoSplitRef={autoSplitRef} />;
       case "2v": return <Layout2V {...props} />;
       case "3": return <Layout3  {...props} />;
       case "4": return <Layout4  {...props} />;
