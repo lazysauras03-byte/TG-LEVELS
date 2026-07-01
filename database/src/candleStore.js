@@ -441,8 +441,11 @@ function extractContractExpiry(fullSymbol) {
 
 /**
  * True if a parsed contract is GUARANTEED expired, with zero dependency on
- * an NSE/BSE/MCX holiday calendar (which this codebase does not have — see
- * the known limitation noted in futuresUtils.js).
+ * an NSE/BSE/MCX holiday calendar. (A holiday calendar now exists —
+ * backend/src/data/holidays.js — and is used by symbolsRouter.js and the
+ * frontend options-chain display for exact-day expiry calculations. This
+ * function intentionally does NOT use it: pruning is safety-critical, so
+ * it stays at month/day granularity on purpose — see below.)
  *
  *   monthly — actual expiry always falls ON OR BEFORE the last trading day
  *             of its contract month (holidays can only push it EARLIER in

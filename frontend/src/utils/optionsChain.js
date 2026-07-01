@@ -4,6 +4,8 @@
 // Supports: NSE equities, NSE/BSE indices, MCX commodities.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { previousTradingDay } from "./holidayCalendar";
+
 // ── Month codes ───────────────────────────────────────────────────────────────
 const MONTH_CODES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
@@ -145,16 +147,24 @@ function mcxNearMonthOffset(root, now = new Date()) {
 // the first expiry shown here always matches the contract month shown
 // in the Commodity tab and Futures tab of the search bar.
 //
-// NSE equities/indices: last Thursday of the month (exchange rule, exact) —
+// NSE equities/indices (monthly-only underlyings — BANKNIFTY, FINNIFTY,
+// MIDCPNIFTY, NIFTYIT, and all single-stock F&O): last TUESDAY of the month,
+// holiday-adjusted. NSE moved its monthly/quarterly/half-yearly expiry from
+// the last Thursday to the last Tuesday of the month effective contracts
+// expiring on/after 1 Sep 2025 (NSE circular Ref. 111/2025). If that
+// computed last-Tuesday falls on an exchange holiday, actual expiry shifts
+// to the previous trading day — see holidayCalendar.js.
 // EXCEPT NIFTY/SENSEX, which also trade WEEKLY (see INDEX_WEEKLY_EXPIRY_DAY)
 // and so must list every week's expiry, not just the monthly one. Before this
 // fix, nextMonthlyExpiries always jumped straight to lastThursdayOfMonth(),
-// which IS a real SENSEX/NIFTY expiry (the monthly one) but skips every
-// weekly expiry before it in the same month — e.g. on 26 Jun 2026 it returned
-// "30 JUL" as the nearest SENSEX expiry, when the true nearest expiry is the
-// next Thursday, "02 JUL".
+// which used the WRONG weekday (Thursday, pre-Sep-2025 rule) AND skipped
+// every weekly expiry before the month-end one — e.g. on 26 Jun 2026 it
+// returned "30 JUL" as the nearest SENSEX expiry, when the true nearest
+// expiry is the next Thursday, "02 JUL".
 // MCX commodities: approximate expiry day per commodity (MCX publishes exact
-// date via monthly circular; `approx: true` flags this in the UI).
+// date via monthly circular; `approx: true` flags this in the UI). Holiday
+// adjustment is applied here too (MCX's own 4 full-closure holidays only),
+// which only ever refines the approximation — never makes it less accurate.
 export function nextMonthlyExpiries(count = 3, commodityRoot = null, indexRoot = null) {
   // Silver Micro uses WEEKLY expiries (every Friday), not monthly
   if (commodityRoot && WEEKLY_EXPIRY_COMMODITIES.has(commodityRoot)) {
@@ -184,9 +194,13 @@ export function nextMonthlyExpiries(count = 3, commodityRoot = null, indexRoot =
     let y = year + Math.floor(m / 12);
     m = m % 12;
 
-    const expDate = approxDay
+    let expDate = approxDay
       ? clampToLastDayOfMonth(y, m, approxDay)
-      : lastThursdayOfMonth(y, m);
+      : lastWeekdayOfMonth(y, m, 2); // 2 = Tuesday (NSE rule since 1 Sep 2025)
+
+    // Holiday-adjust: if the computed date lands on an exchange holiday,
+    // the exchange itself shifts expiry to the previous trading day.
+    expDate = previousTradingDay(expDate, approxDay ? "MCX" : "NSE");
 
     // For NSE (no approxDay), skip months whose expiry has already passed
     if (!approxDay) {
@@ -226,22 +240,36 @@ const FYERS_WEEKLY_MONTH_CHAR = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "O
 // options (Tuesday/Thursday, fyersWeeklyCode:true — uses Fyers' actual
 // {YY}{monthChar}{DD} weekly symbol format, confirmed against real examples).
 function nextWeeklyExpiries(count, weekday, { fyersWeeklyCode }) {
+  // Holiday adjustment: index weekly (fyersWeeklyCode:true) is exact
+  // per-exchange — Tuesday belongs to NSE, Thursday to BSE. MCX weekly
+  // (Friday, SILVERMIC) uses MCX's own 4-holiday calendar. If neither
+  // applies (shouldn't happen given current callers) skip adjustment.
+  const exchange = fyersWeeklyCode
+    ? (weekday === 4 ? "BSE" : "NSE")
+    : "MCX";
+  const seenKeys = new Set();
+
   const results = [];
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() + 1); // start from tomorrow
   while (results.length < count) {
     if (d.getDay() === weekday) {
-      const dd = String(d.getDate()).padStart(2, "0");
-      const mon = MONTH_CODES[d.getMonth()];
-      const yy = String(d.getFullYear()).slice(-2);
-      results.push({
-        label: `${dd} ${mon}`,
-        code: fyersWeeklyCode ? `${yy}${FYERS_WEEKLY_MONTH_CHAR[d.getMonth()]}${dd}` : `${yy}${mon}`,
-        date: new Date(d),
-        approx: !fyersWeeklyCode, // MCX weekly stays "approx" as before; index weekly is exact (exchange-published rule)
-        weekly: true,
-      });
+      const adjusted = previousTradingDay(d, exchange);
+      const key = adjusted.toISOString().slice(0, 10);
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        const dd = String(adjusted.getDate()).padStart(2, "0");
+        const mon = MONTH_CODES[adjusted.getMonth()];
+        const yy = String(adjusted.getFullYear()).slice(-2);
+        results.push({
+          label: `${dd} ${mon}`,
+          code: fyersWeeklyCode ? `${yy}${FYERS_WEEKLY_MONTH_CHAR[adjusted.getMonth()]}${dd}` : `${yy}${mon}`,
+          date: adjusted,
+          approx: !fyersWeeklyCode, // MCX weekly stays "approx" as before; index weekly is exact (exchange-published rule)
+          weekly: true,
+        });
+      }
     }
     d.setDate(d.getDate() + 1);
   }
@@ -253,9 +281,14 @@ function clampToLastDayOfMonth(year, month, day) {
   return new Date(year, month, Math.min(day, lastDay));
 }
 
-function lastThursdayOfMonth(year, month) {
+// Generic "last <weekday> of month" finder — weekday: 0=Sun..6=Sat.
+// Replaces the old hardcoded lastThursdayOfMonth() now that the NSE monthly
+// rule is Tuesday (2), not Thursday (4). BSE monthly (Thursday) is handled
+// via the weekly-expiry branch for SENSEX (INDEX_WEEKLY_EXPIRY_DAY), since
+// SENSEX is the only BSE underlying with options in this codebase.
+function lastWeekdayOfMonth(year, month, weekday) {
   const d = new Date(year, month + 1, 0); // last day of month
-  while (d.getDay() !== 4) d.setDate(d.getDate() - 1);
+  while (d.getDay() !== weekday) d.setDate(d.getDate() - 1);
   return new Date(d);
 }
 

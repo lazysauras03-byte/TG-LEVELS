@@ -38,6 +38,7 @@
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
+const { previousTradingDay } = require("../data/holidays");
 
 const router = express.Router();
 
@@ -194,8 +195,13 @@ const INDEX_FUT_ROOTS = {
 const NSE_EXPIRY_DOW = 2; // Tuesday
 function nseNearMonthOffset(from = new Date()) {
   // Last Tuesday of the current month, at midnight.
-  const lastTue = new Date(from.getFullYear(), from.getMonth() + 1, 0); // last calendar day of month
+  let lastTue = new Date(from.getFullYear(), from.getMonth() + 1, 0); // last calendar day of month
   while (lastTue.getDay() !== NSE_EXPIRY_DOW) lastTue.setDate(lastTue.getDate() - 1);
+  // Holiday adjustment: if that Tuesday is an exchange holiday, real expiry
+  // shifted to the previous trading day — without this, the roll decision
+  // could stay "current month" for an extra day or two after the contract
+  // actually expired (matching the same fix applied in optionsChain.js).
+  lastTue = previousTradingDay(lastTue, "NSE");
   const expiryClose = new Date(lastTue);
   expiryClose.setHours(15, 30, 0, 0);
   return from.getTime() > expiryClose.getTime() ? 1 : 0;

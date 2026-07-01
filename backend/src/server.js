@@ -937,6 +937,35 @@ server.listen(PORT, async () => {
           console.log("[Recovery] Status emitter connected to WebSocket");
         }
 
+        // ── Periodic broker-drift sync (was dead code — never called) ──────
+        // recoveryEngine.periodicSync() was fully implemented (compares DB's
+        // latest 1m candle vs the broker's, upserts any gap, or falls back
+        // to a full day repair) but nothing anywhere ever called it — grepped
+        // the entire backend/src and found zero callers. Wiring it here,
+        // scoped to only the symbols someone actually has open right now
+        // (getLiveBroadcastSymbols(), same TTL-expiring set used for tick
+        // subscriptions) so this can't turn into a 205-symbol Fyers-hammering
+        // loop — it only ever checks charts a real client is looking at.
+        if (recoveryEngine) {
+          setInterval(async () => {
+            try {
+              if (!isTradingDay()) return;
+              const activeSymbols = getLiveBroadcastSymbols();
+              if (activeSymbols.length === 0) return;
+              for (const symbol of activeSymbols) {
+                if (!isLiveMarket(symbol)) continue;
+                await recoveryEngine.periodicSync({
+                  symbol,
+                  fetchCandles: (sym, res) => fetchCandles(sym, res),
+                });
+              }
+            } catch (e) {
+              console.warn("[PeriodicSync] Sweep error:", e.message);
+            }
+          }, 5 * 60 * 1000); // every 5 minutes
+          console.log("[PeriodicSync] Wired — checking actively-viewed symbols every 5 minutes during market hours");
+        }
+
         // ── Startup gap scan: validate all curated symbols, repair gaps ────
         // Runs after initialRestFetch completes so we don't race with it.
         // Throttled: 3 symbols at a time with 1s delay between batches to
@@ -1046,6 +1075,46 @@ server.listen(PORT, async () => {
             }
           }
           console.log(`[Recovery] Startup scan complete — ${clean} clean, ${repaired} repaired, ${skippedKnown} skipped (known short day) out of ${curatedSymbols.length} symbols`);
+
+          // ── Boot-time proactive staleness sweep (P4) ──────────────────
+          // PROBLEM: ensureFreshOneMinData() (see above) only fires
+          // REACTIVELY — the moment a client actually requests that exact
+          // symbol's chart. Nothing swept the curated symbol list
+          // proactively on restart, so a symbol nobody happened to open
+          // yet could sit with a silent gap (e.g. server was down for a
+          // chunk of a live session) until someone finally loaded its
+          // chart — at which point the FIRST render would still show the
+          // stale data before the reactive check caught up.
+          // FIX: reuse the exact same ensureFreshOneMinData() logic (same
+          // throttle map, same 3-min tolerance, same cheap 2-day delta
+          // fetch) but drive it here, once, for every curated symbol,
+          // right after the gap scan finishes and before any client has
+          // necessarily asked for these symbols.
+          console.log(`[Staleness] Boot sweep: checking ${curatedSymbols.length} curated symbols for staleness...`);
+          let staleFound = 0;
+          const SWEEP_CONCURRENCY = 5;
+          for (let i = 0; i < curatedSymbols.length; i += SWEEP_CONCURRENCY) {
+            const batch = curatedSymbols.slice(i, i + SWEEP_CONCURRENCY);
+            await Promise.all(batch.map(async (symbol) => {
+              try {
+                if (!isLiveMarket(symbol)) return; // ensureFreshOneMinData no-ops anyway, skip the DB round-trip
+                const latest = await db.getLatestCandle(symbol, 1);
+                if (!latest) return; // symbol has no 1m data yet — nothing to check staleness against
+                const before = latest.time;
+                await ensureFreshOneMinData(symbol, [latest]);
+                // ensureFreshOneMinData logs its own [Staleness] line when it
+                // actually backfills something; we just tally here for the summary.
+                const after = await db.getLatestCandle(symbol, 1).catch(() => null);
+                if (after && after.time > before) staleFound++;
+              } catch (e) {
+                console.warn(`[Staleness] Boot sweep error for ${symbol}:`, e.message);
+              }
+            }));
+            if (i + SWEEP_CONCURRENCY < curatedSymbols.length) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          }
+          console.log(`[Staleness] Boot sweep complete — ${staleFound} symbol(s) backfilled`);
         });
 
       } else {

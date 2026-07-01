@@ -39,9 +39,19 @@ export default function OptionsChainModal({ isOpen, onClose, underlying, spot, l
 
   // nextMonthlyExpiries uses the same roll logic as symbolsRouter so the
   // first expiry tab always matches the contract month shown in search results.
+  //
+  // BUG FIX: this call never passed the 3rd arg (indexRoot), so the
+  // "NIFTY/SENSEX trade weekly" branch inside nextMonthlyExpiries() was
+  // never reached from the real UI — NIFTY and SENSEX silently fell through
+  // to the generic monthly-only path, showing the wrong expiry tabs (missing
+  // every weekly expiry, and using the wrong weekday for the monthly one).
+  // Passing `isIndex ? root : null` lets nextMonthlyExpiries look up
+  // INDEX_WEEKLY_EXPIRY_DAY[root] itself — it already no-ops correctly for
+  // every other index (BANKNIFTY/FINNIFTY/MIDCPNIFTY/NIFTYIT), which aren't
+  // in that table and fall through to the monthly-only path as intended.
   const expiries = useMemo(
-    () => nextMonthlyExpiries(isWeeklyExpiry ? 4 : 3, isCommodity ? root : null),
-    [isCommodity, isWeeklyExpiry, root]
+    () => nextMonthlyExpiries(isWeeklyExpiry ? 4 : 3, isCommodity ? root : null, isIndex ? root : null),
+    [isCommodity, isIndex, isWeeklyExpiry, root]
   );
 
   // Pass override step for commodities; for indices pass the root so INDEX_STRIKE_STEPS kicks in
