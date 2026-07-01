@@ -55,6 +55,15 @@
   overflow: hidden;
 }
 
+/* 3 Side-by-Side: row container with two col dividers, 3 equal panels */
+.layout-3h {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* 4 Panels: left col (2 rows) | right col (2 rows) */
 .layout-4 {
   display: flex;
@@ -403,6 +412,7 @@ button.report-link {
 @media (max-width: 600px) {
 
   .layout-2h,
+  .layout-3h,
   .layout-3,
   .layout-4 {
     flex-direction: column !important;

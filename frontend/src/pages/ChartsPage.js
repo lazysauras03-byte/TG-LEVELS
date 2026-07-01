@@ -422,54 +422,34 @@ const ChartPanel = memo(function ChartPanel({
     const ceSymbol = optionSymbol(info.exch, info.root, nearestExpiry.code, atmStrike, "CE");
     const peSymbol = optionSymbol(info.exch, info.root, nearestExpiry.code, atmStrike, "PE");
 
-    // Store the split payload on the shared ref so Layout2H reads it on mount
-    if (panelActionsRef?.p2OverrideRef) {
-      panelActionsRef.p2OverrideRef.current = { ceSymbol, peSymbol, resolution };
+    // layoutId switching from "1" (LayoutSingle) to "2h" (Layout2H) fully
+    // unmounts and remounts every panel — they're different component types
+    // at the same tree position, so React tears down the old subtree and
+    // builds a fresh one. The "p0" key does NOT survive that. So imperative
+    // calls like handleSymbolChange() here would only run on the outgoing
+    // panel instance and be thrown away. Both CE and PE must instead be
+    // handed to the FRESH panels via the override ref, read once on mount.
+    if (panelActionsRef?.current?.p2OverrideRef) {
+      panelActionsRef.current.p2OverrideRef.current = { ceSymbol, peSymbol, resolution };
     }
     // Store the original spot so Esc can restore it
-    if (panelActionsRef?.autoSplitRef) {
-      panelActionsRef.autoSplitRef.current = { symbol, resolution };
+    if (panelActionsRef?.current?.autoSplitRef) {
+      panelActionsRef.current.autoSplitRef.current = { symbol, resolution };
     }
-    // Load CE into THIS panel (panel 0 / left)
-    handleSymbolChange(ceSymbol);
-    handleRefresh(ceSymbol, resolution);
-    // Auto-enable Auto-ATM on both panels so the split immediately live-tracks
-    // the ATM strike as spot moves.
-    // Panel 0 is already mounted — flip its state directly via panelActionsRef.
-    panelActionsRef.current?.enableAutoAtm?.();
-    // Panel 1 mounts fresh when layout switches — set pref so its useState inits to true.
+    // Both fresh panels read these prefs on their own useState init — this is
+    // the only autoAtm mechanism that survives the remount.
     savePref("autoAtm", true);   // panel 0 pfx=""
     savePref("p2_autoAtm", true); // panel 1 pfx="p2_"
-    // Switch to 2h layout — panel 1 (right) mounts fresh and reads p2OverrideRef
-    if (panelActionsRef?.triggerLayout) panelActionsRef.triggerLayout("2h");
-  }, [symbol, candles, resolution, handleSymbolChange, handleRefresh, panelActionsRef]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Switch to 2h layout — both panels mount fresh and read p2OverrideRef
+    if (panelActionsRef?.current?.triggerLayout) panelActionsRef.current.triggerLayout("2h");
+  }, [symbol, candles, resolution, panelActionsRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── restoreSpot — Esc: return to the original spot symbol ─────────────────
-  const restoreSpot = useCallback((origSym, origRes) => {
-    if (!origSym) return;
-    handleSymbolChange(origSym);
-    handleRefresh(origSym, origRes || resolution);
-  }, [resolution, handleSymbolChange, handleRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // enableAutoAtm — called programmatically by openOptionsSplit to activate
-
-  // Auto-ATM on panel 0 immediately (panel 0 is already mounted when Ctrl+Q fires,
-
-  // so savePref alone won't flip its useState — we need the setter directly).
-
-  const enableAutoAtm = useCallback(() => setAutoAtmOn(true), []);
-
-
-
-  // Register openOptionsSplit + restoreSpot + enableAutoAtm on panelActionsRef
-
+  // Register openOptionsSplit on panelActionsRef — separate effect so it
+  // doesn't clobber the other registrations above.
   useEffect(() => {
-
     if (!isActivePanel || !panelActionsRef) return;
-
-    panelActionsRef.current = { ...panelActionsRef.current, openOptionsSplit, restoreSpot, enableAutoAtm };
-
-  }, [isActivePanel, openOptionsSplit, restoreSpot, enableAutoAtm, panelActionsRef]);
+    panelActionsRef.current = { ...panelActionsRef.current, openOptionsSplit };
+  }, [isActivePanel, openOptionsSplit, panelActionsRef]);
 
   // ── Symbol search modal ────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
@@ -810,6 +790,76 @@ function useDraggableSplit(dir, storageKey, min = 15, max = 85) {
   return [pct, containerRef, onMouseDown];
 }
 
+// ─── useDraggableSplit3 — two independent col dividers sharing one container,
+// for a 3-panel side-by-side layout. pctA is the left boundary (%), pctB is
+// the middle boundary (%); panel 3 fills the remainder. Each divider is
+// clamped against the other so panels can't cross or collapse past `min`.
+function useDraggableSplit3(storageKeyA, storageKeyB, min = 15) {
+  const [pctA, setPctA] = useState(() => loadPref(storageKeyA, 33.33));
+  const [pctB, setPctB] = useState(() => loadPref(storageKeyB, 66.66));
+  // Refs mirror the latest state so the mousemove listener (subscribed once)
+  // always clamps against current values without needing to re-subscribe on
+  // every drag tick.
+  const pctARef = useRef(pctA);
+  const pctBRef = useRef(pctB);
+  useEffect(() => { pctARef.current = pctA; }, [pctA]);
+  useEffect(() => { pctBRef.current = pctB; }, [pctB]);
+
+  const draggingRef = useRef(null); // "A" | "B" | null
+  const containerRef = useRef(null);
+
+  const onMouseDownA = useCallback((e) => {
+    e.preventDefault();
+    draggingRef.current = "A";
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+  const onMouseDownB = useCallback((e) => {
+    e.preventDefault();
+    draggingRef.current = "B";
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    function onMouseMove(e) {
+      if (!draggingRef.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const raw = ((e.clientX - rect.left) / rect.width) * 100;
+      if (draggingRef.current === "A") {
+        const clamped = Math.min(pctBRef.current - min, Math.max(min, raw));
+        pctARef.current = clamped;
+        setPctA(clamped);
+        savePref(storageKeyA, clamped);
+      } else {
+        const clamped = Math.min(100 - min, Math.max(pctARef.current + min, raw));
+        pctBRef.current = clamped;
+        setPctB(clamped);
+        savePref(storageKeyB, clamped);
+      }
+      window.dispatchEvent(new Event("resize"));
+    }
+    function onMouseUp() {
+      if (!draggingRef.current) return;
+      draggingRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.dispatchEvent(new Event("resize"));
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    // storageKeyA/storageKeyB/min are constant literals from the caller;
+    // pctA/pctB are read via refs at call time — intentional single subscription.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { pctA, pctB, containerRef, onMouseDownA, onMouseDownB };
+}
+
 // ─── Divider handle component ─────────────────────────────────────────────────
 function Divider({ dir, onMouseDown }) {
   const isCol = dir === "col";
@@ -830,14 +880,24 @@ function Divider({ dir, onMouseDown }) {
 // Layout renderers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
+function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps, restoreOverrideRef }) {
+  // Read the Esc-restore override ONCE on mount — if this mount was caused by
+  // Esc collapsing a Ctrl+Q split, restoreOverrideRef holds the original spot
+  // symbol/resolution to inject. After reading, null it out so a manual
+  // layout-switch to "1" later doesn't pick up a stale value.
+  const override = restoreOverrideRef?.current ?? null;
+  useEffect(() => {
+    if (restoreOverrideRef) restoreOverrideRef.current = null; // consumed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div className="layout-single">
       <ErrorBoundary minimal label="Panel 1">
         <ChartPanel
           key="p0" pfx="" panelIdx={0} panelCount={1}
           layoutId={layoutId} onLayoutChange={onLayoutChange}
-          urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+          urlSymbol={override ? override.symbol : urlParams.symbol}
+          urlResolution={override ? override.resolution : urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
           urlSrLines={urlParams.srLines}
           isActivePanel={toolbarProps.activePanel === 0}
@@ -871,8 +931,8 @@ function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps, p2Overrid
         <ErrorBoundary minimal label="Panel 1">
           <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2}
             layoutId={layoutId} onLayoutChange={onLayoutChange}
-            urlSymbol={urlParams.symbol}
-            urlResolution={urlParams.resolution}
+            urlSymbol={override ? override.ceSymbol : urlParams.symbol}
+            urlResolution={override ? override.resolution : urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget}
             urlFibDrawing={urlParams.fibDrawing}
             urlSrLines={urlParams.srLines}
@@ -984,6 +1044,53 @@ function Layout3({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   );
 }
 
+function Layout3H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
+  const { pctA, pctB, containerRef, onMouseDownA, onMouseDownB } = useDraggableSplit3("split3h_colA", "split3h_colB");
+  return (
+    <div className="layout-3h" ref={containerRef}>
+      <div className="layout-cell" style={{ width: `${pctA}%` }}>
+        <ErrorBoundary minimal label="Panel 1">
+          <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={3}
+            layoutId={layoutId} onLayoutChange={onLayoutChange}
+            urlSymbol={urlParams.symbol} urlResolution={urlParams.resolution}
+            urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
+            urlSrLines={urlParams.srLines}
+            isActivePanel={toolbarProps.activePanel === 0}
+            onPanelActivate={() => toolbarProps.setActivePanel(0)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
+      </div>
+      <Divider dir="col" onMouseDown={onMouseDownA} />
+      <div className="layout-cell" style={{ width: `${pctB - pctA}%` }}>
+        <ErrorBoundary minimal label="Panel 2">
+          <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={3}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 1}
+            onPanelActivate={() => toolbarProps.setActivePanel(1)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
+      </div>
+      <Divider dir="col" onMouseDown={onMouseDownB} />
+      <div className="layout-cell" style={{ flex: 1 }}>
+        <ErrorBoundary minimal label="Panel 3">
+          <ChartPanel key="p2" pfx="p3_" panelIdx={2} panelCount={3}
+            layoutId={undefined} onLayoutChange={undefined}
+            urlSymbol={null} urlResolution={null}
+            urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
+            isActivePanel={toolbarProps.activePanel === 2}
+            onPanelActivate={() => toolbarProps.setActivePanel(2)}
+            {...toolbarProps.shared}
+          />
+        </ErrorBoundary>
+      </div>
+    </div>
+  );
+}
+
 function Layout4({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   const [colPct, containerRef, onColMouseDown] = useDraggableSplit("col", "split4_col");
   const [rowPctL, leftRef, onRowLMouseDown] = useDraggableSplit("row", "split4_rowL");
@@ -1076,21 +1183,30 @@ export default function ChartsPage() {
     toggleHide: null, trashAll: null, drawingsHidden: false,
     openOptionsAtm: null,      // (kind: "CE"|"PE") => void — legacy internal use
     openOptionsSplit: null,    // () => void — Ctrl+Q: CE left + PE right auto-split
-    restoreSpot: null,         // (sym, res) => void — Esc: restore original spot
-    enableAutoAtm: null,       // () => void — programmatically turn Auto-ATM on
     openSearchWithQuery: null, // (firstChar: string) => void — type-to-search
     applyTypedTimeframe: null, // (digits: string) => void — type-a-number timeframe switch
   });
   const [activePanelHidden, setActivePanelHidden] = useState(false);
 
   // Auto-split refs — declared here so ALL effects and renderLayout can see them.
+  // Layout switches (layoutId "1" <-> "2h" <-> ...) always fully unmount and
+  // remount every panel — LayoutSingle and Layout2H are different component
+  // types at the same tree position, so React tears down the old subtree
+  // regardless of the "p0"/"p1" key props. That means the only way to hand a
+  // symbol into a panel across a layout switch is via one of these refs, read
+  // ONCE by the fresh panel on mount — never via an imperative call on the
+  // outgoing (about-to-unmount) panel instance.
+  //
   // autoSplitRef: non-null while the "2h" layout was auto-triggered by Ctrl+Q.
-  //   Stores { symbol, resolution } of original spot to restore on Esc.
-  //   Cleared on any manual layout/symbol touch so Esc only works on untouched splits.
+  //   Stores { symbol, resolution } of original spot. Cleared on any manual
+  //   layout/symbol touch so Esc only snaps back on an untouched split.
   // p2OverrideRef: { ceSymbol, peSymbol, resolution } read by Layout2H on mount
   //   to seed CE into panel 0 and PE into panel 1. Nulled out after consumed.
+  // restoreOverrideRef: { symbol, resolution } read by LayoutSingle on mount
+  //   when Esc collapses the split back to one panel. Nulled out after consumed.
   const autoSplitRef = useRef(null);
   const p2OverrideRef = useRef(null);
+  const restoreOverrideRef = useRef(null);
 
   // Attach layout-switching callback and split refs onto panelActionsRef so
   // ChartPanel can trigger the 2h split without needing these as props.
@@ -1134,10 +1250,13 @@ export default function ChartsPage() {
         const { symbol: origSym, resolution: origRes } = autoSplitRef.current;
         autoSplitRef.current = null;
         p2OverrideRef.current = null;
+        // LayoutSingle mounts fresh when layoutId flips to "1" — the outgoing
+        // panel instance is torn down, so the only way back to the original
+        // spot is via a ref the fresh panel reads on mount.
+        restoreOverrideRef.current = { symbol: origSym, resolution: origRes };
         setLayoutId("1");
         savePref("layoutId", "1");
         setActivePanel(0);
-        panelActionsRef.current?.restoreSpot?.(origSym, origRes);
         setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
         setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
       } else {
@@ -1288,9 +1407,10 @@ export default function ChartsPage() {
     switch (layoutId) {
       case "2h": return <Layout2H {...props} p2OverrideRef={p2OverrideRef} autoSplitRef={autoSplitRef} />;
       case "2v": return <Layout2V {...props} />;
+      case "3h": return <Layout3H {...props} />;
       case "3": return <Layout3  {...props} />;
       case "4": return <Layout4  {...props} />;
-      default: return <LayoutSingle {...props} />;
+      default: return <LayoutSingle {...props} restoreOverrideRef={restoreOverrideRef} />;
     }
   }
 
