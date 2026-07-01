@@ -56,6 +56,21 @@ const EXPIRY_GRACE_DAYS = 1; // roll this many days AFTER the approx expiry (nev
 // Commodities that trade WEEKLY options (every Friday expiry on MCX)
 export const WEEKLY_EXPIRY_COMMODITIES = new Set(["SILVERMIC"]);
 
+// ── Restricted contract-month cycles ─────────────────────────────────────
+// MUST stay in sync with symbolsRouter.js RESTRICTED_MONTH_CYCLE. Unlike
+// CRUDEOIL/NATURALGAS/COPPER etc (which list a new contract every single
+// calendar month), MCX's silver family does NOT trade every month — it only
+// lists contracts in a fixed cycle. Building an options-chain tab for a
+// month outside this cycle produces a symbol that was never listed, which
+// Fyers correctly rejects with "Invalid symbol provided" for every strike
+// in that tab. Confirmed via MCX expiry circulars: Feb, Apr, Jun, Aug, Nov, Dec.
+// (SILVERMIC is unaffected — it's routed through WEEKLY_EXPIRY_COMMODITIES
+// above and never reaches this monthly branch.)
+const RESTRICTED_MONTH_CYCLE = {
+  SILVER: [1, 3, 5, 7, 10, 11],   // 0-based: Feb, Apr, Jun, Aug, Nov, Dec
+  SILVERM: [1, 3, 5, 7, 10, 11],
+};
+
 // ── Index weekly expiry weekday ───────────────────────────────────────────────
 // SEBI's Oct-2024 circular limited weekly index options to ONE benchmark per
 // exchange: NSE kept NIFTY, BSE kept SENSEX. Every other index (BANKNIFTY,
@@ -179,20 +194,34 @@ export function nextMonthlyExpiries(count = 3, commodityRoot = null, indexRoot =
   const now = new Date();
   const results = [];
 
-  // For MCX: start from the near-month offset so we match symbolsRouter
-  // For NSE: start offset = 0 (current month), let the cutoff skip if passed
-  const startOffset = commodityRoot ? mcxNearMonthOffset(commodityRoot, now) : 0;
   const approxDay = commodityRoot ? MCX_EXPIRY_DAY[commodityRoot] : null;
+  const cycle = commodityRoot ? RESTRICTED_MONTH_CYCLE[commodityRoot] : null;
 
+  // For unrestricted MCX roots (every calendar month lists a contract): start
+  // from the near-month offset so we match symbolsRouter.
+  // For restricted-cycle roots (SILVER/SILVERM): don't pre-jump via
+  // mcxNearMonthOffset — that offset only knows about day-of-month, not which
+  // months are even valid. Instead walk forward from the current month and
+  // let the `cycle` check below skip non-listed months, and the cutoff check
+  // skip cycle months whose expiry has already passed this year.
+  // For NSE: start offset = 0 (current month), let the cutoff skip if passed.
   let year = now.getFullYear();
-  let month = now.getMonth() + startOffset; // 0-based, may exceed 11
-  year += Math.floor(month / 12);
-  month = month % 12;
+  let month = now.getMonth();
+  if (commodityRoot && !cycle) {
+    month += mcxNearMonthOffset(commodityRoot, now);
+    year += Math.floor(month / 12);
+    month = month % 12;
+  }
 
-  for (let i = 0; results.length < count; i++) {
+  let guard = 0;
+  for (let i = 0; results.length < count && guard < 60; i++, guard++) {
     let m = month + i;
     let y = year + Math.floor(m / 12);
     m = m % 12;
+
+    // Restricted-cycle commodities only list contracts in specific months —
+    // skip any month that was never a real listed contract.
+    if (cycle && !cycle.includes(m)) continue;
 
     let expDate = approxDay
       ? clampToLastDayOfMonth(y, m, approxDay)
@@ -202,14 +231,14 @@ export function nextMonthlyExpiries(count = 3, commodityRoot = null, indexRoot =
     // the exchange itself shifts expiry to the previous trading day.
     expDate = previousTradingDay(expDate, approxDay ? "MCX" : "NSE");
 
-    // For NSE (no approxDay), skip months whose expiry has already passed
-    if (!approxDay) {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - 1);
-      if (expDate < cutoff) continue;
-    }
-    // For MCX, we trust the offset calculation — no additional cutoff check
-    // needed because mcxNearMonthOffset() already ensures we start fresh.
+    // Skip months whose expiry (+ grace period for MCX) has already passed.
+    // For unrestricted MCX roots this never actually triggers (offset above
+    // already starts on a fresh month), but for restricted-cycle roots this
+    // is essential — e.g. if today is just past Aug's expiry, Aug must be
+    // skipped in favour of Nov, not re-shown.
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - (approxDay ? (1 + EXPIRY_GRACE_DAYS) : 1));
+    if (expDate < cutoff) continue;
 
     const dd = String(expDate.getDate()).padStart(2, "0");
     const mon = MONTH_CODES[m];
