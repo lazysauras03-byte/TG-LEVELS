@@ -391,6 +391,123 @@ async function pruneOldCandles(symbol = null, resolution = 1, retentionDays = 36
   return rows.length;
 }
 
+/**
+ * Identify a Fyers option/futures ticker and extract its contract expiry,
+ * without needing a holiday calendar (see architecture note below).
+ *
+ * Recognized formats (ticker = symbol with "EXCH:" prefix stripped):
+ *   Monthly future : ROOT + YY + MON(3-letter) + "FUT"        e.g. RELIANCE26JUNFUT
+ *   Monthly option : ROOT + YY + MON(3-letter) + STRIKE + CE/PE  e.g. NIFTY26JUL24000CE
+ *   Weekly option  : ROOT + YY + monthChar(1) + DD + STRIKE + CE/PE  e.g. NIFTY26712000CE
+ *                    (Fyers weekly month char: 1-9, O=Oct, N=Nov, D=Dec)
+ *
+ * Returns null for anything that doesn't match (equities, indices, EQ
+ * chains, MCX -I style tickers, malformed symbols) — those are never
+ * touched by pruneExpiredContracts().
+ *
+ * @returns {null | {kind:'monthly', year:number, month:number} | {kind:'weekly', year:number, month:number, day:number}}
+ */
+const EXPIRY_MONTH_CODES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const EXPIRY_WEEKLY_MONTH_CHAR = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "O", "N", "D"];
+
+function extractContractExpiry(fullSymbol) {
+  if (!fullSymbol) return null;
+  const colonIdx = fullSymbol.indexOf(":");
+  const ticker = colonIdx >= 0 ? fullSymbol.slice(colonIdx + 1) : fullSymbol;
+
+  // Monthly future: ...YYMONFUT
+  let m = ticker.match(/^[A-Z0-9]+?(\d{2})([A-Z]{3})FUT$/);
+  if (m && EXPIRY_MONTH_CODES.includes(m[2])) {
+    return { kind: "monthly", year: 2000 + parseInt(m[1], 10), month: EXPIRY_MONTH_CODES.indexOf(m[2]) };
+  }
+
+  // Monthly option: ...YYMON<strike>CE/PE
+  m = ticker.match(/^[A-Z0-9]+?(\d{2})([A-Z]{3})\d+(?:\.\d+)?(CE|PE)$/);
+  if (m && EXPIRY_MONTH_CODES.includes(m[2])) {
+    return { kind: "monthly", year: 2000 + parseInt(m[1], 10), month: EXPIRY_MONTH_CODES.indexOf(m[2]) };
+  }
+
+  // Weekly option (Fyers date-coded): ...YY<monthChar><DD><strike>CE/PE
+  m = ticker.match(/^[A-Z0-9]+?(\d{2})([1-9OND])(\d{2})\d+(?:\.\d+)?(CE|PE)$/);
+  if (m) {
+    const year = 2000 + parseInt(m[1], 10);
+    const month = EXPIRY_WEEKLY_MONTH_CHAR.indexOf(m[2]);
+    const day = parseInt(m[3], 10);
+    if (month >= 0 && day >= 1 && day <= 31) return { kind: "weekly", year, month, day };
+  }
+
+  return null;
+}
+
+/**
+ * True if a parsed contract is GUARANTEED expired, with zero dependency on
+ * an NSE/BSE/MCX holiday calendar (which this codebase does not have — see
+ * the known limitation noted in futuresUtils.js).
+ *
+ *   monthly — actual expiry always falls ON OR BEFORE the last trading day
+ *             of its contract month (holidays can only push it EARLIER in
+ *             the month, never into the next month). So once the calendar
+ *             has fully rolled past that month, expiry is 100% guaranteed
+ *             — no day-of-week / holiday math needed at all.
+ *   weekly  — same logic at day granularity: the coded date is the latest
+ *             possible expiry (a holiday can only move it to an earlier
+ *             trading day), so once that calendar date has passed, expiry
+ *             is guaranteed.
+ *
+ * This trades a little lateness (a contract that actually expired a few
+ * days early due to a holiday stays in the DB a few extra days) for zero
+ * risk of ever deleting a still-live contract's data.
+ */
+function isContractExpired(info, now = new Date()) {
+  if (!info) return false;
+  if (info.kind === "monthly") {
+    const nowKey = now.getFullYear() * 12 + now.getMonth();
+    const infoKey = info.year * 12 + info.month;
+    return infoKey < nowKey;
+  }
+  if (info.kind === "weekly") {
+    const expiryDay = new Date(info.year, info.month, info.day);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return expiryDay < todayStart;
+  }
+  return false;
+}
+
+/**
+ * Delete ALL stored 1m candles for option/futures contracts whose expiry
+ * has definitely passed (see isContractExpired for the safety rule).
+ * Equities, indices, and anything not matching a recognized option/futures
+ * ticker format are left completely untouched.
+ *
+ * Safe to call repeatedly (idempotent) — called once at server startup and
+ * again on a periodic sweep so contracts get cleaned up mid-session too,
+ * not just after a restart.
+ *
+ * @returns {Promise<{symbolsPruned:number, candlesDeleted:number, symbols:string[]}>}
+ */
+async function pruneExpiredContracts(now = new Date()) {
+  const rows = await query("SELECT DISTINCT symbol FROM candles", []);
+
+  let symbolsPruned = 0;
+  let candlesDeleted = 0;
+  const symbols = [];
+
+  for (const row of rows) {
+    const symbol = row.symbol;
+    const info = extractContractExpiry(symbol);
+    if (!info || !isContractExpired(info, now)) continue;
+
+    const deleted = await deleteAllCandles(symbol);
+    if (deleted > 0) {
+      symbolsPruned++;
+      candlesDeleted += deleted;
+      symbols.push(symbol);
+    }
+  }
+
+  return { symbolsPruned, candlesDeleted, symbols };
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function isValidCandle(c) {
@@ -416,6 +533,9 @@ module.exports = {
   replaceAllCandles,
   deleteAllCandles,
   pruneOldCandles,
+  pruneExpiredContracts,
+  extractContractExpiry,
+  isContractExpired,
   loadCandles,
   getLatestCandle,
   countCandles,

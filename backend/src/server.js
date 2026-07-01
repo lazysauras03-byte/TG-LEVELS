@@ -908,6 +908,29 @@ server.listen(PORT, async () => {
         const pruned = await db.pruneOldCandles(null, 1, 365);
         if (pruned > 0) console.log(`[DB] Pruned ${pruned} old candles (>365 days)`);
 
+        // Prune expired options/futures contracts (e.g. last month's FUT/CE/PE
+        // symbols once the calendar has rolled into a new month, or weekly
+        // options once their coded expiry date has passed). See
+        // pruneExpiredContracts() in candleStore.js for the expiry-safety
+        // rule — equities/indices are never touched by this.
+        const expiredResult = await db.pruneExpiredContracts();
+        if (expiredResult.symbolsPruned > 0) {
+          console.log(`[DB] Pruned ${expiredResult.symbolsPruned} expired contract(s), ${expiredResult.candlesDeleted} candles: ${expiredResult.symbols.slice(0, 10).join(", ")}${expiredResult.symbols.length > 10 ? ", ..." : ""}`);
+        }
+        // Re-run periodically so contracts get cleaned up mid-session too —
+        // not just on the next restart (e.g. weekly options expiring on a
+        // Tuesday while the server has been up since last Friday).
+        setInterval(async () => {
+          try {
+            const r = await db.pruneExpiredContracts();
+            if (r.symbolsPruned > 0) {
+              console.log(`[DB] Periodic sweep: pruned ${r.symbolsPruned} expired contract(s), ${r.candlesDeleted} candles`);
+            }
+          } catch (e) {
+            console.warn("[DB] Periodic expired-contract prune failed:", e.message);
+          }
+        }, 6 * 60 * 60 * 1000); // every 6 hours
+
         // ── Wire up recovery engine WebSocket emitter ──────────────────────
         if (recoveryEngine) {
           recoveryEngine.injectStatusEmitter((event, data) => io.emit(event, data));
