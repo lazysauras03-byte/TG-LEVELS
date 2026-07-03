@@ -52,10 +52,10 @@ const T = Date.now() - (Date.now() % 60000); // aligned to a clean minute bounda
 // Real, valid ticker shapes (parser's root regex is [A-Z0-9]+ only — no
 // underscores/separators), scoped to this test purely via the timestamp T
 // used below, which is exact-matched on cleanup.
-const SPOT_SYMBOL     = "NSE:RELIANCE-EQ";
-const OPTION_SYMBOL   = "NSE:NIFTY26JUL24000CE";
+const SPOT_SYMBOL = "NSE:RELIANCE-EQ";
+const OPTION_SYMBOL = "NSE:NIFTY26JUL24000CE";
 const OPTION_SYMBOL_2 = "NSE:NIFTY26JUL24500CE"; // different strike, same underlying/expiry/time
-const FUTURE_SYMBOL   = "MCX:CRUDEOILM26AUGFUT";
+const FUTURE_SYMBOL = "MCX:CRUDEOILM26AUGFUT";
 
 async function cleanup() {
   await query("DELETE FROM candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [SPOT_SYMBOL, T]);
@@ -74,10 +74,10 @@ async function main() {
     const n = await router.upsertCandles(SPOT_SYMBOL, 1, [candle]);
     assert.strictEqual(n, 1);
 
-    const inCandles = await query("SELECT * FROM candles WHERE symbol=$1", [SPOT_SYMBOL]);
+    const inCandles = await query("SELECT * FROM candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [SPOT_SYMBOL, T]);
     assert.strictEqual(inCandles.length, 1);
 
-    const inOptions = await query("SELECT * FROM nse_options_candles WHERE symbol=$1", [SPOT_SYMBOL]);
+    const inOptions = await query("SELECT * FROM nse_options_candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [SPOT_SYMBOL, T]);
     assert.strictEqual(inOptions.length, 0);
   });
 
@@ -86,14 +86,14 @@ async function main() {
     const n = await router.upsertCandles(OPTION_SYMBOL, 1, [candle]);
     assert.strictEqual(n, 1);
 
-    const inOptions = await query("SELECT * FROM nse_options_candles WHERE symbol=$1", [OPTION_SYMBOL]);
+    const inOptions = await query("SELECT * FROM nse_options_candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [OPTION_SYMBOL, T]);
     assert.strictEqual(inOptions.length, 1);
     assert.strictEqual(inOptions[0].underlying, "NIFTY");
     assert.strictEqual(Number(inOptions[0].strike), 24000);
     assert.strictEqual(inOptions[0].option_type, "CE");
     assert.strictEqual(inOptions[0].expiry_type, "monthly");
 
-    const inCandles = await query("SELECT * FROM candles WHERE symbol=$1", [OPTION_SYMBOL]);
+    const inCandles = await query("SELECT * FROM candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [OPTION_SYMBOL, T]);
     assert.strictEqual(inCandles.length, 0);
   });
 
@@ -102,11 +102,11 @@ async function main() {
     const n = await router.upsertCandles(FUTURE_SYMBOL, 1, [candle]);
     assert.strictEqual(n, 1);
 
-    const inFutures = await query("SELECT * FROM mcx_futures_candles WHERE symbol=$1", [FUTURE_SYMBOL]);
+    const inFutures = await query("SELECT * FROM mcx_futures_candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [FUTURE_SYMBOL, T]);
     assert.strictEqual(inFutures.length, 1);
     assert.strictEqual(inFutures[0].underlying, "CRUDEOILM");
 
-    const inCandles = await query("SELECT * FROM candles WHERE symbol=$1", [FUTURE_SYMBOL]);
+    const inCandles = await query("SELECT * FROM candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [FUTURE_SYMBOL, T]);
     assert.strictEqual(inCandles.length, 0);
   });
 
@@ -117,7 +117,7 @@ async function main() {
     const n = await router.upsertCandles(OPTION_SYMBOL, 1, [updated]);
     assert.strictEqual(n, 1);
 
-    const rows = await query("SELECT * FROM nse_options_candles WHERE symbol=$1", [OPTION_SYMBOL]);
+    const rows = await query("SELECT * FROM nse_options_candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [OPTION_SYMBOL, T]);
     assert.strictEqual(rows.length, 1, "must still be exactly 1 row, not 2");
     assert.strictEqual(Number(rows[0].close), 58, "value should have updated to the new close");
     assert.strictEqual(Number(rows[0].volume), 999);
@@ -140,7 +140,7 @@ async function main() {
   });
 
   await check("router.loadCandles returns correct row for future symbol", async () => {
-    const rows = await router.loadCandles(FUTURE_SYMBOL, 1, {});
+    const rows = await router.loadCandles(FUTURE_SYMBOL, 1, { from: T, to: T });
     assert.strictEqual(rows.length, 1);
     assert.strictEqual(rows[0].time, T);
     assert.strictEqual(rows[0].close, 6020);
@@ -153,8 +153,8 @@ async function main() {
     const candleB = { time: T, open: 30, high: 35, low: 28, close: 32, volume: 150 }; // 24500 CE
     await router.upsertCandles(OPTION_SYMBOL_2, 1, [candleB]);
 
-    const rowA = await query("SELECT * FROM nse_options_candles WHERE symbol=$1", [OPTION_SYMBOL]);
-    const rowB = await query("SELECT * FROM nse_options_candles WHERE symbol=$1", [OPTION_SYMBOL_2]);
+    const rowA = await query("SELECT * FROM nse_options_candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [OPTION_SYMBOL, T]);
+    const rowB = await query("SELECT * FROM nse_options_candles WHERE symbol=$1 AND time=to_timestamp($2/1000.0)", [OPTION_SYMBOL_2, T]);
     assert.strictEqual(rowA.length, 1);
     assert.strictEqual(rowB.length, 1);
     assert.notStrictEqual(Number(rowA[0].strike), Number(rowB[0].strike));
