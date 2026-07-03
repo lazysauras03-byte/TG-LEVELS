@@ -549,11 +549,16 @@ async function loadFromDB(symbol, resolution) {
 
 async function fetchAndProcess(symbol = SYMBOL || "NSE:NIFTY50-INDEX", resolution = RESOLUTION) {
   // ── 1. DB-first ──────────────────────────────────────────────────────────
-  // Skip DB for option contracts (CE/PE) — they are never pre-seeded and the
-  // DB will always be empty for them. Go straight to Fyers with a short lookback.
-  const colonIdx2 = symbol.indexOf(":");
-  const ticker2 = colonIdx2 >= 0 ? symbol.slice(colonIdx2 + 1) : symbol;
-  const dbHit = OPTION_SUFFIX_RE.test(ticker2) ? null : await loadFromDB(symbol, resolution);
+  // CHANGED: previously this skipped the DB entirely for option contracts
+  // (CE/PE) because "the DB will always be empty for them" — true when this
+  // was written, no longer true now that options are routed into
+  // nse_options_candles/mcx_options_candles (see database/src/dataRouter.js)
+  // and backfilled from history. loadFromDB() already returns null when the
+  // DB genuinely has nothing for a symbol (brand-new contract not yet
+  // written), so it falls through to the Fyers path below exactly as
+  // before for those — this just stops UNCONDITIONALLY bypassing the DB
+  // for every option on every request.
+  const dbHit = await loadFromDB(symbol, resolution);
   if (dbHit) {
     const { candles, oneMinCandles } = dbHit;
     console.log(`[DB-first] ${symbol} res=${resolution}m → ${candles.length} candles from DB`);
