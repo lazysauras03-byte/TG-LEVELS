@@ -791,13 +791,17 @@ io.on("connection", (socket) => {
   if (currentSymbol) socketSymbols.set(socket.id, currentSymbol);
   socket.join(`res:${currentResolution}`);
 
-  // Only push cached data if we have a known default symbol with data already loaded
-  if (currentSymbol) {
-    const initialCache = getCache(currentSymbol, currentResolution);
-    if (initialCache.result && initialCache.candles.length > 0) {
-      socket.emit("chart_update", buildPayload(initialCache.candles, initialCache.result, currentSymbol, currentResolution, true));
-    }
-  }
+  // RACE-CONDITION FIX: previously this pushed the *default* SYMBOL's cached
+  // chart_update to every socket immediately on raw connect, before the
+  // client had a chance to say which symbol it actually wants. If that push
+  // landed before the client's own activeSymbolRef was set (a real timing
+  // race, not hypothetical — confirmed via code trace), the frontend's
+  // matchesActive() guard would accept it (nothing to compare against yet),
+  // stomping the chart with the wrong symbol's data and price/date — and
+  // could then keep rejecting the *correct* update afterward since the ref
+  // was now stuck on the wrong symbol. Fix: don't push anything until the
+  // client tells us (via set_symbol) which symbol it's actually watching —
+  // see the cache push inside the set_symbol handler below instead.
   socket.emit("market_status", { tickStreamActive: tickStream.isConnected(), liveMarket: isAnyMarketLive(getActiveTickSymbols()), tradingDay: isTradingDay(), ticksFlowing: ticksFlowing() });
 
   // TICK-STREAM + DUAL-PANEL FIX:
@@ -810,6 +814,14 @@ io.on("connection", (socket) => {
     currentSymbol = sym;
     socketSymbols.set(socket.id, sym);
     console.log(`[WS] ${socket.id} → symbol=${sym}`);
+    // Fast-path: if we already have fresh cached data for THIS symbol (the
+    // one the client just confirmed), push it immediately instead of making
+    // the client wait for its own REST refresh() call to land. Safe because
+    // it's keyed to the symbol the client just told us it wants — no race.
+    const initialCache = getCache(currentSymbol, currentResolution);
+    if (initialCache.result && initialCache.candles.length > 0) {
+      socket.emit("chart_update", buildPayload(initialCache.candles, initialCache.result, currentSymbol, currentResolution, true));
+    }
     if (isLiveMarket(sym) && sym !== prev) {
       updateTickSubscription().catch(console.error);
     }
@@ -898,38 +910,44 @@ server.listen(PORT, async () => {
   startAutoRefresh();
   startTickWatchdog();
 
-  // ── DB: connect, health-check, prune old candles ────────────────────────
+  // ── DB: connect, health-check ────────────────────────────────────────────
   if (dbEnabled) {
     try {
       const ok = await db.healthCheck();
       if (ok) {
         console.log("[DB] ✅  PostgreSQL connection healthy");
-        // Prune candles older than 365 days on startup
-        const pruned = await db.pruneOldCandles(null, 1, 365);
-        if (pruned > 0) console.log(`[DB] Pruned ${pruned} old candles (>365 days)`);
 
-        // Prune expired options/futures contracts (e.g. last month's FUT/CE/PE
-        // symbols once the calendar has rolled into a new month, or weekly
-        // options once their coded expiry date has passed). See
-        // pruneExpiredContracts() in candleStore.js for the expiry-safety
-        // rule — equities/indices are never touched by this.
-        const expiredResult = await db.pruneExpiredContracts();
-        if (expiredResult.symbolsPruned > 0) {
-          console.log(`[DB] Pruned ${expiredResult.symbolsPruned} expired contract(s), ${expiredResult.candlesDeleted} candles: ${expiredResult.symbols.slice(0, 10).join(", ")}${expiredResult.symbols.length > 10 ? ", ..." : ""}`);
-        }
-        // Re-run periodically so contracts get cleaned up mid-session too —
-        // not just on the next restart (e.g. weekly options expiring on a
-        // Tuesday while the server has been up since last Friday).
-        setInterval(async () => {
-          try {
-            const r = await db.pruneExpiredContracts();
-            if (r.symbolsPruned > 0) {
-              console.log(`[DB] Periodic sweep: pruned ${r.symbolsPruned} expired contract(s), ${r.candlesDeleted} candles`);
-            }
-          } catch (e) {
-            console.warn("[DB] Periodic expired-contract prune failed:", e.message);
-          }
-        }, 6 * 60 * 60 * 1000); // every 6 hours
+        // ── PRUNING DISABLED (2026-07-03) ──────────────────────────────────
+        // Both pruneOldCandles() and pruneExpiredContracts() hard-DELETE rows
+        // from `candles` with no archive anywhere else — every expired
+        // option/future contract they touch is gone permanently, which
+        // breaks backtesting (confirmed: they had already deleted 3 SENSEX
+        // option contracts / 3420 candles by the time this was caught).
+        // Turned off site-wide until the separate backtest archive
+        // (derivatives_eod / underlying_eod, permanent, typed columns) is
+        // built and populated — only then is it safe to prune this live
+        // cache again, since the archive would hold the permanent copy.
+        // See database/src/candleStore.js for the (still intact, just
+        // unused) implementations of both functions.
+        //
+        // const pruned = await db.pruneOldCandles(null, 1, 365);
+        // if (pruned > 0) console.log(`[DB] Pruned ${pruned} old candles (>365 days)`);
+        //
+        // const expiredResult = await db.pruneExpiredContracts();
+        // if (expiredResult.symbolsPruned > 0) {
+        //   console.log(`[DB] Pruned ${expiredResult.symbolsPruned} expired contract(s), ${expiredResult.candlesDeleted} candles: ${expiredResult.symbols.slice(0, 10).join(", ")}${expiredResult.symbols.length > 10 ? ", ..." : ""}`);
+        // }
+        // setInterval(async () => {
+        //   try {
+        //     const r = await db.pruneExpiredContracts();
+        //     if (r.symbolsPruned > 0) {
+        //       console.log(`[DB] Periodic sweep: pruned ${r.symbolsPruned} expired contract(s), ${r.candlesDeleted} candles`);
+        //     }
+        //   } catch (e) {
+        //     console.warn("[DB] Periodic expired-contract prune failed:", e.message);
+        //   }
+        // }, 6 * 60 * 60 * 1000); // every 6 hours
+
 
         // ── Wire up recovery engine WebSocket emitter ──────────────────────
         if (recoveryEngine) {
@@ -1092,7 +1110,15 @@ server.listen(PORT, async () => {
           // necessarily asked for these symbols.
           console.log(`[Staleness] Boot sweep: checking ${curatedSymbols.length} curated symbols for staleness...`);
           let staleFound = 0;
-          const SWEEP_CONCURRENCY = 5;
+          // Was concurrency=5 / 500ms between batches — fine for the first
+          // ~150 symbols, but by the tail end of a 205-symbol curated list
+          // the sustained request rate had exceeded Fyers' limit (confirmed
+          // in production logs: 9 symbols near the end of the sweep all
+          // failed with "request limit reached" and silently fell back to
+          // serving stale DB data with nothing to retry them). Slowed down
+          // to stay comfortably under the limit for the whole sweep, not
+          // just the first batches.
+          const SWEEP_CONCURRENCY = 3;
           for (let i = 0; i < curatedSymbols.length; i += SWEEP_CONCURRENCY) {
             const batch = curatedSymbols.slice(i, i + SWEEP_CONCURRENCY);
             await Promise.all(batch.map(async (symbol) => {
@@ -1111,7 +1137,7 @@ server.listen(PORT, async () => {
               }
             }));
             if (i + SWEEP_CONCURRENCY < curatedSymbols.length) {
-              await new Promise((r) => setTimeout(r, 500));
+              await new Promise((r) => setTimeout(r, 1200));
             }
           }
           console.log(`[Staleness] Boot sweep complete — ${staleFound} symbol(s) backfilled`);

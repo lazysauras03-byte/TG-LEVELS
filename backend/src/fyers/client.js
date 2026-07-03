@@ -322,8 +322,29 @@ async function fetchCandles(symbol, resolution, count = 10000, lookbackDaysOverr
         rejectAfter(TIMEOUT_MS, `fetchCandles intraday`),
       ]);
     } catch (err) {
-      console.warn(`[Fyers] Intraday chunk failed (${err.message}) — skipping`);
-      continue;
+      // Rate-limit errors are transient (Fyers' window resets quickly) —
+      // one short retry recovers most of them instead of silently giving
+      // up and serving stale data for the rest of the session. Any other
+      // error (timeout, bad symbol, etc.) still skips immediately as before.
+      if (/limit/i.test(err.message)) {
+        console.warn(`[Fyers] Intraday chunk hit rate limit — retrying once in 1.5s...`);
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          res = await Promise.race([
+            fyers.getHistory({
+              symbol, resolution: fyersResolution, date_format: "0",
+              range_from: String(chunk.from), range_to: String(chunk.to), cont_flag: "1",
+            }),
+            rejectAfter(TIMEOUT_MS, `fetchCandles intraday`),
+          ]);
+        } catch (err2) {
+          console.warn(`[Fyers] Intraday chunk failed again after retry (${err2.message}) — skipping`);
+          continue;
+        }
+      } else {
+        console.warn(`[Fyers] Intraday chunk failed (${err.message}) — skipping`);
+        continue;
+      }
     }
     const parsed = parseIntraday(res);
     if (parsed && parsed.length > 0) allCandles.push(...parsed);

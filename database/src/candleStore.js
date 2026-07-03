@@ -513,6 +513,35 @@ async function pruneExpiredContracts(now = new Date()) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/**
+ * Persist the result of a validation pass to validation_state.
+ * This table existed in the schema since the initial migration but nothing
+ * ever wrote to it — validateHistorical()/validateCurrentDay() only
+ * console.log'd their results, so the table sat permanently empty (found
+ * via direct DB inspection: 0 rows despite the validator actively running
+ * and finding issues every boot). This closes that gap.
+ *
+ * @param {string} symbol
+ * @param {number} resolution
+ * @param {{valid:boolean, issues:Array}} result
+ */
+async function upsertValidationState(symbol, resolution, { valid, issues }) {
+  const status = valid ? "ok" : "issues_found";
+  const issueSummary = issues && issues.length > 0
+    ? issues.slice(0, 5).map(i => i.type || i.message || String(i)).join("; ")
+    : null;
+  await query(
+    `INSERT INTO validation_state (symbol, resolution, last_checked, last_ok, status, issue)
+     VALUES ($1, $2, NOW(), CASE WHEN $3 THEN NOW() ELSE NULL END, $4, $5)
+     ON CONFLICT (symbol, resolution) DO UPDATE SET
+       last_checked = NOW(),
+       last_ok = CASE WHEN $3 THEN NOW() ELSE validation_state.last_ok END,
+       status = $4,
+       issue = $5`,
+    [symbol, resolution, !!valid, status, issueSummary]
+  );
+}
+
 function isValidCandle(c) {
   return (
     c &&
@@ -543,4 +572,5 @@ module.exports = {
   getLatestCandle,
   countCandles,
   isValidCandle,
+  upsertValidationState,
 };

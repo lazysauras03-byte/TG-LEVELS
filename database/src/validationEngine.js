@@ -13,7 +13,7 @@
  *  • Periodic synchronization (compare latest DB vs broker)
  */
 
-const { loadCandles, getLatestCandle, countCandles } = require("./candleStore");
+const { loadCandles, getLatestCandle, countCandles, upsertValidationState } = require("./candleStore");
 
 // ─── IST helpers ─────────────────────────────────────────────────────────────
 
@@ -196,6 +196,8 @@ async function validateCurrentDay(symbol, resolution) {
   const { valid, issues } = validateCandleArray(candles, resolution);
 
   console.log(`[Validator] Live ${symbol} res=${resolution}: ${candles.length} candles, ${issues.length} issues`);
+  try { await upsertValidationState(symbol, resolution, { valid, issues }); }
+  catch (err) { console.warn(`[Validator] Failed to persist validation_state for ${symbol}: ${err.message}`); }
   return { valid, issues, candlesChecked: candles.length };
 }
 
@@ -246,6 +248,10 @@ async function validateHistorical(symbol, resolution, opts = {}) {
   if (issues.length > 0) {
     console.log(`[Validator] ${symbol}: ${candles.length} candles, ${issues.length} issue(s) found`);
   }
+  // DB_RESOLUTION (always 1) — matches what was actually checked, not the
+  // caller's requested `resolution`, since only 1m is ever stored.
+  try { await upsertValidationState(symbol, DB_RESOLUTION, { valid, issues }); }
+  catch (err) { console.warn(`[Validator] Failed to persist validation_state for ${symbol}: ${err.message}`); }
   return { valid, issues, candlesChecked: candles.length };
 }
 
