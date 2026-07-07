@@ -40,19 +40,8 @@ const BATCH_DELAY_MS = parseInt(process.env.SCANNER_BATCH_DELAY_MS || "1000");
 const DEFAULT_RESOLUTION = parseInt(process.env.SCANNER_RESOLUTION || "15");
 const RETRY_LIMIT = 3;
 
-// ── EMA helper (same as motherwave.js) ───────────────────────────────────────
-function calcEMA(prices, period) {
-  const k = 2 / (period + 1);
-  const out = new Array(prices.length).fill(null);
-  let ema = null;
-  for (let i = 0; i < prices.length; i++) {
-    const p = prices[i];
-    if (p == null || isNaN(p)) continue;
-    ema = ema === null ? p : p * k + ema * (1 - k);
-    out[i] = ema;
-  }
-  return out;
-}
+// ── EMA helper — single source of truth: backend/src/services/indicatorMath.js
+const { calcEMA } = require("./indicatorMath");
 
 function isValidSymbol(symbol) {
   if (!symbol) return false;

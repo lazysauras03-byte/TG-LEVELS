@@ -63,6 +63,10 @@ function createChartRouter(deps) {
     getAuthURL, generateToken, validateToken, bustTokenCache,
     detectMotherWaveForAPI,
     markBroadcastSymbol,
+    // FIX 5 (re-auth hook): re-run the curated-symbol gap-fill/staleness
+    // sweep whenever a token goes from invalid to valid again, instead of
+    // requiring a full server restart or manually opening every chart.
+    runCuratedSymbolCatchUp,
   } = deps;
 
   const router = express.Router();
@@ -102,6 +106,21 @@ function createChartRouter(deps) {
       await generateToken(code);
       if (bustTokenCache) bustTokenCache();  // clear 60s cache so next validateToken is live
       await deps.maybeStartTickStream();
+
+      // FIX 5 (re-auth hook): this used to be the end of the route — the
+      // "Will repair after re-auth" log line elsewhere in the app described
+      // something that was never actually wired up. Now that a fresh token
+      // is confirmed saved, re-run the same curated-symbol gap-fill +
+      // staleness sweep that normally only runs at boot. Fire-and-forget
+      // (not awaited) so this HTTP response doesn't block for the minute or
+      // two the full sweep can take — the sweep has its own in-flight guard
+      // so it can never overlap with the boot-time run or another re-auth.
+      if (runCuratedSymbolCatchUp) {
+        runCuratedSymbolCatchUp("reauth").catch((err) => {
+          console.warn("[Recovery] Re-auth catch-up sweep failed:", err.message);
+        });
+      }
+
       res.json({ success: true, message: "Token saved successfully" });
     } catch (err) { res.status(500).json({ error: err.message }); }
   });

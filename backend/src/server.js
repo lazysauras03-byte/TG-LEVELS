@@ -436,27 +436,37 @@ function buildPayload(candles, result, symbol, resolution, isAutoRefresh = false
 // and the live tick stream only produces NEW candles from the moment it
 // reconnects onward.
 //
-// FIX: every time loadFromDB() is about to serve DB data for a symbol whose
-// market is currently live, check DB's latest 1m candle against the clock.
-// If it's stale beyond a small tolerance, fetch just the missing delta
-// range from Fyers (cheap — a couple of days lookback at most, not a full
-// year), upsert it, and merge it into the data being returned/seeded so
-// the chart and the candle builder both start from a fully caught-up base
-// instead of carrying a silent hole forward indefinitely.
+// FIX: every time loadFromDB() is about to serve DB data for a symbol, check
+// DB's latest 1m candle against the clock. If it's stale beyond a small
+// tolerance, fetch just the missing delta range from Fyers (cheap — a
+// couple of days lookback at most, not a full year), upsert it, and merge
+// it into the data being returned/seeded so the chart and the candle
+// builder both start from a fully caught-up base instead of carrying a
+// silent hole forward indefinitely.
 //
 // Throttled per symbol (STALENESS_CHECK_COOLDOWN_MS) so this can't turn
 // into a Fyers-hammering loop under the 5s auto-refresh poll — at most one
 // delta-fetch attempt per symbol per cooldown window, regardless of how
 // many chart requests come in during that window.
+//
+// GATING (2026-07-07, confirmed): no day-type check at all here anymore —
+// not weekend, not holiday, not "is today a trading day." The Fyers REST
+// call is cheap and harmless any day (it just returns nothing new on a
+// closed day), and gating on day-type risked silently missing a new
+// contract's first candles landing right after a holiday. The ONLY gate
+// left is "is the Fyers token valid?"
 const STALENESS_TOLERANCE_MS = 3 * 60 * 1000;       // DB allowed to lag "now" by up to 3 minutes before it's considered stale
 const STALENESS_CHECK_COOLDOWN_MS = 60 * 1000;       // don't re-check/re-fetch the same symbol more than once per minute
 const lastStalenessCheckAt = new Map();              // symbol → ms timestamp of last check/attempt
 
 /**
  * If `oneMinCandles` (already loaded from DB, ascending by time) looks stale
- * relative to "now" for a currently-live symbol, fetch just the missing
- * delta from Fyers, upsert it, and return a merged, de-duplicated, sorted
- * array. Otherwise returns the original array unchanged.
+ * relative to "now", fetch just the missing delta from Fyers, upsert it, and
+ * return a merged, de-duplicated, sorted array. Otherwise returns the
+ * original array unchanged.
+ *
+ * The only gate is token validity — runs any day (weekend/holiday/trading
+ * day), since the API call is cheap and harmless when there's nothing new.
  *
  * Never throws — any failure here just means we fall back to serving the
  * (possibly stale) DB data exactly as before this fix existed, so this can
@@ -465,7 +475,6 @@ const lastStalenessCheckAt = new Map();              // symbol → ms timestamp 
 async function ensureFreshOneMinData(symbol, oneMinCandles) {
   try {
     if (!oneMinCandles || oneMinCandles.length === 0) return oneMinCandles;
-    if (!isLiveMarket(symbol)) return oneMinCandles; // only matters while the market is actually open for this symbol
 
     const lastCandle = oneMinCandles[oneMinCandles.length - 1];
     const nowMs = Date.now();
@@ -475,6 +484,11 @@ async function ensureFreshOneMinData(symbol, oneMinCandles) {
     const lastCheck = lastStalenessCheckAt.get(symbol) || 0;
     if (nowMs - lastCheck < STALENESS_CHECK_COOLDOWN_MS) return oneMinCandles; // throttled — already tried recently
     lastStalenessCheckAt.set(symbol, nowMs);
+
+    // Only gate: do we have a working Fyers login right now? No day-type
+    // check (weekend/holiday/trading day) — those no longer matter here.
+    const tokenOk = await validateToken().catch(() => false);
+    if (!tokenOk) return oneMinCandles;
 
     console.log(`[Staleness] ${symbol}: DB latest is ${(lagMs / 60000).toFixed(1)}min behind — fetching delta from Fyers`);
 
@@ -515,6 +529,178 @@ async function ensureFreshOneMinData(symbol, oneMinCandles) {
   } catch (err) {
     console.warn(`[Staleness] ${symbol}: check failed (${err.message}) — serving DB data as-is`);
     return oneMinCandles;
+  }
+}
+
+// ─── Curated-symbol gap scan + staleness sweep (fixes 4 & 5) ──────────────────
+// Validates every curated (no-expiry) symbol against the broker, repairs any
+// gap, then proactively runs the same staleness/delta-fetch check
+// ensureFreshOneMinData() does — but for EVERY curated symbol, not just
+// whichever one a client happens to have open.
+//
+// Callable from two places:
+//   1. Once at boot, right after initialRestFetch (trigger="startup").
+//   2. From the /api/auth/token route, right after a token is successfully
+//      (re)generated (trigger="reauth") — this is the actual re-auth hook
+//      that used to be missing. Previously the boot-time log said "Will
+//      repair after re-auth" but nothing was ever wired up to make that
+//      true; submitting a new token only busted the validateToken cache and
+//      restarted the tick stream, it never re-ran recovery or staleness.
+//
+// An in-flight guard prevents the two triggers from ever running the sweep
+// concurrently (e.g. someone re-auths a few seconds after boot, while the
+// startup sweep is still in progress).
+let _catchUpInFlight = false;
+
+async function runCuratedSymbolCatchUp(trigger = "startup") {
+  if (!recoveryEngine || !dbEnabled || !db) return;
+
+  if (_catchUpInFlight) {
+    console.log(`[Recovery] Catch-up already running — skipping duplicate ${trigger} trigger`);
+    return;
+  }
+  _catchUpInFlight = true;
+
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const NO_EXPIRY_SYMBOLS_JSON = path.resolve(__dirname, "./data/noExpirySymbols.json");
+    let curatedSymbols = [];
+    try {
+      const all = JSON.parse(fs.readFileSync(NO_EXPIRY_SYMBOLS_JSON, "utf8"));
+      curatedSymbols = all.map((s) => s.symbol).filter(Boolean);
+    } catch (e) {
+      console.warn("[Recovery] Could not load noExpirySymbols.json for catch-up scan:", e.message);
+      return;
+    }
+
+    if (trigger === "startup") {
+      // Wait for initialRestFetch to finish (it runs right before the boot call)
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+
+    // Skip if token is invalid — repairs need Fyers, pointless without auth.
+    // On the "reauth" trigger this should basically always pass, since the
+    // caller only invokes this after a token was just successfully saved —
+    // but re-check anyway rather than assume, in case it expired again
+    // between save and this call.
+    const tokenOk = await validateToken().catch(() => false);
+    if (!tokenOk) {
+      console.log(`[Recovery] Catch-up (${trigger}) skipped — token invalid. Will repair after re-auth.`);
+      return;
+    }
+
+    console.log(`[Recovery] Catch-up (${trigger}): checking ${curatedSymbols.length} curated symbols...`);
+    let repaired = 0;
+    let clean = 0;
+    let skippedKnown = 0;
+    const CONCURRENCY = 3;
+    const BATCH_DELAY_MS = 1000;
+
+    for (let i = 0; i < curatedSymbols.length; i += CONCURRENCY) {
+      const batch = curatedSymbols.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map(async (symbol) => {
+        try {
+          const { valid, issues } = await db.validateHistorical(symbol, 1);
+          if (!valid && issues.length > 0) {
+            // Find the earliest gap and repair that day
+            const gapIssue = issues.find((iss) => iss.type === "GAP" || iss.type === "CORRUPT_OHLC");
+            if (gapIssue) {
+              const tradingDay = new Date(gapIssue.time || Date.now());
+              // Skip today — an in-progress trading day always looks incomplete
+              const todayStr = new Date().toISOString().slice(0, 10);
+              if (tradingDay.toISOString().slice(0, 10) >= todayStr) {
+                console.log(`[Recovery] ${symbol}: skipping today's in-progress candles (not a real gap)`);
+                clean++;
+                return;
+              }
+
+              // CIRCUIT BREAKER — fixes the infinite repeat-repair loop
+              // (e.g. NSE:NIFTY50-INDEX getting "repaired" for the same
+              // day on every single restart, forever). If this exact
+              // symbol+day already had a successful repair logged
+              // recently and the validator is STILL flagging it, the
+              // broker's own data for that day is almost certainly
+              // just genuinely short (thin closing volume, etc.) — not
+              // something another refetch will fix. Skip it, log once,
+              // and let it become eligible again after the cooldown
+              // window in case the broker backfills better data later.
+              const alreadyRepaired = await db.wasDayAlreadyRepaired(symbol, tradingDay, 3).catch(() => false);
+              if (alreadyRepaired) {
+                console.log(`[Recovery] ${symbol}: ${tradingDay.toISOString().slice(0, 10)} already repaired recently and still flagged — likely a genuine short broker day, skipping re-repair`);
+                skippedKnown++;
+                return;
+              }
+
+              console.log(`[Recovery] ${symbol}: ${issues.length} issue(s) — repairing gap at ${tradingDay.toISOString().slice(0, 10)}`);
+              await recoveryEngine.repairDay({
+                symbol,
+                tradingDay,
+                fetchCandles: (sym, res) => fetchCandles(sym, res),
+                trigger,
+              });
+              repaired++;
+            }
+          } else {
+            clean++;
+            // Silent for clean symbols — only log summary at end
+          }
+        } catch (e) {
+          console.warn(`[Recovery] ${symbol} scan error:`, e.message);
+        }
+      }));
+      if (i + CONCURRENCY < curatedSymbols.length) {
+        await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+      }
+    }
+    console.log(`[Recovery] Catch-up (${trigger}) gap scan complete — ${clean} clean, ${repaired} repaired, ${skippedKnown} skipped (known short day) out of ${curatedSymbols.length} symbols`);
+
+    // ── Proactive staleness sweep ──────────────────────────────────────
+    // PROBLEM: ensureFreshOneMinData() only fires REACTIVELY — the moment
+    // a client actually requests that exact symbol's chart. Nothing swept
+    // the curated symbol list proactively, so a symbol nobody happened to
+    // open yet could sit with a silent gap until someone finally loaded
+    // its chart.
+    // FIX 4: reuse the exact same ensureFreshOneMinData() logic (same
+    // throttle map, same 3-min tolerance, same cheap 2-day delta fetch)
+    // but drive it here for every curated symbol.
+    //
+    // GATING (2026-07-07, confirmed): removed the `if (!isTradingDay(symbol))
+    // return;` early-out that used to sit here. Fetching history from Fyers
+    // works the same whether today happens to be a trading day for this
+    // symbol or not, so this sweep is no longer skipped on weekends/
+    // holidays. The only gate left is the token-valid check that already
+    // lives inside ensureFreshOneMinData() itself.
+    console.log(`[Staleness] Catch-up (${trigger}) sweep: checking ${curatedSymbols.length} curated symbols for staleness...`);
+    let staleFound = 0;
+    // Concurrency=3 / 1200ms between batches to stay comfortably under
+    // Fyers' rate limit across the whole sweep (a faster 5/500ms setting
+    // was seen failing near the tail end of a 205-symbol list in
+    // production with "request limit reached" errors).
+    const SWEEP_CONCURRENCY = 3;
+    for (let i = 0; i < curatedSymbols.length; i += SWEEP_CONCURRENCY) {
+      const batch = curatedSymbols.slice(i, i + SWEEP_CONCURRENCY);
+      await Promise.all(batch.map(async (symbol) => {
+        try {
+          const latest = await db.getLatestCandle(symbol, 1);
+          if (!latest) return; // symbol has no 1m data yet — nothing to check staleness against
+          const before = latest.time;
+          await ensureFreshOneMinData(symbol, [latest]);
+          // ensureFreshOneMinData logs its own [Staleness] line when it
+          // actually backfills something; we just tally here for the summary.
+          const after = await db.getLatestCandle(symbol, 1).catch(() => null);
+          if (after && after.time > before) staleFound++;
+        } catch (e) {
+          console.warn(`[Staleness] Catch-up sweep error for ${symbol}:`, e.message);
+        }
+      }));
+      if (i + SWEEP_CONCURRENCY < curatedSymbols.length) {
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+    console.log(`[Staleness] Catch-up (${trigger}) sweep complete — ${staleFound} symbol(s) backfilled`);
+  } finally {
+    _catchUpInFlight = false;
   }
 }
 
@@ -664,6 +850,11 @@ app.use(createChartRouter({
   getAuthURL, generateToken, validateToken, bustTokenCache,
   detectMotherWaveForAPI,
   markBroadcastSymbol,
+  // FIX 5 (re-auth hook): expose the same curated-symbol gap-fill/staleness
+  // sweep that runs at boot so the /api/auth/token route can re-trigger it
+  // the moment a token goes from invalid to valid again — see
+  // runCuratedSymbolCatchUp() below (hoisted function declaration).
+  runCuratedSymbolCatchUp,
 }));
 
 app.use("/api/symbols", symbolsRouter);
@@ -969,6 +1160,12 @@ server.listen(PORT, async () => {
         // (getLiveBroadcastSymbols(), same TTL-expiring set used for tick
         // subscriptions) so this can't turn into a 205-symbol Fyers-hammering
         // loop — it only ever checks charts a real client is looking at.
+        //
+        // NOTE: NOT touched by the "no day-type gating" change — this loop's
+        // own isTradingDay()/isLiveMarket() gates were not part of the
+        // confirmed scope (ensureFreshOneMinData + runCuratedSymbolCatchUp
+        // staleness sweep only). Say the word if you want the same
+        // token-only rule applied to periodicSync too.
         if (recoveryEngine) {
           setInterval(async () => {
             try {
@@ -989,164 +1186,12 @@ server.listen(PORT, async () => {
           console.log("[PeriodicSync] Wired — checking actively-viewed symbols every 5 minutes during market hours");
         }
 
-        // ── Startup gap scan: validate all curated symbols, repair gaps ────
-        // Runs after initialRestFetch completes so we don't race with it.
-        // Throttled: 3 symbols at a time with 1s delay between batches to
-        // respect Fyers rate limits during repair refetch calls.
-        //
-        // CHANGED: previously this read frontend/src/symbols.json (a mixed
-        // list of EQ/INDEX/FUT/OPTION symbols meant for the UI dropdown) and
-        // tried to filter out expiring contracts with a hardcoded
-        // MCX_EXCLUDED list of LAST MONTH'S contract codes. That list goes
-        // stale every single month on rollover (e.g. still excluding
-        // "...26JUNFUT" after the real contract had already rolled to
-        // "...26JULFUT"), so in practice it excluded nothing most of the
-        // time and ran the expensive 90-day deep validator against
-        // short-lived option/futures contracts it was never meant for.
-        //
-        // Now it reads backend/src/data/noExpirySymbols.json — a small,
-        // explicit, hand-curated list of only the symbols that genuinely
-        // never expire (NSE equities + NSE/BSE indices). No guessing from
-        // ticker patterns, nothing to go stale on a monthly rollover.
-        // Options/futures/commodities get their own expiry-aware repair
-        // logic separately — they are intentionally NOT part of this scan.
-        setImmediate(async () => {
-          if (!recoveryEngine) return;
-          const fs = require("fs");
-          const path = require("path");
-          const NO_EXPIRY_SYMBOLS_JSON = path.resolve(__dirname, "./data/noExpirySymbols.json");
-          let curatedSymbols = [];
-          try {
-            const all = JSON.parse(fs.readFileSync(NO_EXPIRY_SYMBOLS_JSON, "utf8"));
-            curatedSymbols = all.map((s) => s.symbol).filter(Boolean);
-          } catch (e) {
-            console.warn("[Recovery] Could not load noExpirySymbols.json for startup scan:", e.message);
-            return;
-          }
-
-          // Wait for initialRestFetch to finish (it runs right before this setImmediate)
-          await new Promise((r) => setTimeout(r, 5000));
-
-          // Skip gap scan if token is invalid -- repairs need Fyers, pointless without auth
-          const tokenOk = await validateToken().catch(() => false);
-          if (!tokenOk) {
-            console.log("[Recovery] Startup gap scan skipped \u2014 token expired. Will repair after re-auth.");
-            return;
-          }
-
-          console.log(`[Recovery] Startup gap scan: checking ${curatedSymbols.length} curated symbols...`);
-          let repaired = 0;
-          let clean = 0;
-          let skippedKnown = 0;
-          const CONCURRENCY = 3;
-          const BATCH_DELAY_MS = 1000;
-
-          for (let i = 0; i < curatedSymbols.length; i += CONCURRENCY) {
-            const batch = curatedSymbols.slice(i, i + CONCURRENCY);
-            await Promise.all(batch.map(async (symbol) => {
-              try {
-                const { valid, issues } = await db.validateHistorical(symbol, 1);
-                if (!valid && issues.length > 0) {
-                  // Find the earliest gap and repair that day
-                  const gapIssue = issues.find((iss) => iss.type === "GAP" || iss.type === "CORRUPT_OHLC");
-                  if (gapIssue) {
-                    const tradingDay = new Date(gapIssue.time || Date.now());
-                    // Skip today — an in-progress trading day always looks incomplete
-                    const todayStr = new Date().toISOString().slice(0, 10);
-                    if (tradingDay.toISOString().slice(0, 10) >= todayStr) {
-                      console.log(`[Recovery] ${symbol}: skipping today's in-progress candles (not a real gap)`);
-                      clean++;
-                      return;
-                    }
-
-                    // CIRCUIT BREAKER — fixes the infinite repeat-repair loop
-                    // (e.g. NSE:NIFTY50-INDEX getting "repaired" for the same
-                    // day on every single restart, forever). If this exact
-                    // symbol+day already had a successful repair logged
-                    // recently and the validator is STILL flagging it, the
-                    // broker's own data for that day is almost certainly
-                    // just genuinely short (thin closing volume, etc.) — not
-                    // something another refetch will fix. Skip it, log once,
-                    // and let it become eligible again after the cooldown
-                    // window in case the broker backfills better data later.
-                    const alreadyRepaired = await db.wasDayAlreadyRepaired(symbol, tradingDay, 3).catch(() => false);
-                    if (alreadyRepaired) {
-                      console.log(`[Recovery] ${symbol}: ${tradingDay.toISOString().slice(0, 10)} already repaired recently and still flagged — likely a genuine short broker day, skipping re-repair`);
-                      skippedKnown++;
-                      return;
-                    }
-
-                    console.log(`[Recovery] ${symbol}: ${issues.length} issue(s) — repairing gap at ${tradingDay.toISOString().slice(0, 10)}`);
-                    await recoveryEngine.repairDay({
-                      symbol,
-                      tradingDay,
-                      fetchCandles: (sym, res) => fetchCandles(sym, res),
-                      trigger: "startup",
-                    });
-                    repaired++;
-                  }
-                } else {
-                  clean++;
-                  // Silent for clean symbols — only log summary at end
-                }
-              } catch (e) {
-                console.warn(`[Recovery] ${symbol} scan error:`, e.message);
-              }
-            }));
-            if (i + CONCURRENCY < curatedSymbols.length) {
-              await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
-            }
-          }
-          console.log(`[Recovery] Startup scan complete — ${clean} clean, ${repaired} repaired, ${skippedKnown} skipped (known short day) out of ${curatedSymbols.length} symbols`);
-
-          // ── Boot-time proactive staleness sweep (P4) ──────────────────
-          // PROBLEM: ensureFreshOneMinData() (see above) only fires
-          // REACTIVELY — the moment a client actually requests that exact
-          // symbol's chart. Nothing swept the curated symbol list
-          // proactively on restart, so a symbol nobody happened to open
-          // yet could sit with a silent gap (e.g. server was down for a
-          // chunk of a live session) until someone finally loaded its
-          // chart — at which point the FIRST render would still show the
-          // stale data before the reactive check caught up.
-          // FIX: reuse the exact same ensureFreshOneMinData() logic (same
-          // throttle map, same 3-min tolerance, same cheap 2-day delta
-          // fetch) but drive it here, once, for every curated symbol,
-          // right after the gap scan finishes and before any client has
-          // necessarily asked for these symbols.
-          console.log(`[Staleness] Boot sweep: checking ${curatedSymbols.length} curated symbols for staleness...`);
-          let staleFound = 0;
-          // Was concurrency=5 / 500ms between batches — fine for the first
-          // ~150 symbols, but by the tail end of a 205-symbol curated list
-          // the sustained request rate had exceeded Fyers' limit (confirmed
-          // in production logs: 9 symbols near the end of the sweep all
-          // failed with "request limit reached" and silently fell back to
-          // serving stale DB data with nothing to retry them). Slowed down
-          // to stay comfortably under the limit for the whole sweep, not
-          // just the first batches.
-          const SWEEP_CONCURRENCY = 3;
-          for (let i = 0; i < curatedSymbols.length; i += SWEEP_CONCURRENCY) {
-            const batch = curatedSymbols.slice(i, i + SWEEP_CONCURRENCY);
-            await Promise.all(batch.map(async (symbol) => {
-              try {
-                if (!isLiveMarket(symbol)) return; // ensureFreshOneMinData no-ops anyway, skip the DB round-trip
-                const latest = await db.getLatestCandle(symbol, 1);
-                if (!latest) return; // symbol has no 1m data yet — nothing to check staleness against
-                const before = latest.time;
-                await ensureFreshOneMinData(symbol, [latest]);
-                // ensureFreshOneMinData logs its own [Staleness] line when it
-                // actually backfills something; we just tally here for the summary.
-                const after = await db.getLatestCandle(symbol, 1).catch(() => null);
-                if (after && after.time > before) staleFound++;
-              } catch (e) {
-                console.warn(`[Staleness] Boot sweep error for ${symbol}:`, e.message);
-              }
-            }));
-            if (i + SWEEP_CONCURRENCY < curatedSymbols.length) {
-              await new Promise((r) => setTimeout(r, 1200));
-            }
-          }
-          console.log(`[Staleness] Boot sweep complete — ${staleFound} symbol(s) backfilled`);
-        });
+        // ── Curated-symbol gap scan + staleness sweep ──────────────────────
+        // See runCuratedSymbolCatchUp() (hoisted function declaration,
+        // defined further down this file) for the full implementation.
+        // Fires once now at boot; the /api/auth/token route also calls it
+        // again after a successful re-auth (fix 5 — see chartRouter.js).
+        setImmediate(() => runCuratedSymbolCatchUp("startup"));
 
       } else {
         console.warn("[DB] ⚠️  PostgreSQL health check failed — DB writes disabled");

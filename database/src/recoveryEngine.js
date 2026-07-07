@@ -14,8 +14,14 @@
  * ║    • fetchCandles is always called with resolution=1                 ║
  * ║    • upsertCandles is always called with resolution=1                ║
  * ║    • repairDay / periodicSync always operate on resolution=1         ║
- * ║    • fullRefetch only fetches & stores 1m — never other TFs          ║
  * ╚══════════════════════════════════════════════════════════════════════╝
+ *
+ * NOTE: fullRefetch() (delete-a-symbol's-history-then-reinsert) was removed
+ * entirely. It was never wired to any route or UI button, and its only
+ * remaining job — replacing a symbol's full history — always deleted that
+ * symbol's rows first. Per architecture, no symbol's data is ever deleted.
+ * Ongoing gap-filling is handled by periodicSync (purely additive), and a
+ * single bad trading day is handled by repairDay (scoped to one day only).
  *
  * Responsibilities (from architecture diagram):
  *  • Fetch latest closed 1m broker candles
@@ -27,7 +33,7 @@
  *  • Emit status events so the frontend can show repair progress
  */
 
-const { upsertCandles, deleteDayCandles, deleteAllCandles, replaceDayCandles, replaceAllCandles } = require("./candleStore");
+const { upsertCandles, replaceDayCandles } = require("./candleStore");
 const { validateCandleArray, checkPeriodicSync } = require("./validationEngine");
 const { logRepairStart, logRepairFinish } = require("./repairLog");
 
@@ -185,103 +191,6 @@ async function repairDay(opts) {
   });
 }
 
-// ─── Full refetch (nuke + reload 1m only) ────────────────────────────────────
-
-/**
- * Delete ALL stored 1m candles for a symbol and refetch the complete 1m timeline.
- * Triggered by the "Full Refetch" button in the frontend.
- *
- * ARCHITECTURE NOTE: Only 1m candles are fetched from the broker and stored in DB.
- * The `resolutions` option is intentionally removed — higher TFs are always
- * derived in-memory from 1m data by CandleBuilder after this completes.
- * The caller (server.js) must call fetchAndProcess / deriveAllTFs after fullRefetch
- * completes to rebuild the in-memory TF cache.
- *
- * @param {object} opts
- * @param {string} opts.symbol
- * @param {Function} opts.fetchCandles   (symbol, resolution) => Promise<candle[]>
- */
-async function fullRefetch(opts) {
-  const { symbol, fetchCandles } = opts;
-
-  return enqueueRepair(symbol, async () => {
-    emit("repair_status", { symbol, status: "full_refetch_start" });
-
-    const logId = await logRepairStart({ symbol, resolution: DB_RESOLUTION, trigger: "manual_full_refetch" }).catch(() => null);
-
-    let totalDeleted = 0;
-    let totalInserted = 0;
-
-    // Step 1 (REORDERED — was: delete first, fetch second):
-    // Fetch + validate BEFORE deleting the existing timeline. The old order
-    // could leave a symbol with ZERO candles permanently if the refetch
-    // failed outright or validateCandleArray flagged any issue anywhere in
-    // the fetched range (a hard abort that skipped storage entirely after
-    // the delete had already run).
-    let candles;
-    try {
-      console.log(`[Recovery] Full refetch ${symbol}: fetching 1m candles from broker...`);
-      candles = await fetchCandles(symbol, DB_RESOLUTION);
-      emit("repair_status", { symbol, resolution: DB_RESOLUTION, status: "full_refetch_fetched", count: candles.length });
-    } catch (err) {
-      console.error(`[Recovery] Full refetch ${symbol} res=1 fetch error:`, err.message);
-      emit("repair_status", { symbol, resolution: DB_RESOLUTION, status: "full_refetch_error", error: err.message });
-      await logRepairFinish(logId, { status: "error", detail: err.message }).catch(() => null);
-      return { success: false, error: err.message };
-    }
-
-    if (!candles || candles.length === 0) {
-      const errMsg = "Broker returned no candles — aborting full refetch without touching existing DB data";
-      console.error(`[Recovery] Full refetch ${symbol}: ${errMsg}`);
-      emit("repair_status", { symbol, resolution: DB_RESOLUTION, status: "full_refetch_error", error: errMsg });
-      await logRepairFinish(logId, { status: "error", detail: errMsg }).catch(() => null);
-      return { success: false, error: errMsg };
-    }
-
-    // Validation is informational only — see repairDay() for the full
-    // rationale. upsertCandles() filters out structurally corrupt rows on
-    // its own, so a stray GAP/duplicate flag must never block storage.
-    const { valid, issues } = validateCandleArray(candles, DB_RESOLUTION);
-    if (!valid) {
-      console.warn(`[Recovery] Full refetch ${symbol} res=1: ${issues.length} validation issue(s) — storing valid rows anyway`);
-      emit("repair_status", { symbol, resolution: DB_RESOLUTION, status: "full_refetch_validation_warning", issues: issues.length });
-    }
-
-    // Step 2+4 (FIXED — was: deleteAllCandles() then a separate upsertCandles()
-    // call, two independently-committed queries, same race class as the
-    // single-day repair had. A chart read landing in that window could see
-    // the whole symbol as empty mid "Full Refetch" click). Now atomic via
-    // one DB transaction (replaceAllCandles).
-    //
-    // Prune any stale candles >3 months old across all symbols (safety net) —
-    // run BEFORE the atomic swap since it touches other symbols too.
-    try {
-      const pruned = await require("./candleStore").pruneOldCandles(null, null, 90);
-      if (pruned > 0) console.log(`[Recovery] Full refetch: pruned ${pruned} stale candles (>3 months)`);
-    } catch { /* non-fatal */ }
-
-    const { deleted, inserted } = await replaceAllCandles(symbol, DB_RESOLUTION, candles);
-    totalDeleted += deleted;
-    totalInserted += inserted;
-    console.log(`[Recovery] Full refetch ${symbol}: deleted ${deleted} 1m candles`);
-    emit("repair_status", { symbol, status: "full_refetch_deleted", deleted });
-    console.log(`[Recovery] Full refetch ${symbol} res=1: ${inserted} 1m candles stored`);
-    emit("repair_status", { symbol, resolution: DB_RESOLUTION, status: "full_refetch_res_ok", inserted });
-
-    emit("repair_status", { symbol, status: "full_refetch_complete", totalInserted, totalDeleted });
-    if (totalInserted > 0) {
-      emit("history_updated", { symbol, reason: "full_refetch", inserted: totalInserted });
-    }
-    await logRepairFinish(logId, {
-      status: totalInserted > 0 ? "ok" : "error",
-      deleted: totalDeleted,
-      inserted: totalInserted,
-    }).catch(() => null);
-
-    return { success: totalInserted > 0, totalInserted, totalDeleted };
-  });
-}
-
 // ─── Periodic sync job ───────────────────────────────────────────────────────
 
 /**
@@ -346,7 +255,6 @@ async function periodicSync(opts) {
 
 module.exports = {
   repairDay,
-  fullRefetch,
   periodicSync,
   injectStatusEmitter,
 };
