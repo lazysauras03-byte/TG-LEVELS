@@ -23,12 +23,14 @@ import OptionsChainModal from "../components/OptionsChainModal";
 import CandleChart from "../components/CandleChart";
 import EmaFloatPanel from "../components/EmaFloatPanel";
 import TradingToolbar from "../components/TradingToolbar";
+import AtmWorkspace from "../components/AtmWorkspace";
 import { DrawingProvider, usePanelLink, setAllLinked } from "../components/DrawingContext";
 import { useSocket } from "../hooks/useSocket";
 import { buildDefaultIndicators } from "../indicators/indicatorRegistry";
 import { loadPref, savePref } from "../utils/prefs";
 import { formatResolution, TIMEFRAMES } from "../utils/formatResolution";
-import { parseOptionSymbol, isOptionSymbol, optionSymbol, getOptionRoot, getStrikeStep, nearestStrikeWithHysteresis, NSE_INDEX_TICKERS, nextMonthlyExpiries } from "../utils/optionsChain";
+import { parseOptionSymbol, isOptionSymbol, getOptionRoot, getStrikeStep, nearestStrikeWithHysteresis, NSE_INDEX_TICKERS } from "../utils/optionsChain";
+import { BACKEND } from "../config";
 import { LAYOUTS } from "../components/layout/LayoutPicker";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { ChartPanelPropTypes } from "./ChartPanelPropTypes";
@@ -123,6 +125,49 @@ const ChartPanel = memo(function ChartPanel({
   const pendingStrikeRef = useRef(null);   // strike the dead zone has been breached toward
   const pendingSinceRef = useRef(0);       // Date.now() when that breach was first observed
 
+  // ── Real strike→symbol map for Auto-ATM strike switching ──────────────────
+  // ROOT-CAUSE NOTE: switching strikes used to hand-build the new symbol via
+  // optionSymbol() with a guessed Fyers date-encoding — the same broken
+  // approach as the old options-split shortcut (Fyers frequently rejects
+  // those hand-built strings as "Invalid symbol provided"). Fetching on
+  // every tick would be too expensive for a hysteresis watcher that runs on
+  // every price update, so instead this fetches ONCE per option contract
+  // (same underlying + same expiry) and caches the strike→symbol map; the
+  // per-tick effect below just does a cheap Map lookup against it.
+  const [autoAtmStrikeMap, setAutoAtmStrikeMap] = useState(new Map());
+  useEffect(() => {
+    if (!autoAtmOn || !parsedOption) {
+      setAutoAtmStrikeMap(new Map());
+      return;
+    }
+    const underlyingSymbolForLookup = NSE_INDEX_TICKERS[parsedOption.root]
+      ? `${parsedOption.exch}:${NSE_INDEX_TICKERS[parsedOption.root]}`
+      : `${parsedOption.exch}:${parsedOption.root}-EQ`;
+    let cancelled = false;
+    const params = new URLSearchParams({ symbol: underlyingSymbolForLookup, strikeCount: "20" });
+    // NOTE: parseOptionSymbol() only gives back the expiry CODE embedded in
+    // the symbol string (e.g. "26JUL"), not a raw Fyers epoch timestamp, and
+    // there's no reliable way to turn that code back into a timestamp
+    // without reintroducing the same date-guessing problem this fix removes.
+    // Omitting `timestamp` here returns the NEAREST expiry's strikes, which
+    // matches the contract being viewed in the overwhelming majority of
+    // cases. If the user has manually navigated to a far expiry, the lookup
+    // may miss and the switch is simply skipped (see the !newSymbol guard
+    // below) rather than risk sending a wrong-expiry symbol.
+    fetch(`${BACKEND}/api/options/chain?${params.toString()}`)
+      .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+      .then((data) => {
+        if (cancelled) return;
+        const map = new Map();
+        for (const s of data.strikes || []) map.set(`${s.strike_price}:${s.option_type}`, s.symbol);
+        setAutoAtmStrikeMap(map);
+      })
+      .catch(() => { if (!cancelled) setAutoAtmStrikeMap(new Map()); });
+    return () => { cancelled = true; };
+    // Re-fetch when the option contract itself changes (new underlying/expiry).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAtmOn, parsedOption?.exch, parsedOption?.root, parsedOption?.expiryCode]);
+
   useEffect(() => {
     if (!autoAtmOn || !parsedOption || !underlyingTick?.ltp) {
       pendingStrikeRef.current = null;
@@ -155,19 +200,24 @@ const ChartPanel = memo(function ChartPanel({
     if (now - pendingSinceRef.current < AUTO_ATM_DEBOUNCE_MS) return; // still settling
 
     // Debounce satisfied — switch the chart to the new strike, same expiry/kind.
-    const newSym = optionSymbol(
-      parsedOption.exch, parsedOption.root,
-      parsedOption.expiryCode, suggested, parsedOption.kind
-    );
+    // Look up the REAL symbol from the cached live chain map (see effect
+    // above) instead of hand-building one — if it's not in the map yet
+    // (cache still loading, or Fyers doesn't list that strike), skip this
+    // switch silently rather than send a symbol that would error out.
+    const newSym = autoAtmStrikeMap.get(`${suggested}:${parsedOption.kind}`);
+    if (!newSym) {
+      pendingStrikeRef.current = null;
+      return;
+    }
     pendingStrikeRef.current = null;
     if (newSym !== symbol) {
       setSymbol(newSym);
       refresh(newSym, resolution);
     }
-    // handleSymbolChange/refresh are stable; resolution read at call time.
+    // setSymbol/refresh are stable; resolution read at call time.
     // Re-running on every underlyingTick is intentional — that's the watcher.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoAtmOn, parsedOption, underlyingTick]);
+  }, [autoAtmOn, parsedOption, underlyingTick, autoAtmStrikeMap]);
 
   // ── Drawings hidden — per panel ────────────────────────────────────────────
   const [drawingsHidden, setDrawingsHidden] = useState(false);
@@ -323,133 +373,54 @@ const ChartPanel = memo(function ChartPanel({
   }, [handleResolutionChange, handleRefresh, symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Register applyTypedTimeframe on panelActionsRef alongside the other
-  // active-panel actions (openOptionsAtm, openSearchWithQuery).
+  // active-panel actions (getAtmBaseSymbol, openSearchWithQuery).
   useEffect(() => {
     if (!isActivePanel || !panelActionsRef) return;
     panelActionsRef.current = { ...panelActionsRef.current, applyTypedTimeframe };
   }, [isActivePanel, applyTypedTimeframe, panelActionsRef]);
 
-  const openOptionsAtm = useCallback((kind) => {
+  // ── Ctrl+Q / Ctrl+D: resolve the ATM base symbol for the shared 3-pane ────
+  // ATM Workspace (rendered once at ChartsPage level).
+  // Reuses the exact eligibility check the "Options" overlay button already
+  // uses, so the shortcut and the button always agree on which symbols
+  // support an options chain (equities, NSE/BSE indices, MCX dated futures).
+  //
+  // ROOT-CAUSE FIX: this used to be `openOptionsAtm(kind)` / `openOptionsSplit()`,
+  // which mutated THIS panel's own symbol (or split into two panels) in place,
+  // picking the nearest strike by comparing candles[last].close against the
+  // fetched chain — i.e. whatever price happened to be on screen. That's
+  // correct when the panel is showing the underlying, but wrong once it's
+  // already showing an option: pressing Ctrl+Q then Ctrl+D compared the
+  // fetched PE strikes against the CE contract's own premium (e.g. ~₹410)
+  // instead of the underlying's spot (e.g. ~78,000), landing on an
+  // essentially random low strike. Now this panel only resolves WHICH
+  // underlying the shortcut applies to — the workspace itself fetches the
+  // underlying's real spot and both strike ladders fresh, so it never trusts
+  // an option's own price as a spot proxy.
+  const getAtmBaseSymbol = useCallback(() => {
+    // If a CE/PE symbol is ALREADY loaded, treat its own underlying as the
+    // basis (so the shortcut works while already viewing an option chart,
+    // not just from the underlying's chart).
     const optionHere = isOptionSymbol(symbol) ? parseOptionSymbol(symbol) : null;
+    const baseSymbol = optionHere
+      ? (NSE_INDEX_TICKERS[optionHere.root]
+        ? `${optionHere.exch}:${NSE_INDEX_TICKERS[optionHere.root]}`
+        : `${optionHere.exch}:${optionHere.root}-EQ`)
+      : symbol;
 
-    // BUG FIX: previously, when already viewing an option chart, this still
-    // tried to recompute an "ATM" strike from `candles[last].close` — but
-    // `candles` at that point belongs to the OPTION currently on screen (its
-    // own premium, e.g. ₹356), not the underlying's spot price (e.g. 76,700).
-    // round(356/100)*100 = 400 → a nonsense strike with no real Fyers data,
-    // which is exactly the "no candles" error this caused. Flipping Call<->Put
-    // at the SAME strike+expiry is also what this shortcut should actually do
-    // here — a quick CE/PE toggle, not a fresh ATM re-pick (Auto-ATM already
-    // handles real strike drift separately, via the live underlying tick).
-    if (optionHere) {
-      if (optionHere.kind === kind) return; // already showing this kind
-      const newSymbol = optionSymbol(
-        optionHere.exch, optionHere.root,
-        optionHere.expiryCode, optionHere.strike, kind
-      );
-      handleSymbolChange(newSymbol);
-      handleRefresh(newSymbol, resolution);
-      return;
-    }
-
-    // Starting from the underlying — candles here genuinely is the spot
-    // price, so a fresh ATM-from-spot computation is correct.
-    const baseSymbol = symbol;
     if (!baseSymbol || !OPTIONS_ELIGIBLE_RE.test(baseSymbol)) {
       setShortcutWarning(`Options aren't available for ${symbol || "this symbol"}.`);
-      return;
+      return null;
     }
-    const lastClose = candles.length ? candles[candles.length - 1].close : null;
-    if (!lastClose || lastClose <= 0) {
-      setShortcutWarning("No price loaded yet — open the chart first.");
-      return;
-    }
+    return { baseSymbol, resolution };
+  }, [symbol, resolution]);
 
-    const info = getOptionRoot(baseSymbol);
-    const expiries = nextMonthlyExpiries(
-      1,
-      info.isCommodity ? info.root : null,
-      info.isIndex ? info.root : null
-    );
-    const nearestExpiry = expiries[0];
-    if (!nearestExpiry) {
-      setShortcutWarning(`Couldn't determine an expiry for ${symbol}.`);
-      return;
-    }
-    const step = getStrikeStep(lastClose, info);
-    const atmStrike = Math.round(lastClose / step) * step;
-    const newSymbol = optionSymbol(info.exch, info.root, nearestExpiry.code, atmStrike, kind);
-    handleSymbolChange(newSymbol);
-    handleRefresh(newSymbol, resolution);
-  }, [symbol, candles, resolution, handleSymbolChange, handleRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Register openOptionsAtm on panelActionsRef — separate effect so it doesn't
-  // clobber toggleHide/trashAll registered earlier.
+  // Registered separately from the main panelActionsRef effect above so
+  // neither effect clobbers the other's keys, regardless of mount/update order.
   useEffect(() => {
     if (!isActivePanel || !panelActionsRef) return;
-    panelActionsRef.current = { ...panelActionsRef.current, openOptionsAtm };
-  }, [isActivePanel, openOptionsAtm, panelActionsRef]);
-
-  // ── openOptionsSplit — Ctrl+Q: compute ATM CE+PE and trigger the 2h split ──
-  // Called by ChartsPage's global Ctrl+Q handler via panelActionsRef.
-  // Only meaningful on a spot/underlying chart — if we're already on an option
-  // this is a no-op (the split should always originate from the underlying).
-  const openOptionsSplit = useCallback(() => {
-    // Must be a spot chart (not an option) to trigger split
-    if (isOptionSymbol(symbol)) return;
-    if (!OPTIONS_ELIGIBLE_RE.test(symbol)) {
-      setShortcutWarning(`Options aren't available for ${symbol || "this symbol"}.`);
-      return;
-    }
-    const lastClose = candles.length ? candles[candles.length - 1].close : null;
-    if (!lastClose || lastClose <= 0) {
-      setShortcutWarning("No price loaded yet — open the chart first.");
-      return;
-    }
-    const info = getOptionRoot(symbol);
-    const expiries = nextMonthlyExpiries(
-      1,
-      info.isCommodity ? info.root : null,
-      info.isIndex ? info.root : null
-    );
-    const nearestExpiry = expiries[0];
-    if (!nearestExpiry) {
-      setShortcutWarning(`Couldn't determine an expiry for ${symbol}.`);
-      return;
-    }
-    const step = getStrikeStep(lastClose, info);
-    const atmStrike = Math.round(lastClose / step) * step;
-    const ceSymbol = optionSymbol(info.exch, info.root, nearestExpiry.code, atmStrike, "CE");
-    const peSymbol = optionSymbol(info.exch, info.root, nearestExpiry.code, atmStrike, "PE");
-
-    // layoutId switching from "1" (LayoutSingle) to "2h" (Layout2H) fully
-    // unmounts and remounts every panel — they're different component types
-    // at the same tree position, so React tears down the old subtree and
-    // builds a fresh one. The "p0" key does NOT survive that. So imperative
-    // calls like handleSymbolChange() here would only run on the outgoing
-    // panel instance and be thrown away. Both CE and PE must instead be
-    // handed to the FRESH panels via the override ref, read once on mount.
-    if (panelActionsRef?.current?.p2OverrideRef) {
-      panelActionsRef.current.p2OverrideRef.current = { ceSymbol, peSymbol, resolution };
-    }
-    // Store the original spot so Esc can restore it
-    if (panelActionsRef?.current?.autoSplitRef) {
-      panelActionsRef.current.autoSplitRef.current = { symbol, resolution };
-    }
-    // Both fresh panels read these prefs on their own useState init — this is
-    // the only autoAtm mechanism that survives the remount.
-    savePref("autoAtm", true);   // panel 0 pfx=""
-    savePref("p2_autoAtm", true); // panel 1 pfx="p2_"
-    // Switch to 2h layout — both panels mount fresh and read p2OverrideRef
-    if (panelActionsRef?.current?.triggerLayout) panelActionsRef.current.triggerLayout("2h");
-  }, [symbol, candles, resolution, panelActionsRef]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Register openOptionsSplit on panelActionsRef — separate effect so it
-  // doesn't clobber the other registrations above.
-  useEffect(() => {
-    if (!isActivePanel || !panelActionsRef) return;
-    panelActionsRef.current = { ...panelActionsRef.current, openOptionsSplit };
-  }, [isActivePanel, openOptionsSplit, panelActionsRef]);
+    panelActionsRef.current = { ...panelActionsRef.current, getAtmBaseSymbol };
+  }, [isActivePanel, getAtmBaseSymbol, panelActionsRef]);
 
   // ── Symbol search modal ────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
@@ -880,24 +851,15 @@ function Divider({ dir, onMouseDown }) {
 // Layout renderers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps, restoreOverrideRef }) {
-  // Read the Esc-restore override ONCE on mount — if this mount was caused by
-  // Esc collapsing a Ctrl+Q split, restoreOverrideRef holds the original spot
-  // symbol/resolution to inject. After reading, null it out so a manual
-  // layout-switch to "1" later doesn't pick up a stale value.
-  const override = restoreOverrideRef?.current ?? null;
-  useEffect(() => {
-    if (restoreOverrideRef) restoreOverrideRef.current = null; // consumed
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   return (
     <div className="layout-single">
       <ErrorBoundary minimal label="Panel 1">
         <ChartPanel
           key="p0" pfx="" panelIdx={0} panelCount={1}
           layoutId={layoutId} onLayoutChange={onLayoutChange}
-          urlSymbol={override ? override.symbol : urlParams.symbol}
-          urlResolution={override ? override.resolution : urlParams.resolution}
+          urlSymbol={urlParams.symbol}
+          urlResolution={urlParams.resolution}
           urlWaveTarget={urlParams.waveTarget} urlFibDrawing={urlParams.fibDrawing}
           urlSrLines={urlParams.srLines}
           isActivePanel={toolbarProps.activePanel === 0}
@@ -909,35 +871,21 @@ function LayoutSingle({ urlParams, layoutId, onLayoutChange, toolbarProps, resto
   );
 }
 
-function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps, p2OverrideRef, autoSplitRef }) {
+function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps }) {
   const [colPct, containerRef, onDivMouseDown] = useDraggableSplit("col", "split2h_col");
-  // Read the auto-split override ONCE on mount — if Ctrl+Q triggered this layout
-  // switch, p2OverrideRef holds the CE/PE symbols to inject into both panels.
-  // After reading we null it out so a manual layout-switch to "2h" sees nothing.
-  const override = p2OverrideRef?.current ?? null;
-  useEffect(() => {
-    if (p2OverrideRef) p2OverrideRef.current = null; // consumed — clear for next manual switch
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // Mark auto-split as manually touched if user activates panel 1 themselves
-  // (i.e. clicks into it), which detaches the Esc-restore behaviour.
-  const handleP1Activate = useCallback(() => {
-    if (autoSplitRef) autoSplitRef.current = null;
-    toolbarProps.setActivePanel(1);
-  }, [autoSplitRef, toolbarProps]);
   return (
     <div className="layout-2h" ref={containerRef}>
       <div className="layout-cell" style={{ width: `${colPct}%` }}>
         <ErrorBoundary minimal label="Panel 1">
           <ChartPanel key="p0" pfx="" panelIdx={0} panelCount={2}
             layoutId={layoutId} onLayoutChange={onLayoutChange}
-            urlSymbol={override ? override.ceSymbol : urlParams.symbol}
-            urlResolution={override ? override.resolution : urlParams.resolution}
+            urlSymbol={urlParams.symbol}
+            urlResolution={urlParams.resolution}
             urlWaveTarget={urlParams.waveTarget}
             urlFibDrawing={urlParams.fibDrawing}
             urlSrLines={urlParams.srLines}
             isActivePanel={toolbarProps.activePanel === 0}
-            onPanelActivate={() => { if (autoSplitRef) autoSplitRef.current = null; toolbarProps.setActivePanel(0); }}
+            onPanelActivate={() => toolbarProps.setActivePanel(0)}
             {...toolbarProps.shared}
           />
         </ErrorBoundary>
@@ -947,11 +895,11 @@ function Layout2H({ urlParams, layoutId, onLayoutChange, toolbarProps, p2Overrid
         <ErrorBoundary minimal label="Panel 2">
           <ChartPanel key="p1" pfx="p2_" panelIdx={1} panelCount={2}
             layoutId={undefined} onLayoutChange={undefined}
-            urlSymbol={override ? override.peSymbol : null}
-            urlResolution={override ? override.resolution : null}
+            urlSymbol={null}
+            urlResolution={null}
             urlWaveTarget={null} urlFibDrawing={null} urlSrLines={[]}
             isActivePanel={toolbarProps.activePanel === 1}
-            onPanelActivate={handleP1Activate}
+            onPanelActivate={() => toolbarProps.setActivePanel(1)}
             {...toolbarProps.shared}
           />
         </ErrorBoundary>
@@ -1181,48 +1129,16 @@ export default function ChartsPage() {
 
   const panelActionsRef = useRef({
     toggleHide: null, trashAll: null, drawingsHidden: false,
-    openOptionsAtm: null,      // (kind: "CE"|"PE") => void — legacy internal use
-    openOptionsSplit: null,    // () => void — Ctrl+Q: CE left + PE right auto-split
+    getAtmBaseSymbol: null,    // () => {baseSymbol, resolution}|null — Ctrl+Q / Ctrl+D
     openSearchWithQuery: null, // (firstChar: string) => void — type-to-search
     applyTypedTimeframe: null, // (digits: string) => void — type-a-number timeframe switch
   });
   const [activePanelHidden, setActivePanelHidden] = useState(false);
 
-  // Auto-split refs — declared here so ALL effects and renderLayout can see them.
-  // Layout switches (layoutId "1" <-> "2h" <-> ...) always fully unmount and
-  // remount every panel — LayoutSingle and Layout2H are different component
-  // types at the same tree position, so React tears down the old subtree
-  // regardless of the "p0"/"p1" key props. That means the only way to hand a
-  // symbol into a panel across a layout switch is via one of these refs, read
-  // ONCE by the fresh panel on mount — never via an imperative call on the
-  // outgoing (about-to-unmount) panel instance.
-  //
-  // autoSplitRef: non-null while the "2h" layout was auto-triggered by Ctrl+Q.
-  //   Stores { symbol, resolution } of original spot. Cleared on any manual
-  //   layout/symbol touch so Esc only snaps back on an untouched split.
-  // p2OverrideRef: { ceSymbol, peSymbol, resolution } read by Layout2H on mount
-  //   to seed CE into panel 0 and PE into panel 1. Nulled out after consumed.
-  // restoreOverrideRef: { symbol, resolution } read by LayoutSingle on mount
-  //   when Esc collapses the split back to one panel. Nulled out after consumed.
-  const autoSplitRef = useRef(null);
-  const p2OverrideRef = useRef(null);
-  const restoreOverrideRef = useRef(null);
-
-  // Attach layout-switching callback and split refs onto panelActionsRef so
-  // ChartPanel can trigger the 2h split without needing these as props.
-  // Done once after panelActionsRef is created — safe because all three are stable refs.
-  useEffect(() => {
-    panelActionsRef.current.p2OverrideRef = p2OverrideRef;
-    panelActionsRef.current.autoSplitRef = autoSplitRef;
-    panelActionsRef.current.triggerLayout = (id) => {
-      setLayoutId(id);
-      savePref("layoutId", id);
-      setActivePanel(0);
-      setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
-      setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // ── ATM Workspace: 3-pane CE | Underlying | PE view opened by Ctrl+Q/D ────
+  // { baseSymbol, resolution, focus: "ce"|"pe" } while open, else null. Fully
+  // replaces the normal panel layout while open (see the render below).
+  const [atmWorkspace, setAtmWorkspace] = useState(null);
 
   const panelLinkRef = useRef({ linked: false, setLinked: null });
   const [toolbarLinked, setToolbarLinked] = useState(false);
@@ -1241,47 +1157,46 @@ export default function ChartsPage() {
     syncedCrosshairListeners.current.forEach((fn) => fn(syncedCrosshairRef.current));
   }, []);
 
-  // Esc key globally → if auto-split is active restore spot, else reset tool.
+  // Esc key globally → reset tool to cursor, and close the ATM Workspace if
+  // one is open (the digit-buffer-cancel Escape handling below is separate
+  // and independent — it only fires while a timeframe digit is buffered).
   useEffect(() => {
     function onKey(e) {
       if (e.key !== "Escape") return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (autoSplitRef.current) {
-        const { symbol: origSym, resolution: origRes } = autoSplitRef.current;
-        autoSplitRef.current = null;
-        p2OverrideRef.current = null;
-        // LayoutSingle mounts fresh when layoutId flips to "1" — the outgoing
-        // panel instance is torn down, so the only way back to the original
-        // spot is via a ref the fresh panel reads on mount.
-        restoreOverrideRef.current = { symbol: origSym, resolution: origRes };
-        setLayoutId("1");
-        savePref("layoutId", "1");
-        setActivePanel(0);
-        setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
-        setTimeout(() => window.dispatchEvent(new Event("resize")), 200);
-      } else {
-        setSelectedTool("cursor");
-      }
+      setSelectedTool("cursor");
+      setAtmWorkspace(null);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // autoSplitRef / p2OverrideRef are stable refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Ctrl+Q / Ctrl+D globally → open ATM CE / PE on the active panel.
-  // Ctrl+Q — auto CE+PE split. Works only from a spot/underlying chart.
-  // Switches to 2h layout, loads CE in panel 0 (left), PE in panel 1 (right).
-  // Esc restores the original single-panel spot if nothing was touched manually.
-  // Ctrl+D is removed — all option navigation goes through this one shortcut.
+  // Ctrl+Q / Ctrl+D globally → open (or refocus) the 3-pane ATM Workspace
+  // (CE | Underlying | PE) anchored on the active panel's underlying symbol.
+  // Ctrl+Q focuses the CE column, Ctrl+D focuses the PE column — both open
+  // the SAME workspace instance rather than mutating the active panel's own
+  // chart. That in-place mutation is what let the two shortcuts step on each
+  // other before (see getAtmBaseSymbol above for the full story): pressing
+  // Ctrl+Q then Ctrl+D compared the fetched PE strikes against whatever
+  // price the panel happened to be showing, which was the CE option's own
+  // premium, not the underlying's spot. Acts on whichever panel was last
+  // clicked (panelActionsRef is re-registered by that panel's own effect
+  // whenever it becomes active or its dependencies change).
   useEffect(() => {
     function onKey(e) {
       if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
-      if (e.key.toLowerCase() !== "q") return;
+      const key = e.key.toLowerCase();
+      if (key !== "q" && key !== "d") return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       e.preventDefault();
-      // Delegate to active panel which knows current symbol + last close price.
-      panelActionsRef.current?.openOptionsSplit?.();
+      const info = panelActionsRef.current?.getAtmBaseSymbol?.();
+      if (!info) return; // active panel already surfaced its own warning
+      const focus = key === "q" ? "ce" : "pe";
+      setAtmWorkspace((prev) =>
+        (prev && prev.baseSymbol === info.baseSymbol)
+          ? { ...prev, focus } // same underlying already open — just refocus
+          : { baseSymbol: info.baseSymbol, resolution: info.resolution, focus }
+      );
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1405,12 +1320,12 @@ export default function ChartsPage() {
   function renderLayout() {
     const props = { urlParams, layoutId, onLayoutChange: handleLayoutChange, toolbarProps };
     switch (layoutId) {
-      case "2h": return <Layout2H {...props} p2OverrideRef={p2OverrideRef} autoSplitRef={autoSplitRef} />;
+      case "2h": return <Layout2H {...props} />;
       case "2v": return <Layout2V {...props} />;
       case "3h": return <Layout3H {...props} />;
       case "3": return <Layout3  {...props} />;
       case "4": return <Layout4  {...props} />;
-      default: return <LayoutSingle {...props} restoreOverrideRef={restoreOverrideRef} />;
+      default: return <LayoutSingle {...props} />;
     }
   }
 
@@ -1432,7 +1347,15 @@ export default function ChartsPage() {
             setAllLinked(val);
           }}
         />
-        {renderLayout()}
+        {atmWorkspace ? (
+          <AtmWorkspace
+            key={atmWorkspace.baseSymbol}
+            baseSymbol={atmWorkspace.baseSymbol}
+            resolution={atmWorkspace.resolution}
+            focus={atmWorkspace.focus}
+            onClose={() => setAtmWorkspace(null)}
+          />
+        ) : renderLayout()}
       </div>
     </DrawingProvider>
   );

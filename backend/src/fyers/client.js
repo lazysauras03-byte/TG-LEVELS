@@ -362,4 +362,61 @@ async function fetchCandles(symbol, resolution, count = 10000, lookbackDaysOverr
   return deduped;
 }
 
-module.exports = { loadToken, saveToken, getAuthURL, generateToken, validateToken, fetchCandles };
+
+/**
+ * fetchOptionChain -- returns the REAL, broker-confirmed option symbols for
+ * an underlying's option chain, for a specific expiry (or the nearest one
+ * if no timestamp given).
+ *
+ * ROOT-CAUSE NOTE: hand-building option symbols locally (guessing at Fyers'
+ * date-encoding scheme) produces strings Fyers frequently rejects with
+ * "Invalid symbol provided" -- a documented, widely-hit problem, not unique
+ * to this project. Fyers' own `getOptionChain` response already includes
+ * the literal, always-valid `symbol` string for every strike in
+ * `data.optionsChain[].symbol` -- this function returns that directly
+ * instead of constructing anything.
+ *
+ * @param {string} underlyingSymbol  e.g. "NSE:NIFTY50-INDEX", "BSE:SENSEX-INDEX"
+ * @param {object} [opts]
+ * @param {number} [opts.strikeCount=20]  strikes each side of ATM to request
+ * @param {string} [opts.timestamp]       Fyers expiry timestamp (epoch seconds,
+ *                                        as a string) to select a specific
+ *                                        expiry -- omit for the nearest one.
+ * @returns {Promise<{expiries: Array<{date,expiry}>, strikes: Array<{symbol,strike_price,option_type,ltp,oi}>}>}
+ *          Returns { expiries: [], strikes: [] } if unavailable.
+ */
+async function fetchOptionChain(underlyingSymbol, opts = {}) {
+  const { strikeCount = 20, timestamp = "" } = opts;
+  try {
+    const fyers = getFyersClient();
+    const res = await Promise.race([
+      fyers.getOptionChain({ symbol: underlyingSymbol, strikecount: strikeCount, timestamp }),
+      rejectAfter(10_000, "fetchOptionChain"),
+    ]);
+    if (!res || res.s !== "ok" || !res.data) {
+      console.warn(`[Fyers] fetchOptionChain: no data for ${underlyingSymbol} -- s=${res?.s} msg="${res?.message || res?.errmsg || "?"}"`);
+      return { expiries: [], strikes: [] };
+    }
+    const expiries = (res.data.expiryData || [])
+      .map((e) => ({ date: e.date || e.expiry, expiry: e.expiry || e.date }))
+      .filter((e) => e.date);
+    // optionsChain entries carry the real tradable symbol per strike -- this
+    // is the whole point of calling this function instead of building one.
+    const strikes = (res.data.optionsChain || [])
+      .filter((s) => s && s.symbol)
+      .map((s) => ({
+        symbol: s.symbol,
+        strike_price: Number(s.strike_price),
+        option_type: s.option_type, // "CE" | "PE"
+        ltp: Number(s.ltp) || 0,
+        oi: Number(s.oi) || 0,
+      }));
+    console.log(`[Fyers] fetchOptionChain ${underlyingSymbol}: ${expiries.length} expiries, ${strikes.length} real strike symbols`);
+    return { expiries, strikes };
+  } catch (err) {
+    console.warn(`[Fyers] fetchOptionChain error for ${underlyingSymbol}:`, err.message);
+    return { expiries: [], strikes: [] };
+  }
+}
+
+module.exports = { loadToken, saveToken, getAuthURL, generateToken, validateToken, fetchCandles, fetchOptionChain };
