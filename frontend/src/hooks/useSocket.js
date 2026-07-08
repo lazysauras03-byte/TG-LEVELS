@@ -17,6 +17,22 @@ import { BACKEND } from "../config";
 // ── IST live-market check (frontend guard for REST poll fallback only) ─────────
 // NOTE: This is used ONLY to gate the REST poll fallback timer — not for routing
 // GET vs POST. The backend handles all routing decisions via isLiveMarket(symbol).
+//
+// IMPORTANT — keep this logic identical (in spirit) to backend/src/fyers/tickStream.js's
+// isLiveMarket()/isMCXSymbol(). They intentionally live as two separate copies
+// (browser ES module frontend vs Node CommonJS backend, deployed separately —
+// frontend to Vercel, backend to Cloudflare — so this file can't require() the
+// backend module directly) — if you update one, update the other. Same pattern
+// already used for frontend/src/utils/holidayCalendar.js vs backend/src/data/holidays.js.
+//
+// Verified line-by-line equivalent to tickStream.js as of this comment,
+// including the MCX Saturday early-close case.
+const NSE_OPEN_MIN = 9 * 60 + 15;   // 555  — NSE/BSE open
+const NSE_CLOSE_MIN = 15 * 60 + 30;  // 930  — NSE/BSE close
+const MCX_OPEN_MIN = 9 * 60 + 0;    // 540  — MCX open (Mon–Fri)
+const MCX_CLOSE_MIN = 23 * 60 + 30;  // 1410 — MCX weekday close
+const MCX_SAT_CLOSE = 14 * 60 + 0;   // 840  — MCX Saturday close
+
 function isMCXSymbol(symbol) {
   return symbol && String(symbol).toUpperCase().startsWith("MCX:");
 }
@@ -31,12 +47,12 @@ function isLiveMarketFrontend(symbol) {
   if (dow === 0) return false; // Sunday — nothing trades
   if (isMCXSymbol(symbol)) {
     // MCX: Mon–Fri 09:00–23:30, Saturday 09:00–14:00
-    if (dow === 6) return istMin >= (9 * 60) && istMin < (14 * 60);
-    return istMin >= (9 * 60) && istMin < (23 * 60 + 30);
+    if (dow === 6) return istMin >= MCX_OPEN_MIN && istMin < MCX_SAT_CLOSE;
+    return istMin >= MCX_OPEN_MIN && istMin < MCX_CLOSE_MIN;
   }
   // NSE/BSE: Mon–Fri 09:15–15:30 only
   if (dow === 6) return false;
-  return istMin >= (9 * 60 + 15) && istMin < (15 * 60 + 30);
+  return istMin >= NSE_OPEN_MIN && istMin < NSE_CLOSE_MIN;
 }
 
 function sleep(ms) {
