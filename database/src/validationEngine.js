@@ -13,7 +13,19 @@
  *  • Periodic synchronization (compare latest DB vs broker)
  */
 
-const { loadCandles, getLatestCandle, countCandles, upsertValidationState } = require("./candleStore");
+// FIX (derivatives-routing): getLatestCandle is used by checkPeriodicSync()
+// below, which server.js's periodicSync loop can call with whatever symbol
+// a client currently has open — including option/future contracts. Routing
+// it through dataRouter.js means that lookup lands on the correct
+// nse_options_candles/etc. table for a derivative symbol instead of always
+// reading the plain `candles` table. The other three imports here
+// (loadCandles, countCandles, upsertValidationState) stay on candleStore.js
+// directly — they're only ever called by validateHistorical/
+// validateCurrentDay, which run exclusively against the curated no-expiry
+// symbol list (see runCuratedSymbolCatchUp in server.js), so there's no
+// derivative-symbol case to route for those.
+const { loadCandles, countCandles, upsertValidationState } = require("./candleStore");
+const { getLatestCandle } = require("./dataRouter");
 
 // ─── IST helpers ─────────────────────────────────────────────────────────────
 

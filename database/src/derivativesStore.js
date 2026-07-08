@@ -17,7 +17,7 @@
  * `time` is epoch ms (same convention as candleStore.js).
  */
 
-const { query } = require("./pool");
+const { query, transaction } = require("./pool");
 
 const TABLES = {
   option: { NSE: "nse_options_candles", MCX: "mcx_options_candles" },
@@ -67,6 +67,70 @@ async function upsertFutureCandles(rows) {
   return upsertRows(rows, "future");
 }
 
+/**
+ * Build the batched INSERT ... ON CONFLICT DO UPDATE statement for one
+ * batch of rows. Pure function — no I/O — so it can be reused by both the
+ * standalone upsert (runs each batch through the shared pool) and
+ * replaceDayCandlesBySymbol (runs each batch through a transaction's
+ * client, so the delete + insert land atomically).
+ */
+function buildBatchInsert(batch, kind, exchange, table) {
+  const isOption = kind === "option";
+  const values = [];
+  const params = [];
+  let p = 1;
+
+  if (isOption && exchange === "NSE") {
+    for (const c of batch) {
+      values.push(`($${p++},$${p++},$${p++},$${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
+      params.push(c.underlying, c.expiry_date, c.expiry_type, c.strike, c.option_type, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0, c.symbol);
+    }
+    return {
+      sql: `
+        INSERT INTO ${table} (underlying, expiry_date, expiry_type, strike, option_type, time, open, high, low, close, volume, symbol)
+        VALUES ${values.join(",")}
+        ON CONFLICT (underlying, expiry_date, strike, option_type, time) DO UPDATE SET
+          open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+          close = EXCLUDED.close, volume = EXCLUDED.volume, symbol = EXCLUDED.symbol,
+          inserted_at = NOW()
+      `,
+      params,
+    };
+  } else if (isOption) { // MCX options — no expiry_type column
+    for (const c of batch) {
+      values.push(`($${p++},$${p++},$${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
+      params.push(c.underlying, c.expiry_date, c.strike, c.option_type, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0, c.symbol);
+    }
+    return {
+      sql: `
+        INSERT INTO ${table} (underlying, expiry_date, strike, option_type, time, open, high, low, close, volume, symbol)
+        VALUES ${values.join(",")}
+        ON CONFLICT (underlying, expiry_date, strike, option_type, time) DO UPDATE SET
+          open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+          close = EXCLUDED.close, volume = EXCLUDED.volume, symbol = EXCLUDED.symbol,
+          inserted_at = NOW()
+      `,
+      params,
+    };
+  } else { // futures — NSE or MCX, identical shape
+    for (const c of batch) {
+      values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
+      params.push(c.underlying, c.expiry_date, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0, c.symbol);
+    }
+    return {
+      sql: `
+        INSERT INTO ${table} (underlying, expiry_date, time, open, high, low, close, volume, symbol)
+        VALUES ${values.join(",")}
+        ON CONFLICT (underlying, expiry_date, time) DO UPDATE SET
+          open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+          close = EXCLUDED.close, volume = EXCLUDED.volume, symbol = EXCLUDED.symbol,
+          inserted_at = NOW()
+      `,
+      params,
+    };
+  }
+}
+
 async function upsertRows(rows, kind) {
   if (!rows || rows.length === 0) return 0;
   const valid = rows.filter((r) => r && r.instrument_type === kind && isValidCandle(r));
@@ -78,64 +142,76 @@ async function upsertRows(rows, kind) {
   }
   const exchange = [...exchanges][0];
   const table = kind === "option" ? optionsTable(exchange) : futuresTable(exchange);
-  const isOption = kind === "option";
 
   let totalInserted = 0;
 
   for (let offset = 0; offset < valid.length; offset += UPSERT_BATCH_SIZE) {
     const batch = valid.slice(offset, offset + UPSERT_BATCH_SIZE);
-    const values = [];
-    const params = [];
-    let p = 1;
-
-    if (isOption && exchange === "NSE") {
-      for (const c of batch) {
-        values.push(`($${p++},$${p++},$${p++},$${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
-        params.push(c.underlying, c.expiry_date, c.expiry_type, c.strike, c.option_type, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0, c.symbol);
-      }
-      const sql = `
-        INSERT INTO ${table} (underlying, expiry_date, expiry_type, strike, option_type, time, open, high, low, close, volume, symbol)
-        VALUES ${values.join(",")}
-        ON CONFLICT (underlying, expiry_date, strike, option_type, time) DO UPDATE SET
-          open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
-          close = EXCLUDED.close, volume = EXCLUDED.volume, symbol = EXCLUDED.symbol,
-          inserted_at = NOW()
-      `;
-      await query(sql, params);
-    } else if (isOption) { // MCX options — no expiry_type column
-      for (const c of batch) {
-        values.push(`($${p++},$${p++},$${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
-        params.push(c.underlying, c.expiry_date, c.strike, c.option_type, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0, c.symbol);
-      }
-      const sql = `
-        INSERT INTO ${table} (underlying, expiry_date, strike, option_type, time, open, high, low, close, volume, symbol)
-        VALUES ${values.join(",")}
-        ON CONFLICT (underlying, expiry_date, strike, option_type, time) DO UPDATE SET
-          open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
-          close = EXCLUDED.close, volume = EXCLUDED.volume, symbol = EXCLUDED.symbol,
-          inserted_at = NOW()
-      `;
-      await query(sql, params);
-    } else { // futures — NSE or MCX, identical shape
-      for (const c of batch) {
-        values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++},$${p++})`);
-        params.push(c.underlying, c.expiry_date, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0, c.symbol);
-      }
-      const sql = `
-        INSERT INTO ${table} (underlying, expiry_date, time, open, high, low, close, volume, symbol)
-        VALUES ${values.join(",")}
-        ON CONFLICT (underlying, expiry_date, time) DO UPDATE SET
-          open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
-          close = EXCLUDED.close, volume = EXCLUDED.volume, symbol = EXCLUDED.symbol,
-          inserted_at = NOW()
-      `;
-      await query(sql, params);
-    }
-
+    const { sql, params } = buildBatchInsert(batch, kind, exchange, table);
+    await query(sql, params);
     totalInserted += batch.length;
   }
 
   return totalInserted;
+}
+
+/**
+ * Atomically replace one contract's candles for a single trading day:
+ * delete the old day's rows from the correct derivatives table and insert
+ * the freshly fetched ones inside ONE transaction — same atomicity
+ * guarantee as candleStore.js's replaceDayCandles (see that file's
+ * comment for why the delete+insert needs to be one transaction, not two
+ * separate committed queries).
+ *
+ * This is what makes repairDay() (recoveryEngine.js) safe to call on an
+ * option/future symbol — previously repairDay() always went through
+ * candleStore.replaceDayCandles(), which unconditionally writes to the
+ * plain `candles` table regardless of symbol type. A derivative symbol's
+ * "repair" would silently insert into the wrong table while the real
+ * gap in nse_options_candles/etc. stayed open.
+ *
+ * @param {string} exchange        "NSE" | "MCX"
+ * @param {"option"|"future"} instrumentType
+ * @param {string} symbol          exact contract symbol
+ * @param {Date|string} tradingDay
+ * @param {Array<object>} rows     parseDerivativeSymbol() output + OHLCV, same shape upsertOptionCandles/upsertFutureCandles expect
+ * @returns {Promise<{deleted:number, inserted:number}>}
+ */
+async function replaceDayCandlesBySymbol(exchange, instrumentType, symbol, tradingDay, rows) {
+  const table = instrumentType === "option" ? optionsTable(exchange) : futuresTable(exchange);
+  const kind = instrumentType;
+
+  const d = new Date(tradingDay);
+  const dayStart = new Date(d);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+  const valid = (rows || []).filter((r) => r && r.instrument_type === kind && isValidCandle(r));
+
+  let deleted = 0;
+  let inserted = 0;
+
+  await transaction(async (client) => {
+    const delRows = await client.query(
+      `DELETE FROM ${table}
+       WHERE symbol=$1 AND time >= $2 AND time < $3
+       RETURNING 1`,
+      [symbol, dayStart.toISOString(), dayEnd.toISOString()]
+    );
+    deleted = delRows.rows.length;
+
+    if (valid.length === 0) return;
+
+    for (let offset = 0; offset < valid.length; offset += UPSERT_BATCH_SIZE) {
+      const batch = valid.slice(offset, offset + UPSERT_BATCH_SIZE);
+      const { sql, params } = buildBatchInsert(batch, kind, exchange, table);
+      await client.query(sql, params);
+      inserted += batch.length;
+    }
+  });
+
+  return { deleted, inserted };
 }
 
 // ─── Read ───────────────────────────────────────────────────────────────────
@@ -213,6 +289,7 @@ async function listDerivativeSymbols(exchange, instrumentType) {
 module.exports = {
   upsertOptionCandles,
   upsertFutureCandles,
+  replaceDayCandlesBySymbol,
   loadCandlesBySymbol,
   getLatestCandleBySymbol,
   countDerivativeCandles,

@@ -33,7 +33,14 @@
  *  • Emit status events so the frontend can show repair progress
  */
 
-const { upsertCandles, replaceDayCandles } = require("./candleStore");
+// FIX (derivatives-routing): these two used to come straight from
+// candleStore.js, which unconditionally writes/reads the plain `candles`
+// table. That was safe for repairDay() calls from the curated-symbol gap
+// scan (always equities/indices), but periodicSync's fallback full-day
+// repair can run against whatever symbol a client currently has open in a
+// chart — including option/future contracts — so it needs dataRouter.js's
+// symbol-aware routing to land in nse_options_candles/etc. instead.
+const { upsertCandles, replaceDayCandles } = require("./dataRouter");
 const { validateCandleArray, checkPeriodicSync } = require("./validationEngine");
 const { logRepairStart, logRepairFinish } = require("./repairLog");
 
