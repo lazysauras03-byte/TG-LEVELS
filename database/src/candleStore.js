@@ -25,8 +25,69 @@
  */
 
 const { query, transaction } = require("./pool");
+const { isValidCandle } = require("./candleValidation");
 
 // ─── Write ─────────────────────────────────────────────────────────────────
+
+// PostgreSQL hard-limits a single query to 65535 bind parameters.
+// Each candle uses 8 params → max safe batch = floor(65535/8) = 8191.
+// 500 rows (4000 params) leaves plenty of headroom.
+const UPSERT_BATCH_SIZE = 500;
+const UPSERT_SQL_SUFFIX = `
+  ON CONFLICT (symbol, resolution, time) DO UPDATE SET
+    open        = EXCLUDED.open,
+    high        = EXCLUDED.high,
+    low         = EXCLUDED.low,
+    close       = EXCLUDED.close,
+    volume      = EXCLUDED.volume,
+    validated   = TRUE,
+    inserted_at = NOW()
+`;
+
+/**
+ * P3 #14 — shared batch-upsert core. Previously upsertCandles(),
+ * replaceDayCandles(), and replaceAllCandles() each had their own
+ * independent copy of this exact batching/SQL-building loop. Now all
+ * three call this one function.
+ *
+ * `exec` is whatever executes the query — either the module-level query()
+ * (plain, un-transacted connection) or a transaction client's bound
+ * `client.query`, so this works identically inside or outside a transaction.
+ * Only requirement: `exec(sql, params)` — the return value isn't used here,
+ * each caller already tracks its own row counts via batch.length.
+ *
+ * @param {(sql: string, params: any[]) => Promise<any>} exec
+ * @param {string} symbol
+ * @param {number} resolution
+ * @param {Array<{time,open,high,low,close,volume}>} validCandles  already isValidCandle()-filtered
+ * @returns {Promise<number>} rows upserted
+ */
+async function upsertCandleBatch(exec, symbol, resolution, validCandles) {
+  let inserted = 0;
+
+  for (let offset = 0; offset < validCandles.length; offset += UPSERT_BATCH_SIZE) {
+    const batch = validCandles.slice(offset, offset + UPSERT_BATCH_SIZE);
+    const values = [];
+    const params = [];
+    let p = 1;
+
+    for (const c of batch) {
+      values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++})`);
+      params.push(symbol, resolution, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0);
+    }
+
+    const sql = `
+      INSERT INTO candles (symbol, resolution, time, open, high, low, close, volume)
+      VALUES ${values.join(",")}
+      ${UPSERT_SQL_SUFFIX}
+    `;
+
+    await exec(sql, params);
+    inserted += batch.length;
+  }
+
+  return inserted;
+}
 
 /**
  * Upsert a batch of finalized, validated 1m candles.
@@ -52,43 +113,7 @@ async function upsertCandles(symbol, resolution, candles) {
   const valid = candles.filter(isValidCandle);
   if (valid.length === 0) return 0;
 
-  // 500 rows x 8 params = 4000 params per batch — well under PG's 65535 limit
-  const UPSERT_BATCH_SIZE = 500;
-  const UPSERT_SQL_SUFFIX = `
-    ON CONFLICT (symbol, resolution, time) DO UPDATE SET
-      open        = EXCLUDED.open,
-      high        = EXCLUDED.high,
-      low         = EXCLUDED.low,
-      close       = EXCLUDED.close,
-      volume      = EXCLUDED.volume,
-      validated   = TRUE,
-      inserted_at = NOW()
-  `;
-
-  let totalInserted = 0;
-
-  for (let offset = 0; offset < valid.length; offset += UPSERT_BATCH_SIZE) {
-    const batch = valid.slice(offset, offset + UPSERT_BATCH_SIZE);
-    const values = [];
-    const params = [];
-    let p = 1;
-
-    for (const c of batch) {
-      values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++})`);
-      params.push(symbol, resolution, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0);
-    }
-
-    const sql = `
-      INSERT INTO candles (symbol, resolution, time, open, high, low, close, volume)
-      VALUES ${values.join(",")}
-      ${UPSERT_SQL_SUFFIX}
-    `;
-
-    await query(sql, params);
-    totalInserted += batch.length;
-  }
-
-  return totalInserted;
+  return upsertCandleBatch(query, symbol, resolution, valid);
 }
 
 /**
@@ -159,38 +184,7 @@ async function replaceDayCandles(symbol, resolution, tradingDay, candles) {
 
     if (valid.length === 0) return;
 
-    const UPSERT_BATCH_SIZE = 500;
-    const UPSERT_SQL_SUFFIX = `
-      ON CONFLICT (symbol, resolution, time) DO UPDATE SET
-        open        = EXCLUDED.open,
-        high        = EXCLUDED.high,
-        low         = EXCLUDED.low,
-        close       = EXCLUDED.close,
-        volume      = EXCLUDED.volume,
-        validated   = TRUE,
-        inserted_at = NOW()
-    `;
-
-    for (let offset = 0; offset < valid.length; offset += UPSERT_BATCH_SIZE) {
-      const batch = valid.slice(offset, offset + UPSERT_BATCH_SIZE);
-      const values = [];
-      const params = [];
-      let p = 1;
-
-      for (const c of batch) {
-        values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++})`);
-        params.push(symbol, resolution, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0);
-      }
-
-      const sql = `
-        INSERT INTO candles (symbol, resolution, time, open, high, low, close, volume)
-        VALUES ${values.join(",")}
-        ${UPSERT_SQL_SUFFIX}
-      `;
-
-      await client.query(sql, params);
-      inserted += batch.length;
-    }
+    inserted = await upsertCandleBatch(client.query.bind(client), symbol, resolution, valid);
   });
 
   return { deleted, inserted };
@@ -325,38 +319,7 @@ async function replaceAllCandles(symbol, resolution, candles) {
 
     if (valid.length === 0) return;
 
-    const UPSERT_BATCH_SIZE = 500;
-    const UPSERT_SQL_SUFFIX = `
-      ON CONFLICT (symbol, resolution, time) DO UPDATE SET
-        open        = EXCLUDED.open,
-        high        = EXCLUDED.high,
-        low         = EXCLUDED.low,
-        close       = EXCLUDED.close,
-        volume      = EXCLUDED.volume,
-        validated   = TRUE,
-        inserted_at = NOW()
-    `;
-
-    for (let offset = 0; offset < valid.length; offset += UPSERT_BATCH_SIZE) {
-      const batch = valid.slice(offset, offset + UPSERT_BATCH_SIZE);
-      const values = [];
-      const params = [];
-      let p = 1;
-
-      for (const c of batch) {
-        values.push(`($${p++},$${p++},to_timestamp($${p++}/1000.0),$${p++},$${p++},$${p++},$${p++},$${p++})`);
-        params.push(symbol, resolution, c.time, c.open, c.high, c.low, c.close, c.volume ?? 0);
-      }
-
-      const sql = `
-        INSERT INTO candles (symbol, resolution, time, open, high, low, close, volume)
-        VALUES ${values.join(",")}
-        ${UPSERT_SQL_SUFFIX}
-      `;
-
-      await client.query(sql, params);
-      inserted += batch.length;
-    }
+    inserted = await upsertCandleBatch(client.query.bind(client), symbol, resolution, valid);
   });
 
   return { deleted, inserted };
@@ -542,21 +505,9 @@ async function upsertValidationState(symbol, resolution, { valid, issues }) {
   );
 }
 
-function isValidCandle(c) {
-  return (
-    c &&
-    Number.isFinite(c.time) && c.time > 0 &&
-    Number.isFinite(c.open) && c.open > 0 &&
-    Number.isFinite(c.high) && c.high > 0 &&
-    Number.isFinite(c.low) && c.low > 0 &&
-    Number.isFinite(c.close) && c.close > 0 &&
-    c.high >= c.low &&
-    c.high >= c.open &&
-    c.high >= c.close &&
-    c.low <= c.open &&
-    c.low <= c.close
-  );
-}
+// P3 #12 — isValidCandle() now lives in ./candleValidation.js (single
+// source of truth, also used by derivativesStore.js). Still re-exported
+// below from this module for backward compatibility with existing callers.
 
 module.exports = {
   upsertCandles,

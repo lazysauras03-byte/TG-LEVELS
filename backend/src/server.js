@@ -306,10 +306,19 @@ tickStream.on("error", (err) => { console.error("[TickStream] Error:", err?.mess
 /**
  * deriveUnderlyingSymbol — given an OPTION contract symbol, return its
  * underlying index/equity symbol so the tick stream can be subscribed to it.
- * Mirrors frontend/src/utils/optionsChain.js getOptionRoot() — kept in sync.
+ * Mirrors frontend/src/utils/optionsChain.js getOptionRoot() — kept in sync
+ * (browser code can't require() this module, so that copy stays separate,
+ * same pattern as holidays.js/holidayCalendar.js).
  *   "NSE:NIFTY2570724000PE"   → "NSE:NIFTY50-INDEX"
  *   "NSE:RELIANCE26JUL3200CE" → "NSE:RELIANCE-EQ"
  *   "MCX:CRUDEOIL26JUL5000CE" → null  (commodity options — not supported)
+ *
+ * P3 #13 — this used to have its own regex (OPTION_SUFFIX_RE) duplicating
+ * database/src/symbolParser.js's parsing logic. Now delegates to that
+ * module's parseDerivativeSymbol() as the primary path. OPTION_SUFFIX_RE is
+ * kept ONLY as a fallback for the (rare, Fyers-only-mode) case where the
+ * database/ package isn't present at all — matching the "DB is optional"
+ * pattern already used for db/recoveryEngine above.
  */
 const OPTION_SUFFIX_RE = /^(.*?)(\d{2}(?:[A-Z]{3}|[1-9OND]\d{2}))(\d+(?:\.\d+)?)(CE|PE)$/;
 const INDEX_ROOT_TO_SYMBOL = {
@@ -320,6 +329,19 @@ const INDEX_ROOT_TO_SYMBOL = {
   MIDCPNIFTY: "NSE:MIDCPNIFTY-INDEX",
   SENSEX: "BSE:SENSEX-INDEX",
 };
+let parseDerivativeSymbol = null;
+try {
+  ({ parseDerivativeSymbol } = require("../../database/src/symbolParser"));
+} catch (err) {
+  console.warn("[SymbolParser] Module not found — deriveUnderlyingSymbol falls back to inline regex:", err.message);
+}
+function deriveUnderlyingSymbolFallback(sym, exch, ticker) {
+  const m = OPTION_SUFFIX_RE.exec(ticker);
+  if (!m) return null;
+  const root = m[1];
+  if (INDEX_ROOT_TO_SYMBOL[root]) return INDEX_ROOT_TO_SYMBOL[root];
+  return `NSE:${root}-EQ`;
+}
 function deriveUnderlyingSymbol(sym) {
   if (!sym) return null;
   const colonIdx = sym.indexOf(":");
@@ -327,11 +349,27 @@ function deriveUnderlyingSymbol(sym) {
   const exch = sym.slice(0, colonIdx);
   const ticker = sym.slice(colonIdx + 1);
   if (exch === "MCX") return null; // commodity options — not supported by Auto-ATM
-  const m = OPTION_SUFFIX_RE.exec(ticker);
-  if (!m) return null;
-  const root = m[1];
+  if (!parseDerivativeSymbol) return deriveUnderlyingSymbolFallback(sym, exch, ticker);
+  const parsed = parseDerivativeSymbol(sym);
+  if (!parsed || parsed.instrument_type !== "option") return null;
+  const root = parsed.underlying;
   if (INDEX_ROOT_TO_SYMBOL[root]) return INDEX_ROOT_TO_SYMBOL[root];
   return `NSE:${root}-EQ`;
+}
+
+/**
+ * isOptionSymbol — true if `sym` is a dated NSE/MCX option contract.
+ * P3 #13 — also now delegates to parseDerivativeSymbol() instead of its
+ * own OPTION_SUFFIX_RE.test() call, with the same inline-regex fallback.
+ */
+function isOptionSymbol(sym) {
+  if (!parseDerivativeSymbol) {
+    const colonIdx = sym.indexOf(":");
+    const ticker = colonIdx >= 0 ? sym.slice(colonIdx + 1) : sym;
+    return OPTION_SUFFIX_RE.test(ticker);
+  }
+  const parsed = parseDerivativeSymbol(sym);
+  return !!parsed && parsed.instrument_type === "option";
 }
 
 /**
@@ -767,9 +805,7 @@ async function fetchAndProcess(symbol = SYMBOL || "NSE:NIFTY50-INDEX", resolutio
   // Option contracts (CE/PE) only exist for days/weeks — using the default
   // 30-day lookback causes Fyers to return empty chunks for dates before the
   // contract was listed. Use a 5-day lookback instead so every chunk is valid.
-  const colonIdx = symbol.indexOf(":");
-  const ticker = colonIdx >= 0 ? symbol.slice(colonIdx + 1) : symbol;
-  const isOptionContract = OPTION_SUFFIX_RE.test(ticker);
+  const isOptionContract = isOptionSymbol(symbol);
   const raw1m = await fetchCandles(symbol, 1, CANDLES_TO_FETCH, isOptionContract ? 5 : null);
 
   if (candleBuilders.has(symbol)) {

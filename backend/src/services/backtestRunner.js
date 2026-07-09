@@ -43,12 +43,8 @@ const RETRY_LIMIT = 3;
 // ── EMA helper — single source of truth: backend/src/services/indicatorMath.js
 const { calcEMA } = require("./indicatorMath");
 
-function isValidSymbol(symbol) {
-  if (!symbol) return false;
-  const s = String(symbol).trim().toUpperCase();
-  if (s.startsWith("MCX:") && /-I$/.test(s.split(":")[1] || "")) return false;
-  return true;
-}
+// P3 #18 — shared with scannerRunner.js via ../utils/symbolValidation.js.
+const { isValidSymbol } = require("../utils/symbolValidation");
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 

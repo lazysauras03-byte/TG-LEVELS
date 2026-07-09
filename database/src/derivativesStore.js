@@ -18,6 +18,7 @@
  */
 
 const { query, transaction } = require("./pool");
+const { isValidCandle } = require("./candleValidation");
 
 const TABLES = {
   option: { NSE: "nse_options_candles", MCX: "mcx_options_candles" },
@@ -35,18 +36,9 @@ function futuresTable(exchange) {
   return t;
 }
 
-function isValidCandle(c) {
-  return (
-    c &&
-    Number.isFinite(c.time) && c.time > 0 &&
-    Number.isFinite(c.open) && c.open > 0 &&
-    Number.isFinite(c.high) && c.high > 0 &&
-    Number.isFinite(c.low) && c.low > 0 &&
-    Number.isFinite(c.close) && c.close > 0 &&
-    c.high >= c.low && c.high >= c.open && c.high >= c.close &&
-    c.low <= c.open && c.low <= c.close
-  );
-}
+// P3 #12 — isValidCandle() now lives in ./candleValidation.js (single
+// source of truth, shared with candleStore.js). See that file for the
+// full validity rules.
 
 const UPSERT_BATCH_SIZE = 500; // matches candleStore.js — headroom under PG's 65535 bind-param limit
 

@@ -47,12 +47,10 @@ const DEFAULT_RESOLUTION = parseInt(process.env.SCANNER_RESOLUTION || "15");
 const RETRY_LIMIT = 5;
 
 // ─── Symbol filter ────────────────────────────────────────────────────────────
-function isValidScanSymbol(symbol) {
-  if (!symbol) return false;
-  const s = String(symbol).trim().toUpperCase();
-  if (s.startsWith("MCX:") && /-I$/.test(s.split(":")[1] || "")) return false;
-  return true;
-}
+// P3 #18 — shared with backtestRunner.js via ../utils/symbolValidation.js.
+// Aliased to the existing local name so the two call sites below don't need
+// to change.
+const { isValidSymbol: isValidScanSymbol } = require("../utils/symbolValidation");
 
 // ─── ScannerRunner ────────────────────────────────────────────────────────────
 class ScannerRunner extends EventEmitter {

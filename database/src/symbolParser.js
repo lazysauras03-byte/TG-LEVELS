@@ -6,12 +6,19 @@
  * need: underlying, exchange, instrument_type, expiry_date, expiry_type,
  * strike, option_type.
  *
- * PARSING CONVENTIONS — deliberately kept IDENTICAL to the two places in
- * this codebase that already parse these tickers, so all three stay in
- * sync instead of drifting into three slightly-different regexes:
+ * PARSING CONVENTIONS — this is the canonical parser. Two other places used
+ * to duplicate this regex logic independently and are now kept in sync by
+ * calling into this file instead (P3 #13):
  *   - database/src/candleStore.js  → extractContractExpiry()  (month/year
- *     only, used for expiry-based pruning)
- *   - backend/src/server.js        → OPTION_SUFFIX_RE / deriveUnderlyingSymbol()
+ *     only, used for expiry-based pruning — intentionally NOT delegated,
+ *     see note on isContractExpired() for why pruning stays independent)
+ *   - backend/src/server.js        → deriveUnderlyingSymbol() / isOptionSymbol()
+ *     now call parseDerivativeSymbol() directly, falling back to their own
+ *     inline regex only if this module can't be required at all (mirrors
+ *     the "DB is optional" pattern used for db/recoveryEngine in server.js).
+ *   - frontend/src/utils/optionsChain.js still has its own copy — browser
+ *     code can't require() this Node module, so that one stays a separate,
+ *     cross-referenced duplicate, same pattern as holidays.js/holidayCalendar.js.
  *
  * Recognized formats (ticker = symbol with "EXCH:" prefix already split off):
  *   Monthly future : ROOT + YY + MON(3-letter) + "FUT"           e.g. RELIANCE26JUNFUT
@@ -67,9 +74,9 @@ const MCX_EXPIRY_DAY = {
   COTTON: 29, CASTORSEED: 29,
 };
 
-const FUT_RE     = /^([A-Z0-9]+?)(\d{2})([A-Z]{3})FUT$/;
+const FUT_RE = /^([A-Z0-9]+?)(\d{2})([A-Z]{3})FUT$/;
 const OPT_MON_RE = /^([A-Z0-9]+?)(\d{2})([A-Z]{3})(\d+(?:\.\d+)?)(CE|PE)$/;
-const OPT_WK_RE  = /^([A-Z0-9]+?)(\d{2})([1-9OND])(\d{2})(\d+(?:\.\d+)?)(CE|PE)$/;
+const OPT_WK_RE = /^([A-Z0-9]+?)(\d{2})([1-9OND])(\d{2})(\d+(?:\.\d+)?)(CE|PE)$/;
 
 /** Last day of `month` (0-based) in `year`, at midnight local time. */
 function lastCalendarDayOfMonth(year, month) {

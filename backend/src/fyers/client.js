@@ -17,6 +17,18 @@ function rejectAfter(ms, label) {
   );
 }
 
+/**
+ * P3 #15 — dedup-by-time + sort-ascending used to be copy-pasted identically
+ * in both fetchDailyCandles() and fetchCandles()'s intraday chunk merge.
+ * Single source of truth now.
+ */
+function dedupSortCandles(candles) {
+  const seen = new Set();
+  return candles
+    .filter((c) => { if (seen.has(c.time)) return false; seen.add(c.time); return true; })
+    .sort((a, b) => a.time - b.time);
+}
+
 function loadToken() {
   if (!fs.existsSync(TOKEN_FILE)) return null;
   return fs.readFileSync(TOKEN_FILE, "utf8").trim();
@@ -212,10 +224,7 @@ async function fetchDailyCandles(symbol, lookbackDays) {
   if (allCandles.length === 0) return [];
 
   // Deduplicate and sort ascending
-  const seen = new Set();
-  const sorted = allCandles
-    .filter((c) => { if (seen.has(c.time)) return false; seen.add(c.time); return true; })
-    .sort((a, b) => a.time - b.time);
+  const sorted = dedupSortCandles(allCandles);
 
   console.log(
     `[Fyers] Daily final: ${sorted.length} candles | ` +
@@ -353,10 +362,7 @@ async function fetchCandles(symbol, resolution, count = 10000, lookbackDaysOverr
 
   if (allCandles.length === 0) throw new Error(`Fyers getHistory returned no candles for ${symbol} res=${fyersResolution}`);
 
-  const seen = new Set();
-  const deduped = allCandles
-    .filter((c) => { if (seen.has(c.time)) return false; seen.add(c.time); return true; })
-    .sort((a, b) => a.time - b.time);
+  const deduped = dedupSortCandles(allCandles);
 
   console.log(`[Fyers] ${symbol} ${fyersResolution}: ${deduped.length} candles over ${lookbackDays}d (${chunks.length} chunk${chunks.length > 1 ? "s" : ""})`);
   return deduped;

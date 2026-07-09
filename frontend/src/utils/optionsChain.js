@@ -397,6 +397,13 @@ export function optionSymbol(exch, root, expiryCode, strike, kind) {
 // Both are exactly 5 characters, so a single alternation handles both without
 // ambiguity (the 3-letter month only matches A-Z letters, so "702" can never
 // be misread as a month code).
+//
+// IMPORTANT — P3 #13: the canonical version of this parsing logic now lives
+// in database/src/symbolParser.js (parseDerivativeSymbol()), and
+// backend/src/server.js delegates to it. This frontend copy stays separate
+// on purpose — browser code can't require() that Node module — but if the
+// symbol format ever changes, update both. Same pattern as
+// holidays.js/holidayCalendar.js and tickStream.js/useSocket.js.
 const OPTION_SYMBOL_RE = /^([A-Z]+):(.*?)(\d{2}(?:[A-Z]{3}|[1-9OND]\d{2}))(\d+(?:\.\d+)?)(CE|PE)$/;
 
 export function isOptionSymbol(symbolStr) {

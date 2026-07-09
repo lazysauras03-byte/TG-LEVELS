@@ -74,6 +74,18 @@ export function useSocket() {
   const latestRequestIdRef = useRef(0);
   const lastSocketUpdateRef = useRef(0);
   const hasDataRef = useRef(false);
+  // NEW BUG FIX (reported: chart shows only 2-3 candles after a backend
+  // restart, until a manual page reload). Root cause: hasDataRef stays
+  // `true` across a backend restart (this tab never remounted), so the
+  // "connect" handler's `!hasDataRef.current` guard below skipped
+  // fetchChart() on reconnect — and the backend's own in-memory cache is
+  // wiped by a restart, so its set_symbol fast-path had nothing to push
+  // either. Net effect: the tab was stuck rendering only whatever live
+  // ticks arrived after reconnecting, with no way to recover short of a
+  // hard reload. needsResyncRef forces a real fetchChart() on the very
+  // next "connect" after ANY "disconnect" — including a reconnect to a
+  // freshly-restarted backend — regardless of hasDataRef's state.
+  const needsResyncRef = useRef(false);
   const pollTimerRef = useRef(null);
   const underlyingOptionSymbolRef = useRef(null); // last symbol passed to setUnderlying
 
@@ -177,7 +189,14 @@ export function useSocket() {
       // Only fall back to a GET fetch if there's genuinely no data and nothing is in-flight.
       // ChartsPage calls refresh() (POST) on mount which already covers the initial load.
       // The latestRequestIdRef check inside fetchChart prevents stale responses from landing.
-      if (!hasDataRef.current && latestRequestIdRef.current === 0) {
+      //
+      // needsResyncRef.current is also checked here — see its declaration above.
+      // Without it, a tab that survives a backend restart (no page reload) would
+      // never re-fetch full history: hasDataRef stays true from before the
+      // restart, so this guard alone would skip fetchChart forever, leaving the
+      // chart stuck showing only whatever live ticks trickle in post-reconnect.
+      if (needsResyncRef.current || (!hasDataRef.current && latestRequestIdRef.current === 0)) {
+        needsResyncRef.current = false;
         fetchChart(activeSymbolRef.current, activeResolutionRef.current, { retries: 3 });
       }
     });
@@ -189,6 +208,9 @@ export function useSocket() {
       setTicksFlowing(null);
       setTickStreamActive(false);
       setUnderlyingTick(null);
+      // Any reconnect after this point must re-fetch full history — see
+      // needsResyncRef's declaration above for why hasDataRef alone isn't enough.
+      needsResyncRef.current = true;
     });
 
     socket.on("chart_update", (d) => {
