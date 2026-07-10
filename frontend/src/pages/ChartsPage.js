@@ -36,9 +36,9 @@ import ErrorBoundary from "../components/ErrorBoundary";
 import { ChartPanelPropTypes } from "./ChartPanelPropTypes";
 import "../styles/ChartsPage.css";
 
-// Symbols for which options can be opened via Ctrl+Q / Ctrl+D and the Options
+// Symbols for which options can be opened via Ctrl+Q and the Options
 // button — equities, NSE/BSE indices, MCX dated futures. Both the button
-// eligibility check and the Ctrl+Q/D shortcut use this so they always agree.
+// eligibility check and the Ctrl+Q shortcut use this so they always agree.
 const OPTIONS_ELIGIBLE_RE = /^(NSE:[A-Z0-9&]+-(EQ|INDEX)|BSE:[A-Z0-9&]+-INDEX|MCX:[A-Z0-9]+\d{2}[A-Z]{3}FUT)$/i;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -345,7 +345,7 @@ const ChartPanel = memo(function ChartPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles.length, urlFibDrawing]);
 
-  // ── Ctrl+Q / Ctrl+D: open ATM CE / PE for the active panel ────────────────
+  // ── Ctrl+Q: open the ATM Workspace for the active panel ───────────────────
   // All deps (candles, handleSymbolChange, handleRefresh, resolution, symbol)
   // are defined above — must stay after candles to avoid temporal dead zone.
   const [shortcutWarning, setShortcutWarning] = useState(null);
@@ -379,7 +379,7 @@ const ChartPanel = memo(function ChartPanel({
     panelActionsRef.current = { ...panelActionsRef.current, applyTypedTimeframe };
   }, [isActivePanel, applyTypedTimeframe, panelActionsRef]);
 
-  // ── Ctrl+Q / Ctrl+D: resolve the ATM base symbol for the shared 3-pane ────
+  // ── Ctrl+Q: resolve the ATM base symbol for the shared 3-pane workspace ───
   // ATM Workspace (rendered once at ChartsPage level).
   // Reuses the exact eligibility check the "Options" overlay button already
   // uses, so the shortcut and the button always agree on which symbols
@@ -1129,13 +1129,13 @@ export default function ChartsPage() {
 
   const panelActionsRef = useRef({
     toggleHide: null, trashAll: null, drawingsHidden: false,
-    getAtmBaseSymbol: null,    // () => {baseSymbol, resolution}|null — Ctrl+Q / Ctrl+D
+    getAtmBaseSymbol: null,    // () => {baseSymbol, resolution}|null — Ctrl+Q
     openSearchWithQuery: null, // (firstChar: string) => void — type-to-search
     applyTypedTimeframe: null, // (digits: string) => void — type-a-number timeframe switch
   });
   const [activePanelHidden, setActivePanelHidden] = useState(false);
 
-  // ── ATM Workspace: 3-pane CE | Underlying | PE view opened by Ctrl+Q/D ────
+  // ── ATM Workspace: 3-pane CE | Underlying | PE view opened by Ctrl+Q ──────
   // { baseSymbol, resolution, focus: "ce"|"pe" } while open, else null. Fully
   // replaces the normal panel layout while open (see the render below).
   const [atmWorkspace, setAtmWorkspace] = useState(null);
@@ -1171,31 +1171,29 @@ export default function ChartsPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Ctrl+Q / Ctrl+D globally → open (or refocus) the 3-pane ATM Workspace
+  // Ctrl+Q globally → open (or refocus) the 3-pane ATM Workspace
   // (CE | Underlying | PE) anchored on the active panel's underlying symbol.
-  // Ctrl+Q focuses the CE column, Ctrl+D focuses the PE column — both open
-  // the SAME workspace instance rather than mutating the active panel's own
-  // chart. That in-place mutation is what let the two shortcuts step on each
-  // other before (see getAtmBaseSymbol above for the full story): pressing
-  // Ctrl+Q then Ctrl+D compared the fetched PE strikes against whatever
-  // price the panel happened to be showing, which was the CE option's own
-  // premium, not the underlying's spot. Acts on whichever panel was last
-  // clicked (panelActionsRef is re-registered by that panel's own effect
-  // whenever it becomes active or its dependencies change).
+  // Always focuses the CE column on open — the workspace shows CE/PE
+  // together either way, so a second shortcut for "same workspace, focus PE
+  // instead" was redundant (Ctrl+D used to do exactly that and nothing
+  // else; removed on request, one shortcut is enough since both opened the
+  // identical 3-pane view). Click a column directly to focus it instead.
+  // Acts on whichever panel was last clicked (panelActionsRef is
+  // re-registered by that panel's own effect whenever it becomes active or
+  // its dependencies change).
   useEffect(() => {
     function onKey(e) {
       if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
       const key = e.key.toLowerCase();
-      if (key !== "q" && key !== "d") return;
+      if (key !== "q") return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       e.preventDefault();
       const info = panelActionsRef.current?.getAtmBaseSymbol?.();
       if (!info) return; // active panel already surfaced its own warning
-      const focus = key === "q" ? "ce" : "pe";
       setAtmWorkspace((prev) =>
         (prev && prev.baseSymbol === info.baseSymbol)
-          ? { ...prev, focus } // same underlying already open — just refocus
-          : { baseSymbol: info.baseSymbol, resolution: info.resolution, focus }
+          ? prev // same underlying already open — leave focus as-is
+          : { baseSymbol: info.baseSymbol, resolution: info.resolution, focus: "ce" }
       );
     }
     window.addEventListener("keydown", onKey);
@@ -1247,7 +1245,7 @@ export default function ChartsPage() {
   // Type-to-search: start typing anywhere → active panel's symbol search opens
   // pre-filled with the typed character. Only single plain LETTER chars with no
   // modifier — digits are claimed by the timeframe-typing handler above, so
-  // they never collide with Ctrl+Q/D, Alt+letter, Ctrl+Z, arrows, or numbers.
+  // they never collide with Ctrl+Q, Alt+letter, Ctrl+Z, arrows, or numbers.
   useEffect(() => {
     function onKey(e) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;

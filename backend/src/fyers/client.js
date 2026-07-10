@@ -36,7 +36,6 @@ function loadToken() {
 
 function saveToken(token) {
   fs.writeFileSync(TOKEN_FILE, token.trim(), "utf8");
-  fs.writeFileSync(path.join(ROOT, ".fyers_token"), token.trim(), "utf8");
 }
 
 function getFyersClient() {

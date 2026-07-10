@@ -7,7 +7,8 @@
     "migrate": "node src/migrate.js",
     "test": "node src/healthcheck.js",
     "backfill:derivatives": "node src/backfillDerivatives.js",
-    "test:symbolParser": "node src/symbolParser.test.js"
+    "test:symbolParser": "node src/symbolParser.test.js",
+    "test:integration": "node src/integration.test.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",

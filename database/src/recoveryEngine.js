@@ -198,6 +198,49 @@ async function repairDay(opts) {
   });
 }
 
+// ─── Dead-letter tracking for periodicSync ───────────────────────────────────
+// P1 (was "not yet fixed"): periodicSync retried a dead/expired/invalid
+// symbol forever — every 5-minute sweep, indefinitely, with no memory of
+// prior failures. A symbol only ends up in periodicSync's sweep because a
+// real client had it open (server.js scopes the sweep to
+// getLiveBroadcastSymbols()), so this isn't hypothetical: an expired option
+// contract sitting open in a stale browser tab, or any symbol Fyers rejects,
+// would get hammered every cycle with no backoff.
+//
+// FIX: track consecutive failures per symbol. After DEAD_LETTER_THRESHOLD
+// consecutive failures, the symbol is "dead-lettered" — periodicSync skips
+// it immediately (no fetchCandles call at all) until DEAD_LETTER_COOLDOWN_MS
+// has passed, then gives it one more try. A single success at any point
+// clears the symbol's failure count entirely. This is intentionally
+// in-memory/per-process (matches every other piece of sync state in this
+// file — repairQueues, activeRepairs) — a restart naturally clears it and
+// gives every symbol a fresh start, which is the right behavior here (no
+// symbol should be dead-lettered "forever" across restarts on stale info).
+const DEAD_LETTER_THRESHOLD = 3;          // consecutive failures before dead-lettering
+const DEAD_LETTER_COOLDOWN_MS = 30 * 60 * 1000; // 30 min before retrying a dead-lettered symbol
+
+const syncFailures = new Map(); // symbol -> { count, deadUntil }
+
+function isDeadLettered(symbol) {
+  const rec = syncFailures.get(symbol);
+  if (!rec || !rec.deadUntil) return false;
+  return Date.now() < rec.deadUntil;
+}
+
+function recordSyncSuccess(symbol) {
+  syncFailures.delete(symbol);
+}
+
+function recordSyncFailure(symbol) {
+  const rec = syncFailures.get(symbol) || { count: 0, deadUntil: null };
+  rec.count += 1;
+  if (rec.count >= DEAD_LETTER_THRESHOLD) {
+    rec.deadUntil = Date.now() + DEAD_LETTER_COOLDOWN_MS;
+    console.warn(`[PeriodicSync] ${symbol}: ${rec.count} consecutive failures — dead-lettered for ${DEAD_LETTER_COOLDOWN_MS / 60000}min`);
+  }
+  syncFailures.set(symbol, rec);
+}
+
 // ─── Periodic sync job ───────────────────────────────────────────────────────
 
 /**
@@ -220,6 +263,13 @@ async function periodicSync(opts) {
   const resolution = DB_RESOLUTION;
   const THREE_MONTHS_AGO = Date.now() - 90 * 86400 * 1000;
 
+  // Dead-letter check — skip symbols that have failed repeatedly, instead of
+  // hammering them every single sweep. No fetchCandles call is made at all.
+  if (isDeadLettered(symbol)) {
+    console.log(`[PeriodicSync] ${symbol}: skipped — dead-lettered (retrying after cooldown)`);
+    return { inSync: false, deadLettered: true };
+  }
+
   try {
     const brokerCandles = await fetchCandles(symbol, resolution);
     // Only consider 1m candles within the 3-month retention window
@@ -228,6 +278,7 @@ async function periodicSync(opts) {
 
     if (inSync) {
       console.log(`[PeriodicSync] ${symbol} res=1 ✓ in sync`);
+      recordSyncSuccess(symbol);
       return { inSync: true };
     }
 
@@ -245,6 +296,7 @@ async function periodicSync(opts) {
         console.log(`[PeriodicSync] ${symbol} res=1: inserted ${inserted} missing 1m candles`);
         emit("repair_status", { symbol, resolution, status: "periodic_sync_ok", inserted });
         emit("history_updated", { symbol, resolution, reason: "periodic_sync", inserted });
+        recordSyncSuccess(symbol);
         return { inSync: true, recovered: inserted };
       }
     }
@@ -252,10 +304,12 @@ async function periodicSync(opts) {
     // Can't auto-recover with missing candles — trigger full day repair (1m only)
     const tradingDay = latestBroker ? new Date(latestBroker.time) : new Date();
     await repairDay({ symbol, resolution, tradingDay, fetchCandles, trigger: "periodic" });
+    recordSyncSuccess(symbol);
     return { inSync: false, repaired: true };
 
   } catch (err) {
     console.error(`[PeriodicSync] ${symbol} res=1 error:`, err.message);
+    recordSyncFailure(symbol);
     return { inSync: false, error: err.message };
   }
 }
@@ -264,4 +318,6 @@ module.exports = {
   repairDay,
   periodicSync,
   injectStatusEmitter,
+  // Exposed for tests / diagnostics only — not used by server.js.
+  _deadLetter: { isDeadLettered, recordSyncSuccess, recordSyncFailure, syncFailures },
 };
